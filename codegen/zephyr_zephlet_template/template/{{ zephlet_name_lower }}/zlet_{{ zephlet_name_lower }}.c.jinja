@@ -1,0 +1,142 @@
+/* TODO: Complete implementation and remove this header when done */
+
+#include "zlet_{{ zephlet_name_lower }}_interface.h"
+
+#include "zlet_{{ zephlet_name_lower }}.h"
+#include <zephyr/kernel.h>
+#include <zephyr/zbus/zbus.h>
+#include <zephyr/logging/log.h>
+
+LOG_MODULE_DECLARE(zlet_{{ zephlet_name_lower }}, CONFIG_ZEPHLET_{{ zephlet_name_upper }}_LOG_LEVEL);
+
+{% if include_basic_commands %}
+void zlet_{{ zephlet_name_lower }}_handler(struct k_timer *timer_id)
+{
+	LOG_DBG("{{ zephlet_name_lower }} tick!");
+
+	struct msg_zlet_{{ zephlet_name_lower }}_events events = {/* TODO: Set event fields */};
+
+	zlet_{{ zephlet_name_lower }}_report_events(&events, K_NO_WAIT);
+}
+
+K_TIMER_DEFINE(timer_zlet_{{ zephlet_name_lower }}, zlet_{{ zephlet_name_lower }}_handler, NULL);
+{% endif %}
+
+{% if include_basic_commands %}
+static int start(const struct zephlet *zephlet)
+{
+	struct zlet_{{ zephlet_name_lower }}_data *data = zephlet->data;
+	struct msg_zephlet_status status;
+
+	K_SPINLOCK(&data->lock) {
+		data->status.is_running = true;
+		status = data->status;
+	}
+
+	/* TODO: Start zephlet resources (timers, threads, etc.) */
+
+	return zlet_{{ zephlet_name_lower }}_report_status(&status, K_MSEC(250));
+}
+
+static int stop(const struct zephlet *zephlet)
+{
+	struct zlet_{{ zephlet_name_lower }}_data *data = zephlet->data;
+	struct msg_zephlet_status status;
+
+	K_SPINLOCK(&data->lock) {
+		status = data->status;
+	}
+
+	if (!status.is_running) {
+		LOG_DBG("Zephlet has not started yet!");
+	}
+
+	/* TODO: Stop zephlet resources (timers, threads, etc.) */
+
+	K_SPINLOCK(&data->lock) {
+		data->status.is_running = false;
+	}
+
+	return zlet_{{ zephlet_name_lower }}_report_status(&status, K_MSEC(250));
+}
+
+static int get_status(const struct zephlet *zephlet)
+{
+	struct zlet_{{ zephlet_name_lower }}_data *data = zephlet->data;
+	struct msg_zephlet_status status;
+
+	K_SPINLOCK(&data->lock) {
+		status = data->status;
+	}
+
+	return zlet_{{ zephlet_name_lower }}_report_status(&status, K_MSEC(250));
+}
+
+static int config(const struct zephlet *zephlet, const struct msg_zlet_{{ zephlet_name_lower }}_config *config)
+{
+	struct zlet_{{ zephlet_name_lower }}_data *data = zephlet->data;
+
+	K_SPINLOCK(&data->lock) {
+		data->config = *config;
+	}
+
+	/* TODO: Apply configuration changes to zephlet resources */
+
+	return zlet_{{ zephlet_name_lower }}_report_config(config, K_MSEC(250));
+}
+
+static int get_config(const struct zephlet *zephlet)
+{
+	struct zlet_{{ zephlet_name_lower }}_data *data = zephlet->data;
+	struct msg_zlet_{{ zephlet_name_lower }}_config config;
+
+	K_SPINLOCK(&data->lock) {
+		config = data->config;
+	}
+
+	return zlet_{{ zephlet_name_lower }}_report_config(&config, K_MSEC(250));
+}
+
+static int get_events(const struct zephlet *zephlet)
+{
+	struct zlet_{{ zephlet_name_lower }}_data *data = zephlet->data;
+	struct msg_zlet_{{ zephlet_name_lower }}_events events;
+
+	K_SPINLOCK(&data->lock) {
+		events = data->events;
+	}
+
+	return zlet_{{ zephlet_name_lower }}_report_events(&events, K_MSEC(250));
+}
+{% endif %}
+
+/* TODO: Add custom RPC method implementations here */
+
+static struct zlet_{{ zephlet_name_lower }}_api api = {
+{% if include_basic_commands %}
+	.start = start,
+	.stop = stop,
+	.get_status = get_status,
+	.config = config,
+	.get_config = get_config,
+	.get_events = get_events,
+{% endif %}
+	/* TODO: Add custom RPC method pointers */
+};
+
+static struct zlet_{{ zephlet_name_lower }}_data data = {
+	.status = MSG_ZEPHLET_STATUS_INIT_ZERO,
+	.config = MSG_ZLET_{{ zephlet_name_upper }}_CONFIG_INIT_ZERO,
+	.events = MSG_ZLET_{{ zephlet_name_upper }}_EVENTS_INIT_ZERO
+};
+
+int zlet_{{ zephlet_name_lower }}_init_fn(const struct zephlet *self)
+{
+	int err = zlet_{{ zephlet_name_lower }}_set_implementation(self);
+
+	printk("   -> %s initialed with%s error\n", self->name, err == 0 ? " no" : "");
+
+	return err;
+}
+
+ZEPHLET_DEFINE(zlet_{{ zephlet_name_lower }}, zlet_{{ zephlet_name_lower }}_init_fn, &api, &data);

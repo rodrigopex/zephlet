@@ -1,0 +1,237 @@
+/* GENERATED FILE - DO NOT EDIT */
+/* Complete TODO items and remove this header when implementation is done */
+
+#include "{{ zephlet_name }}_interface.h"
+
+#include "{{ zephlet_name }}.h"
+#include <zephyr/kernel.h>
+#include <zephyr/logging/log.h>
+
+LOG_MODULE_DECLARE({{ zephlet_name }}, CONFIG_ZEPHLET_{{ base_name_upper }}_LOG_LEVEL);
+
+/* TODO: Add zephlet-specific resources (timers, work queues, threads) */
+
+{%- if rpc_methods %}
+{%- for method in rpc_methods %}
+
+{%- if method.report_field_name == 'status' %}
+{%- if method.name == 'start' %}
+static int start(const struct zephlet *zephlet)
+{
+	struct {{ zephlet_name }}_data *data = zephlet->data;
+	struct msg_zephlet_status status;
+
+	K_SPINLOCK(&data->lock) {
+		data->status.is_running = true;
+		status = data->status;
+	}
+
+	/* TODO: Start zephlet resources (timers, threads, etc.) */
+
+	return {{ zephlet_name }}_report_status(&status, K_MSEC(250));
+}
+{%- elif method.name == 'stop' %}
+
+static int stop(const struct zephlet *zephlet)
+{
+	struct {{ zephlet_name }}_data *data = zephlet->data;
+	struct msg_zephlet_status status;
+
+	K_SPINLOCK(&data->lock) {
+		status = data->status;
+	}
+
+	if (!status.is_running) {
+		LOG_DBG("Zephlet has not started yet!");
+	}
+
+	/* TODO: Stop zephlet resources (timers, threads, etc.) */
+
+	K_SPINLOCK(&data->lock) {
+		data->status.is_running = false;
+	}
+
+	return {{ zephlet_name }}_report_status(&status, K_MSEC(250));
+}
+{%- elif method.name == 'get_status' %}
+
+static int get_status(const struct zephlet *zephlet)
+{
+	struct {{ zephlet_name }}_data *data = zephlet->data;
+	struct msg_zephlet_status status;
+
+	K_SPINLOCK(&data->lock) {
+		status = data->status;
+	}
+
+	return {{ zephlet_name }}_report_status(&status, K_MSEC(250));
+}
+{%- else %}
+
+/* RPC returns {{ method.output_type }} (status) */
+static int {{ method.name }}(const struct zephlet *zephlet
+{%- if method.input_type != 'Empty' -%}
+, const struct msg_{{ zephlet_name }}_{{ method.input_type|proto_type_to_snake }} *{{ method.input_type|proto_type_to_snake }}
+{%- endif -%})
+{
+	struct {{ zephlet_name }}_data *data = zephlet->data;
+	struct msg_zephlet_status status;
+
+	K_SPINLOCK(&data->lock) {
+		/* TODO: Implement {{ method.name }} logic */
+		status = data->status;
+	}
+
+	return {{ zephlet_name }}_report_status(&status, K_MSEC(250));
+}
+{%- endif %}
+{%- elif method.report_field_name == 'config' %}
+{%- if method.name == 'config' %}
+
+static int config(const struct zephlet *zephlet, const struct msg_{{ zephlet_name }}_config *config)
+{
+	struct {{ zephlet_name }}_data *data = zephlet->data;
+
+	K_SPINLOCK(&data->lock) {
+		data->config = *config;
+	}
+
+	/* TODO: Apply configuration changes to zephlet resources */
+
+	return {{ zephlet_name }}_report_config(config, K_MSEC(250));
+}
+{%- elif method.name == 'get_config' %}
+
+static int get_config(const struct zephlet *zephlet)
+{
+	struct {{ zephlet_name }}_data *data = zephlet->data;
+	struct msg_{{ zephlet_name }}_config config;
+
+	K_SPINLOCK(&data->lock) {
+		config = data->config;
+	}
+
+	return {{ zephlet_name }}_report_config(&config, K_MSEC(250));
+}
+{%- else %}
+
+/* RPC returns {{ method.output_type }} (config) */
+static int {{ method.name }}(const struct zephlet *zephlet
+{%- if method.input_type != 'Empty' -%}
+, const struct msg_{{ zephlet_name }}_{{ method.input_type|proto_type_to_snake }} *{{ method.input_type|proto_type_to_snake }}
+{%- endif -%})
+{
+	struct {{ zephlet_name }}_data *data = zephlet->data;
+	struct msg_{{ zephlet_name }}_config config;
+
+	K_SPINLOCK(&data->lock) {
+		/* TODO: Implement {{ method.name }} logic */
+		config = data->config;
+	}
+
+	return {{ zephlet_name }}_report_config(&config, K_MSEC(250));
+}
+{%- endif %}
+{%- elif method.report_field_name == 'events' and method.name == 'get_events' %}
+
+/* RPC returns {{ method.output_type }} - publish to report field: {{ method.report_field_name }} */
+static int get_events(const struct zephlet *zephlet)
+{
+	struct {{ zephlet_name }}_data *data = zephlet->data;
+	struct msg_{{ zephlet_name }}_events events;
+
+	K_SPINLOCK(&data->lock) {
+		events = data->events;
+	}
+
+	return {{ zephlet_name }}_report_events(&events, K_MSEC(250));
+}
+{%- else %}
+
+/* RPC returns {{ method.output_type }} - publish to report field: {{ method.report_field_name }} */
+static int {{ method.name }}(const struct zephlet *zephlet
+{%- if method.input_type != 'Empty' -%}
+, const struct msg_{{ zephlet_name }}_{{ method.input_type|proto_type_to_snake }} *{{ method.input_type|proto_type_to_snake }}
+{%- endif -%})
+{
+	struct {{ zephlet_name }}_data *data = zephlet->data;
+
+	K_SPINLOCK(&data->lock) {
+		/* TODO: Implement {{ method.name }} logic */
+	}
+
+{%- if method.output_streaming %}
+	/* Output-streaming RPC: publish events from async contexts (timer/IRQ) */
+	/* Pattern example (see tick_zephlet_impl.c:11-18):
+	 *   void timer_handler(struct k_timer *timer) {
+	 *       struct msg_{{ zephlet_name }}_{{ method.report_field_name }} event = {...};
+	 *       {{ zephlet_name }}_report_{{ method.report_field_name }}(&event, K_NO_WAIT);
+	 *   }
+	 */
+	/* TODO: Set up K_TIMER_DEFINE/K_WORK_DEFINE and call report helper */
+	return 0;
+{%- elif method.input_streaming %}
+	/* Input-streaming RPC: process stream of input data */
+	/* TODO: Implement stream handler */
+	return 0;
+{%- else %}
+	/* Request-response RPC */
+	/* TODO: Prepare report data and publish */
+	/* return {{ zephlet_name }}_report_{{ method.report_field_name }}(report_data, K_MSEC(250)); */
+	return 0;
+{%- endif %}
+}
+{%- endif %}
+{%- endfor %}
+{%- else %}
+{%- for field in invoke_fields %}
+
+/* Fallback: No zephlet definition found, using invoke fields */
+static int {{ field.name }}(const struct zephlet *zephlet{% if not field.is_empty %}, const struct msg_{{ zephlet_name }}_{{ field.message_type|camel_to_snake }} *{{ field.message_type|camel_to_snake }}{% endif %})
+{
+	struct {{ zephlet_name }}_data *data = zephlet->data;
+	int ret = 0;
+
+	K_SPINLOCK(&data->lock) {
+		/* TODO: Access/modify zephlet state */
+	}
+
+	/* TODO: Add business logic and report state changes */
+
+	return ret;
+}
+{%- endfor %}
+{%- endif %}
+
+static struct {{ zephlet_name }}_api api = {
+{%- if rpc_methods %}
+{%- for method in rpc_methods %}
+	.{{ method.name }} = {{ method.name }},
+{%- endfor %}
+{%- else %}
+{%- for field in invoke_fields %}
+	.{{ field.name }} = {{ field.name }},
+{%- endfor %}
+{%- endif %}
+};
+
+static struct {{ zephlet_name }}_data data = {
+	.status = MSG_ZEPHLET_STATUS_INIT_ZERO,
+{%- if has_config %}
+	.config = MSG_{{ zephlet_name_upper }}_CONFIG_INIT_ZERO,
+{%- endif %}
+{%- if has_events %}
+	.events = MSG_{{ zephlet_name_upper }}_EVENTS_INIT_ZERO
+{%- endif %}
+};
+
+int {{ zephlet_name }}_init_fn(const struct zephlet *self)
+{
+	int err = {{ zephlet_name }}_set_implementation(self);
+
+	printk("   -> %s %sinitialized\n", self->name, err == 0 ? "" : "not ");
+
+	return err;
+}
+
+ZEPHLET_DEFINE({{ zephlet_name }}, {{ zephlet_name }}_init_fn, &api, &data);

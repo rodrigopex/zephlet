@@ -1,0 +1,30 @@
+if(CONFIG_ZEPHLET_{{ zephlet_name_upper }})
+    # Register proto for nanopb
+    set_property(GLOBAL APPEND PROPERTY PROTO_FILES_LIST
+        "${ZEPHYR_ZLET_{{ zephlet_name_upper }}_MODULE_DIR}/zlet_{{ zephlet_name_lower }}.proto")
+
+    # Auto-generate zephlet infrastructure to build directory
+    zephyr_zephlet_generate(zlet_{{ zephlet_name_lower }}
+        "${ZEPHYR_ZLET_{{ zephlet_name_upper }}_MODULE_DIR}/zlet_{{ zephlet_name_lower }}.proto")
+
+    # Expose build directory globally for zephlet headers
+    zephyr_include_directories("${CMAKE_CURRENT_BINARY_DIR}")
+
+    # Interface library with include paths
+    zephyr_interface_library_named(zlet_{{ zephlet_name_lower }})
+    target_include_directories(zlet_{{ zephlet_name_lower }} INTERFACE
+        ${ZEPHYR_ZLET_{{ zephlet_name_upper }}_MODULE_DIR}           # Source (for .c)
+        "${CMAKE_CURRENT_BINARY_DIR}"               # Build (for .h/.c/.priv.h)
+        "${CMAKE_BINARY_DIR}/zephlets"              # Build parent (for .pb.h)
+    )
+
+    # Add sources: generated (build) + implementation (source)
+    zephyr_library()
+    zephyr_library_sources(
+        ${{ "{" }}zlet_{{ zephlet_name_lower }}_GENERATED_C{{ "}" }}
+        ${ZEPHYR_ZLET_{{ zephlet_name_upper }}_MODULE_DIR}/zlet_{{ zephlet_name_lower }}.c
+    )
+
+    add_dependencies(${ZEPHYR_CURRENT_LIBRARY} zlet_{{ zephlet_name_lower }}_codegen)
+    zephyr_library_link_libraries(zlet_{{ zephlet_name_lower }})
+endif()

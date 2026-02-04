@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+import "nanopb.proto";
+
+option (nanopb_fileopt).anonymous_oneof = true;
+
+message _ {}
+
+message Empty {}
+
+message MsgZephletStatus {
+  bool is_running = 1;
+}

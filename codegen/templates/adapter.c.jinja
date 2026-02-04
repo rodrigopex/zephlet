@@ -1,0 +1,38 @@
+/*
+ * {{ adapter_name }}.c
+ * Auto-generated adapter from zlet_{{ origin_base }} to zlet_{{ dest_base }}
+ */
+
+#include "zlet_{{ origin_zephlet }}_interface.h"
+#include "zlet_{{ dest_zephlet }}_interface.h"
+
+#include <zephyr/kernel.h>
+#include <zephyr/zbus/zbus.h>
+#include <zephyr/logging/log.h>
+
+LOG_MODULE_DECLARE(adapter, CONFIG_ADAPTERS_LOG_LEVEL);
+
+static void {{ function_name }}(const struct zbus_channel *chan, const void *msg)
+{
+	const struct msg_zlet_{{ origin_base }}_report *report = zbus_chan_const_msg(chan);
+
+	switch (report->which_{{ origin_report_oneof }}) {
+{%- for field in selected_report_fields %}
+	case MSG_ZLET_{{ origin_base_upper }}_REPORT_{{ field.name | upper }}_TAG:
+		/* TODO: Handle {{ field.name }} report from zlet_{{ origin_base }} */
+{%- if dest_api_suggestions %}
+		/* Available zlet_{{ dest_base }} commands: {{ dest_api_suggestions | join(', ') }} */
+{%- if dest_api_suggestions[0] %}
+		/* Example: zlet_{{ dest_base }}_{{ dest_api_suggestions[0] }}(K_NO_WAIT); */
+{%- endif %}
+{%- endif %}
+		LOG_DBG("Received {{ field.name }} report from zlet_{{ origin_base }}");
+		break;
+{%- endfor %}
+	default:
+		break;
+	}
+}
+
+ZBUS_ASYNC_LISTENER_DEFINE({{ listener_name }}, {{ function_name }});
+ZBUS_CHAN_ADD_OBS(chan_zlet_{{ origin_base }}_report, {{ listener_name }}, 3);

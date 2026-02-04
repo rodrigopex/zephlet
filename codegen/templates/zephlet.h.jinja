@@ -1,0 +1,66 @@
+/* GENERATED FILE - DO NOT EDIT */
+/* Generated from {{ zephlet_name }}.proto */
+
+#ifndef _{{ zephlet_name_upper }}_H_
+#define _{{ zephlet_name_upper }}_H_
+
+#include "zephlet.h"
+#include "{{ module_name }}/{{ zephlet_name }}.pb.h"
+#include <zephyr/zbus/zbus.h>
+
+ZBUS_CHAN_DECLARE(chan_{{ zephlet_name }}_invoke, chan_{{ zephlet_name }}_report);
+
+struct {{ zephlet_name }}_data {
+	struct k_spinlock lock;
+	struct msg_zephlet_status status;
+{%- if has_config %}
+	struct {{ config_type }} config;
+{%- endif %}
+{%- if has_events %}
+	struct msg_{{ zephlet_name }}_events events;
+{%- endif %}
+};
+
+struct {{ zephlet_name }}_api {
+{%- for field in invoke_fields %}
+{%- if field.is_empty %}
+	int (*{{ field.name }})(const struct zephlet *zephlet);
+{%- else %}
+	int (*{{ field.name }})(const struct zephlet *zephlet,
+	                        const struct msg_{{ zephlet_name }}_{{ field.message_type|camel_to_snake }} *{{ field.message_type|camel_to_snake }});
+{%- endif %}
+{%- endfor %}
+};
+
+{%- for field in invoke_fields %}
+{%- if field.is_empty %}
+
+static inline int {{ zephlet_name }}_{{ field.name }}(k_timeout_t timeout)
+{
+	return zbus_chan_pub(&chan_{{ zephlet_name }}_invoke,
+	                     &(struct msg_{{ zephlet_name }}_invoke){
+	                             .which_{{ invoke_oneof_name }} = MSG_{{ zephlet_name_upper }}_INVOKE_{{ field.name|upper }}_TAG},
+	                     timeout);
+}
+{%- else %}
+{%- if field.message_type|lower == 'config' and config_fields %}
+
+static inline int {{ zephlet_name }}_{{ field.name }}_set({% for cfg in config_fields %}{{ cfg.type }} {{ cfg.name }}{{ ", " if not loop.last else "" }}{% endfor %}, k_timeout_t timeout)
+{
+	return zbus_chan_pub(&chan_{{ zephlet_name }}_invoke,
+	                     &(struct msg_{{ zephlet_name }}_invoke){
+	                             .which_{{ invoke_oneof_name }} = MSG_{{ zephlet_name_upper }}_INVOKE_{{ field.name|upper }}_TAG,
+	                             .config = {
+{%- for cfg in config_fields %}
+	                                     .{{ cfg.name }} = {{ cfg.name }},
+{%- endfor %}
+	                             }},
+	                     timeout);
+}
+{%- endif %}
+{%- endif %}
+{%- endfor %}
+
+int {{ zephlet_name }}_set_implementation(const struct zephlet *implementation);
+
+#endif /* _{{ zephlet_name_upper }}_H_ */

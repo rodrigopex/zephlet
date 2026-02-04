@@ -1,0 +1,60 @@
+# Copier template configuration for Zephyr Zephlet Module
+_templates_suffix: .jinja
+_subdirectory: template
+
+# Questions to ask when generating the template
+zephlet_name:
+  type: str
+  help: What is the name of your zephlet? (e.g., UI, Battery, Sensor)
+  placeholder: UI
+
+zephlet_name_clean:
+  type: str
+  help: Zephlet name with spaces removed (auto-generated if left empty)
+  default: "{{ zephlet_name | replace(' ', '_') }}"
+  when: false # Auto-computed, not asked
+
+zephlet_name_trim:
+  type: str
+  help: Zephlet name with spaces removed (auto-generated if left empty)
+  default: "{{ zephlet_name | replace(' ', '') }}"
+  when: false # Auto-computed, not asked
+
+zephlet_name_lower:
+  type: str
+  help: Zephlet name in lowercase (auto-generated if left empty)
+  default: "{{ zephlet_name_clean | lower }}"
+  when: false # Auto-computed, not asked
+
+zephlet_name_upper:
+  type: str
+  help: Zephlet name in uppercase (auto-generated if left empty)
+  default: "{{ zephlet_name_clean | upper }}"
+  when: false # Auto-computed, not asked
+
+zephlet_name_pascal:
+  type: str
+  help: Zephlet name in PascalCase (auto-generated if left empty)
+  default: "{{ zephlet_name_clean | replace('_', ' ') | title | replace(' ', '') }}"
+  when: false # Auto-computed, not asked
+
+zephlet_description:
+  type: str
+  help: Brief description of your zephlet
+  default: "{{ zephlet_name }} Zephlet Module"
+  placeholder: "Provides user interface functionalities for the application"
+
+include_basic_commands:
+  type: bool
+  help: Include the basic commands?
+  default: true
+
+author_name:
+  type: str
+  help: Author name (optional)
+  default: ""
+
+year:
+  type: str
+  help: Copyright year
+  default: "{{ '%Y' | strftime }}"

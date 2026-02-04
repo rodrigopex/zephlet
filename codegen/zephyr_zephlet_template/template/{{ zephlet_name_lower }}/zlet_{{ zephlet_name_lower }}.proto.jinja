@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+import "nanopb.proto";
+import "zephlet.proto";
+
+option (nanopb_fileopt).anonymous_oneof = true;
+
+message MsgZlet{{ zephlet_name_pascal }} {
+    message Config {
+        // TODO: Add configuration fields specific to {{ zephlet_name }}
+    }
+
+    message Events {
+        // TODO: Add event fields specific to {{ zephlet_name }}
+    }
+
+    message Invoke {
+        oneof {{ zephlet_name_lower }}_invoke {
+{% if include_basic_commands %}
+            Empty start = 1;
+            Empty stop = 2;
+            Empty get_status = 3;
+            Config config = 4;
+            Empty get_config = 5;
+            Empty get_events = 6;
+{% endif %}
+        }
+    }
+
+    message Report {
+        oneof {{ zephlet_name_lower }}_report {
+            MsgZephletStatus status = 1;
+            Config config = 2;
+            Events events = 3;
+        }
+    }
+}
+
+service {{ zephlet_name_pascal }} {
+{% if include_basic_commands %}
+    rpc start (Empty) returns (MsgZephletStatus);
+    rpc stop (Empty) returns (MsgZephletStatus);
+    rpc get_status (Empty) returns (MsgZephletStatus);
+    rpc config (MsgZlet{{ zephlet_name_pascal }}.Config) returns (MsgZlet{{ zephlet_name_pascal }}.Config);
+    rpc get_config (Empty) returns (MsgZlet{{ zephlet_name_pascal }}.Config);
+    /* This will report the {{ zephlet_name_lower }} events */
+    rpc get_events (Empty) returns (stream MsgZlet{{ zephlet_name_pascal }}.Events);
+{% endif %}
+}

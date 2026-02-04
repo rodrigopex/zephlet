@@ -1,0 +1,3 @@
+config ZEPHLETS
+    bool "Isolated zephlet system"
+    default y

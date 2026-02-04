@@ -1,0 +1,234 @@
+"""West extension commands for zephlet development tooling."""
+
+from west.commands import WestCommand
+from west import log
+import subprocess
+import sys
+from pathlib import Path
+
+
+class Zephlet(WestCommand):
+    """Command class for zephlet development tools."""
+
+    def __init__(self):
+        super().__init__(
+            'zephlet',
+            'zephlet development tools',
+            'Tooling for creating and managing zephlets and adapters')
+
+    def do_add_parser(self, parser_adder):
+        """Add argument parser for zephlet command and subcommands."""
+        parser = parser_adder.add_parser(
+            self.name,
+            help=self.help,
+            description=self.description)
+
+        subparsers = parser.add_subparsers(
+            dest='command',
+            help='zephlet subcommands')
+
+        # new subcommand
+        new_parser = subparsers.add_parser(
+            'new',
+            help='create a new zephlet',
+            description='Create a new zephlet using the copier template')
+        new_parser.add_argument(
+            '-n', '--name',
+            help='zephlet name (non-interactive mode)')
+        new_parser.add_argument(
+            '-d', '--description',
+            help='zephlet description (non-interactive mode)')
+        new_parser.add_argument(
+            '-a', '--author',
+            help='author name (non-interactive mode)')
+
+        # new-adapter subcommand
+        adapter_parser = subparsers.add_parser(
+            'new-adapter',
+            help='create a new adapter',
+            description='Create a new adapter between two zephlets')
+        adapter_parser.add_argument(
+            '-o', '--origin',
+            help='origin zephlet name (non-interactive mode)')
+        adapter_parser.add_argument(
+            '-d', '--destination',
+            help='destination zephlet name (non-interactive mode)')
+        adapter_parser.add_argument(
+            '-i', '--interactive',
+            action='store_true',
+            help='run in interactive mode')
+
+        # gen subcommand
+        gen_parser = subparsers.add_parser(
+            'gen',
+            help='regenerate zephlet interface files',
+            description='Regenerate interface files for an existing zephlet')
+        gen_parser.add_argument(
+            'zephlet_name',
+            help='name of the zephlet to regenerate')
+
+        return parser
+
+    def do_run(self, args, unknown):
+        """Execute the requested subcommand."""
+        if not args.command:
+            log.die('no subcommand specified; try "west zephlet -h"')
+
+        if args.command == 'new':
+            self._new_zephlet(args)
+        elif args.command == 'new-adapter':
+            self._new_adapter(args)
+        elif args.command == 'gen':
+            self._gen_files(args)
+
+    def _get_workspace_paths(self):
+        """Determine workspace paths based on workspace and module locations."""
+        # Module directory: this file is in <module>/west/
+        shared_dir = Path(__file__).parent.parent
+
+        # Workspace root from manifest
+        manifest_path = self.manifest.posixpath
+        workspace_root = Path(manifest_path).parent
+
+        # Check west config for custom adapters path
+        try:
+            from west.configuration import config
+            adapters_dir = config.get('zephlet.adapters-dir', fallback=None)
+            if adapters_dir:
+                adapters_dir = Path(adapters_dir)
+            else:
+                adapters_dir = workspace_root / 'adapters'
+        except:
+            adapters_dir = workspace_root / 'adapters'
+
+        return {
+            'workspace_root': workspace_root,
+            'zephlets_dir': workspace_root / 'zephlets',
+            'shared_dir': shared_dir,
+            'codegen_dir': shared_dir / 'codegen',
+            'template_dir': shared_dir / 'codegen' / 'zephyr_zephlet_template',
+            'adapters_dir': adapters_dir,
+            'build_dir': workspace_root / 'build'
+        }
+
+    def _check_dependencies(self, required_packages):
+        """Check if required Python packages are installed."""
+        missing = []
+        for package in required_packages:
+            try:
+                __import__(package.replace('-', '_'))
+            except ImportError:
+                missing.append(package)
+
+        if missing:
+            log.die(f'missing required Python packages: {", ".join(missing)}\n'
+                   f'Install with: pip install {" ".join(missing)}')
+
+    def _new_zephlet(self, args):
+        """Create a new zephlet using copier template."""
+        self._check_dependencies(['copier'])
+
+        paths = self._get_workspace_paths()
+
+        if not paths['zephlets_dir'].exists():
+            log.die(f'zephlets directory not found: {paths["zephlets_dir"]}')
+
+        if not paths['template_dir'].exists():
+            log.die(f'template directory not found: {paths["template_dir"]}')
+
+        cmd = ['copier', 'copy', str(paths['template_dir']), str(paths['zephlets_dir'])]
+
+        # Non-interactive mode if name is provided
+        if args.name:
+            cmd.extend(['--data', f'zephlet_name={args.name}'])
+            if args.description:
+                cmd.extend(['--data', f'description={args.description}'])
+            if args.author:
+                cmd.extend(['--data', f'author_name={args.author}'])
+            cmd.append('--defaults')
+
+        log.inf(f'Creating new zephlet...')
+        result = subprocess.run(cmd, cwd=paths['workspace_root'])
+
+        if result.returncode != 0:
+            log.die('failed to create zephlet')
+
+        if args.name:
+            log.inf(f'Zephlet "{args.name}" created successfully')
+            log.inf(f'Next steps:')
+            log.inf(f'  1. Edit zephlets/{args.name}/zlet_{args.name}.proto')
+            log.inf(f'  2. Add to root CMakeLists.txt EXTRA_ZEPHYR_MODULES')
+            log.inf(f'  3. Enable CONFIG_ZEPHLET_{args.name.upper()}=y in prj.conf')
+            log.inf(f'  4. Run: just b')
+
+    def _new_adapter(self, args):
+        """Create a new adapter between two zephlets."""
+        self._check_dependencies(['proto-schema-parser', 'jinja2'])
+
+        paths = self._get_workspace_paths()
+        script_path = paths['codegen_dir'] / 'generate_adapter.py'
+
+        if not script_path.exists():
+            log.die(f'generate_adapter.py not found: {script_path}')
+
+        cmd = [sys.executable, str(script_path)]
+        cmd.extend(['--zephlets-path', str(paths['zephlets_dir'])])
+        cmd.extend(['--output-dir', str(paths['adapters_dir'])])
+
+        # Interactive mode or non-interactive
+        if args.interactive or (not args.origin or not args.destination):
+            cmd.append('--interactive')
+        else:
+            cmd.extend(['--origin', args.origin])
+            cmd.extend(['--destination', args.destination])
+
+        log.inf('Creating new adapter...')
+        result = subprocess.run(cmd, cwd=paths['workspace_root'])
+
+        if result.returncode != 0:
+            log.die('failed to create adapter')
+
+        if args.origin and args.destination and not args.interactive:
+            log.inf(f'Adapter {args.origin} -> {args.destination} created successfully')
+            log.inf(f'Next steps:')
+            log.inf(f'  1. Implement TODOs in adapters/{args.origin.capitalize()}+{args.destination.capitalize()}_zlet_adapter.c')
+            log.inf(f'  2. Run: just c b r')
+
+    def _gen_files(self, args):
+        """Regenerate interface files for an existing zephlet."""
+        self._check_dependencies(['proto-schema-parser', 'jinja2'])
+
+        paths = self._get_workspace_paths()
+        script_path = paths['codegen_dir'] / 'generate_zephlet.py'
+
+        if not script_path.exists():
+            log.die(f'generate_zephlet.py not found: {script_path}')
+
+        # Validate build directory exists
+        zephlet_build_dir = paths['build_dir'] / 'modules' / f'{args.zephlet_name}_zephlet'
+        if not zephlet_build_dir.exists():
+            log.die(f'build directory not found: {zephlet_build_dir}\n'
+                   f'Run "just b" first to create the build directory')
+
+        # Locate proto file
+        zephlet_source_dir = paths['zephlets_dir'] / args.zephlet_name
+        proto_file = zephlet_source_dir / f'zlet_{args.zephlet_name}.proto'
+
+        if not proto_file.exists():
+            log.die(f'proto file not found: {proto_file}')
+
+        cmd = [sys.executable, str(script_path)]
+        cmd.extend(['--proto', str(proto_file)])
+        cmd.extend(['--output-dir', str(zephlet_build_dir)])
+        cmd.extend(['--zephlet-name', args.zephlet_name])
+        cmd.extend(['--module-dir', str(zephlet_source_dir)])
+        cmd.append('--no-generate-impl')
+
+        log.inf(f'Regenerating interface files for "{args.zephlet_name}"...')
+        result = subprocess.run(cmd, cwd=paths['workspace_root'])
+
+        if result.returncode != 0:
+            log.die('failed to regenerate files')
+
+        log.inf(f'Interface files regenerated successfully')
+        log.inf(f'Files updated in: {zephlet_build_dir}')

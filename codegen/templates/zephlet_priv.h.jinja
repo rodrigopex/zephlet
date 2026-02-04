@@ -1,0 +1,52 @@
+/* GENERATED FILE - DO NOT EDIT */
+/* Report helpers for {{ zephlet_name }} implementation */
+
+#include "{{ zephlet_name }}_interface.h"
+
+{%- for field in report_fields %}
+{%- if field.is_empty %}
+
+static inline int {{ zephlet_name }}_report_{{ field.name }}(k_timeout_t timeout)
+{
+	return zbus_chan_pub(&chan_{{ zephlet_name }}_report,
+			     &(struct msg_{{ zephlet_name }}_report){
+				     .which_{{ report_oneof_name }} = MSG_{{ zephlet_name_upper }}_REPORT_{{ field.name|upper }}_TAG},
+			     timeout);
+}
+{%- else %}
+{%- if field.message_type == 'MsgZephletStatus' %}
+
+static inline int {{ zephlet_name }}_report_{{ field.name }}(const struct msg_zephlet_status *status,
+					     k_timeout_t timeout)
+{
+	return zbus_chan_pub(
+		&chan_{{ zephlet_name }}_report,
+		&(struct msg_{{ zephlet_name }}_report){
+			.which_{{ report_oneof_name }} = MSG_{{ zephlet_name_upper }}_REPORT_{{ field.name|upper }}_TAG, .status = *status},
+		timeout);
+}
+{%- elif field.message_type == 'Config' %}
+
+static inline int {{ zephlet_name }}_report_{{ field.name }}(const struct msg_{{ zephlet_name }}_config *config,
+					     k_timeout_t timeout)
+{
+	return zbus_chan_pub(
+		&chan_{{ zephlet_name }}_report,
+		&(struct msg_{{ zephlet_name }}_report){
+			.which_{{ report_oneof_name }} = MSG_{{ zephlet_name_upper }}_REPORT_{{ field.name|upper }}_TAG, .config = *config},
+		timeout);
+}
+{%- else %}
+
+static inline int {{ zephlet_name }}_report_{{ field.name }}(const struct msg_{{ zephlet_name }}_{{ field.message_type|camel_to_snake }} *{{ field.name }},
+					     k_timeout_t timeout)
+{
+	return zbus_chan_pub(
+		&chan_{{ zephlet_name }}_report,
+		&(struct msg_{{ zephlet_name }}_report){
+			.which_{{ report_oneof_name }} = MSG_{{ zephlet_name_upper }}_REPORT_{{ field.name|upper }}_TAG, .{{ field.name }} = *{{ field.name }}},
+		timeout);
+}
+{%- endif %}
+{%- endif %}
+{%- endfor %}

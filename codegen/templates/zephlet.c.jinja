@@ -1,0 +1,66 @@
+/* GENERATED FILE - DO NOT EDIT */
+/* Generated from {{ zephlet_name }}.proto */
+
+#include "{{ zephlet_name }}_interface.h"
+#include <zephyr/zbus/zbus.h>
+#include <zephyr/kernel.h>
+#include <zephyr/logging/log.h>
+
+LOG_MODULE_REGISTER({{ zephlet_name }}, CONFIG_ZEPHLET_{{ base_name_upper }}_LOG_LEVEL);
+
+ZBUS_CHAN_DEFINE(chan_{{ zephlet_name }}_invoke, struct msg_{{ zephlet_name }}_invoke, NULL, NULL,
+		 ZBUS_OBSERVERS(lis_{{ zephlet_name }}), MSG_{{ zephlet_name_upper }}_INVOKE_INIT_DEFAULT);
+
+ZBUS_CHAN_DEFINE(chan_{{ zephlet_name }}_report, struct msg_{{ zephlet_name }}_report, NULL, NULL,
+		 ZBUS_OBSERVERS_EMPTY, MSG_{{ zephlet_name_upper }}_REPORT_INIT_DEFAULT);
+
+static const struct zephlet *impl = NULL;
+
+int {{ zephlet_name }}_set_implementation(const struct zephlet *implementation)
+{
+	int ret = -EBUSY;
+
+	if (impl == NULL) {
+		impl = implementation;
+		ret = 0;
+	} else {
+		LOG_ERR("Trying to replace implementation for {{ zephlet_name_camel }} Zephlet");
+	}
+
+	return ret;
+}
+
+static void api_handler(const struct zbus_channel *chan)
+{
+	struct {{ zephlet_name }}_api *api;
+	const struct msg_{{ zephlet_name }}_invoke *ivk;
+
+	if (impl == NULL) {
+		LOG_ERR("Zephlet implementation required!");
+		return;
+	}
+
+	if (impl->api == NULL) {
+		LOG_ERR("Zephlet API required!");
+		return;
+	}
+
+	api = impl->api;
+	ivk = zbus_chan_const_msg(chan);
+
+	switch (ivk->which_{{ invoke_oneof_name }}) {
+{%- for field in invoke_fields %}
+	case MSG_{{ zephlet_name_upper }}_INVOKE_{{ field.name|upper }}_TAG:
+		if (api->{{ field.name }}) {
+{%- if field.is_empty %}
+			api->{{ field.name }}(impl);
+{%- else %}
+			api->{{ field.name }}(impl, &ivk->{{ field.name }});
+{%- endif %}
+		}
+		break;
+{%- endfor %}
+	}
+}
+
+ZBUS_LISTENER_DEFINE(lis_{{ zephlet_name }}, api_handler);

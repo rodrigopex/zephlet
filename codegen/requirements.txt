@@ -1,0 +1,5 @@
+# Requirements for Service Code Generator
+proto-schema-parser>=0.3.0
+jinja2>=3.0.0
+pkl-python>=0.1.0
+copier>=9.0.0

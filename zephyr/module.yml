@@ -1,0 +1,6 @@
+name: shared_zephlet
+build:
+  cmake: .
+  kconfig: Kconfig
+build-settings:
+  west-commands: west/west-commands.yml
