@@ -35,6 +35,7 @@ Edit your `.proto` file to define Config/Events/RPCs, then run `just b` to boots
 ### Directory Structure
 
 By default, zephlet commands use:
+
 - Zephlets: `<project>/src/zephlets/`
 - Adapters: `<project>/src/adapters/`
 
@@ -54,6 +55,7 @@ west config zephlet.adapters-dir <path>
 ### Adapters Auto-Creation
 
 The adapters directory is auto-created when running `west zephlet new-adapter` if it doesn't exist, including:
+
 - `src/base_adapter.c` - Shared logging module
 - `CMakeLists.txt` - Build configuration
 - `Kconfig` - Configuration options
@@ -123,7 +125,7 @@ See [CLAUDE.md](CLAUDE.md) for detailed architecture and implementation guide.
 
 ## Example
 
-Reference implementation: https://github.com/<org>/ports_adapters_zbus
+Reference implementation: https://github.com/rodrigopex/ports_adapters_zbus
 
 ## License
 
