@@ -90,6 +90,22 @@ class Zephlet(WestCommand):
         manifest_path = self.manifest.posixpath
         workspace_root = Path(manifest_path).parent
 
+        # Check west config for custom zephlets path
+        try:
+            from west.configuration import config
+            zephlets_dir = config.get('zephlet.zephlets-dir', fallback=None)
+            if zephlets_dir:
+                zephlets_dir = Path(zephlets_dir)
+            else:
+                # New default: src/zephlets, fallback to zephlets
+                zephlets_dir = workspace_root / 'src' / 'zephlets'
+                if not zephlets_dir.exists():
+                    zephlets_dir = workspace_root / 'zephlets'
+        except:
+            zephlets_dir = workspace_root / 'src' / 'zephlets'
+            if not zephlets_dir.exists():
+                zephlets_dir = workspace_root / 'zephlets'
+
         # Check west config for custom adapters path
         try:
             from west.configuration import config
@@ -97,19 +113,87 @@ class Zephlet(WestCommand):
             if adapters_dir:
                 adapters_dir = Path(adapters_dir)
             else:
-                adapters_dir = workspace_root / 'adapters'
+                # New default: src/adapters, fallback to adapters
+                adapters_dir = workspace_root / 'src' / 'adapters'
+                if not adapters_dir.exists():
+                    adapters_dir = workspace_root / 'adapters'
         except:
-            adapters_dir = workspace_root / 'adapters'
+            adapters_dir = workspace_root / 'src' / 'adapters'
+            if not adapters_dir.exists():
+                adapters_dir = workspace_root / 'adapters'
 
         return {
             'workspace_root': workspace_root,
-            'zephlets_dir': workspace_root / 'zephlets',
+            'zephlets_dir': zephlets_dir,
             'shared_dir': shared_dir,
             'codegen_dir': shared_dir / 'codegen',
             'template_dir': shared_dir / 'codegen' / 'zephyr_zephlet_template',
             'adapters_dir': adapters_dir,
             'build_dir': workspace_root / 'build'
         }
+
+    def _ensure_adapters_dir(self, adapters_dir):
+        """Create adapters directory structure with base files if missing."""
+        if adapters_dir.exists():
+            return False
+
+        log.inf(f'Creating adapters directory: {adapters_dir}')
+
+        # Create directory structure
+        src_dir = adapters_dir / 'src'
+        zephyr_dir = adapters_dir / 'zephyr'
+        src_dir.mkdir(parents=True, exist_ok=True)
+        zephyr_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create base_adapter.c
+        base_adapter_content = """#include <zephyr/kernel.h>
+#include <zephyr/zbus/zbus.h>
+
+#include <zephyr/logging/log.h>
+LOG_MODULE_REGISTER(adapter, CONFIG_ADAPTERS_LOG_LEVEL);
+"""
+        (src_dir / 'base_adapter.c').write_text(base_adapter_content)
+
+        # Create CMakeLists.txt
+        cmake_content = """if(CONFIG_ADAPTERS)
+    zephyr_library()
+    zephyr_library_sources("src/base_adapter.c")
+
+endif()
+"""
+        (adapters_dir / 'CMakeLists.txt').write_text(cmake_content)
+
+        # Create Kconfig
+        kconfig_content = """config ADAPTERS
+    bool "Zephlet adapters"
+    default y
+    select ZBUS
+    select ZBUS_ASYNC_LISTENER
+    help
+      Zephlet adapter infrastructure
+
+if ADAPTERS
+
+module = ADAPTERS
+module-str = adapter
+source "subsys/logging/Kconfig.template.log_config"
+
+endif
+"""
+        (adapters_dir / 'Kconfig').write_text(kconfig_content)
+
+        # Create zephyr/module.yml
+        module_yml_content = """name: adapters
+build:
+  cmake: .
+  kconfig: Kconfig
+"""
+        (zephyr_dir / 'module.yml').write_text(module_yml_content)
+
+        log.inf(f'Adapters directory created with base files')
+        log.inf(f'NOTE: Add "{adapters_dir.relative_to(adapters_dir.parent.parent)}" to root CMakeLists.txt EXTRA_ZEPHYR_MODULES')
+
+        return True
 
     def _check_dependencies(self, required_packages):
         """Check if required Python packages are installed."""
@@ -131,7 +215,9 @@ class Zephlet(WestCommand):
         paths = self._get_workspace_paths()
 
         if not paths['zephlets_dir'].exists():
-            log.die(f'zephlets directory not found: {paths["zephlets_dir"]}')
+            log.die(f'zephlets directory not found: {paths["zephlets_dir"]}\n'
+                    f'Create it with: mkdir -p {paths["zephlets_dir"]}\n'
+                    f'Or configure custom path: west config zephlet.zephlets-dir <path>')
 
         if not paths['template_dir'].exists():
             log.die(f'template directory not found: {paths["template_dir"]}')
@@ -166,6 +252,18 @@ class Zephlet(WestCommand):
         self._check_dependencies(['proto-schema-parser', 'jinja2'])
 
         paths = self._get_workspace_paths()
+
+        # Check zephlets directory exists
+        if not paths['zephlets_dir'].exists():
+            log.die(f'zephlets directory not found: {paths["zephlets_dir"]}\n'
+                    f'Create zephlets first using: west zephlet new\n'
+                    f'Or configure custom path: west config zephlet.zephlets-dir <path>')
+
+        # Ensure adapters directory exists (auto-create if needed)
+        if not paths['adapters_dir'].exists():
+            self._ensure_adapters_dir(paths['adapters_dir'])
+            log.inf('')  # Blank line for readability
+
         script_path = paths['codegen_dir'] / 'generate_adapter.py'
 
         if not script_path.exists():

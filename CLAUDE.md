@@ -7,6 +7,12 @@
 - `west zephlet new-adapter [-o ORIGIN] [-d DEST] [-i]` - Create adapter (-i for interactive)
 - `west zephlet gen ZEPHLET` - Regenerate interface files (needs `build/modules/<zephlet>_zephlet`)
 
+**Configuration:**
+- `west config zephlet.zephlets-dir <path>` - Custom zephlets location (default: `<project>/src/zephlets/`)
+- `west config zephlet.adapters-dir <path>` - Custom adapters location (default: `<project>/src/adapters/`)
+
+**Fallback:** If `src/` subdirectories don't exist, uses root-level directories for backwards compatibility.
+
 **Implementation:** `west/zephlet_commands.py` (registered via `west-commands.yml`)
 **Benefits:** Ecosystem integration, auto path detection, dependency validation, works from any dir, structured output with next steps
 **Dependencies:** Checks for copier, proto-schema-parser, jinja2 before execution

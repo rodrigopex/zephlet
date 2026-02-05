@@ -32,13 +32,34 @@ Edit your `.proto` file to define Config/Events/RPCs, then run `just b` to boots
 
 ## Configuration
 
-Set `ZEPHLET_ADAPTERS_DIR` if not using workspace/adapters/ convention:
+### Directory Structure
+
+By default, zephlet commands use:
+- Zephlets: `<project>/src/zephlets/`
+- Adapters: `<project>/src/adapters/`
+
+Where `<project>` is the directory containing `west.yml` (manifest repository).
+
+**Backwards compatibility:** If `src/<dir>` doesn't exist, falls back to `<dir>` at project root.
+
+### Custom Paths
+
+Override defaults with west config:
 
 ```bash
+west config zephlet.zephlets-dir <path>
 west config zephlet.adapters-dir <path>
 ```
 
-Default: `workspace_root/adapters/`
+### Adapters Auto-Creation
+
+The adapters directory is auto-created when running `west zephlet new-adapter` if it doesn't exist, including:
+- `src/base_adapter.c` - Shared logging module
+- `CMakeLists.txt` - Build configuration
+- `Kconfig` - Configuration options
+- `zephyr/module.yml` - Module declaration
+
+**Note:** Add `<project>/src/adapters` to root `CMakeLists.txt` `EXTRA_ZEPHYR_MODULES`.
 
 ## Dependencies
 
