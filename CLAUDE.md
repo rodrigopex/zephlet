@@ -41,10 +41,12 @@
 **Generated (build):** zlet_<name>_interface.h (data/API/inline funcs), zlet_<name>_interface.c (channels/dispatcher/registration), zlet_<name>.h (report helpers), zlet_<name>.pb.h/.pb.c (nanopb)
 **Bootstrap:** CMake auto-generates .c once via `--impl-only` if missing. After initial creation, only manually edit .c.
 
-**\_interface.h:** `<zephlet>_data` (state+spinlock), `<zephlet>_api` (func ptrs), inline `<zephlet>_start(timeout)` → pub invoke chan
-**\_interface.c:** Dispatcher (switch/case oneof tags), `<zephlet>_set_implementation()`
-**.c:** Logic, K_SPINLOCK updates, pub reports, ends with `ZEPHLET_DEFINE(<zephlet>, init_fn, &api, &data)`
+**\_interface.h:** `<zephlet>_data` (state+spinlock), `<zephlet>_api` (func ptrs with context param), inline `<zephlet>_start(correlation_id, timeout)` → pub invoke chan with optional context
+**\_interface.c:** Dispatcher (switch/case oneof tags + default), extracts context from invoke, passes to API functions, `<zephlet>_set_implementation()`
+**.c:** Init func (sets is_ready), API impls (add context param), K_SPINLOCK updates, pub reports with context+ret, ends with `ZEPHLET_DEFINE(<zephlet>, init_fn, &api, &data)`. Use `report_*_async()` for events without correlation.
 **Shared:** `struct zephlet` + `ZEPHLET_DEFINE()` → `STRUCT_SECTION_ITERABLE` discovery
+
+**API signatures:** All API functions: `int fn(const struct zephlet*, const struct msg_api_context*, [params...])`. Inline helpers: `int <zephlet>_cmd(uint32_t correlation_id, [params...], k_timeout_t)`. Report helpers: `int <zephlet>_report_*(const struct msg_api_context *context, int ret, [data...], k_timeout_t)`. Async variants: `int <zephlet>_report_*_async([data...], k_timeout_t)` for events/timers.
 
 ### Adapters
 
@@ -58,6 +60,12 @@ Uses `ZBUS_ASYNC_LISTENER_DEFINE()` + `ZBUS_CHAN_ADD_OBS(priority=3)`. Kconfig t
 `MsgZlet<Zephlet> { Config{}, Events{}, Invoke{oneof}, Report{oneof} }`. Invoke: start/stop/get_status/config/get_config+custom. Report: status/config+events. Import "zephlet.proto" for Empty/MsgZephletStatus. Use `option (nanopb_fileopt).anonymous_oneof = true`. Query: get_status/get_config → reports. PROTO_FILES_LIST → nanopb. RPC return types strictly validated against Invoke/Report fields.
 
 **Lifecycle Pattern:** Standard fields explicitly listed in all zephlet protos. Reserved numbers: Invoke 1-6 (start, stop, get_status, config, get_config, get_events), Report 1-3 (status, config, events). Custom commands/reports start at 7+/4+. Comments mark custom field ranges.
+
+**Field validation:** `validate_field_numbers()` enforces reserved ranges at build time. Checks duplicates, standard names at reserved numbers (fails build), warns on gaps (non-fatal). Actionable error messages guide fixes.
+
+**Request-response context:** `MsgAPIContext {correlation_id, return_code}` enables invoke-report correlation + error propagation. `optional MsgAPIContext context = 999` in Invoke/Report. correlation_id=0 means fire-and-forget. return_code follows POSIX errno (0=success, <0=error). `has_context` distinguishes responses from async events.
+
+**Lifecycle state:** `MsgZephletStatus {is_running, is_ready}`. `is_ready` set by init (SYS_INIT), `is_running` controlled by start/stop. Init happens once, start/stop multiple times.
 
 **nanopb types:** Use `struct msg_<zephlet>_{invoke|report|config}`. Naming: `MsgZephlet.Invoke` → `msg_zephlet_invoke`, tags: `MSG_ZEPHLET_INVOKE_START_TAG`, oneof: `which_<oneof_name>`.
 
@@ -118,7 +126,7 @@ Via Kconfig in `prj.conf`:
 
 ## Data Flow
 
-Init: init_fn → register impl. Start: inline func → invoke chan → dispatcher → api->start() → spinlock update → report chan. Runtime: timer → report → adapter → zephlet. Query: get_config → dispatcher → api → read → pub. Flow: invoke → dispatcher → API → spinlock → report → observers.
+Init: init_fn calls init() (sets is_ready) → register impl. Request-response: inline func (with correlation_id) → invoke chan (with context) → dispatcher extracts context → api->cmd(context) → spinlock update → report(context, ret) → observers check has_context + return_code. Async events: timer → report_*_async() (no context) → observers see has_context=false. Query: get_config(context) → dispatcher → api → read → pub with context+ret.
 
 ## Principles
 
