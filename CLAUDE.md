@@ -1,4 +1,4 @@
-# Zephlet Infrastructure
+# Zephlet Infrastructure v0.2.1
 
 ## Commands
 
