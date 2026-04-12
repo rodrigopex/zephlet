@@ -75,12 +75,17 @@ function(zephyr_zephlet_generate_proto ZEPHLET_NAME SCHEMA_FILE BASE_PROTO)
   set(${ZEPHLET_NAME}_GENERATED_PROTO ${GENERATED_PROTO} PARENT_SCOPE)
 endfunction()
 
-# Helper: capitalize first letter of a string (tick -> Tick)
+# Helper: snake_case to PascalCase (tick -> Tick, tamper_detection -> TamperDetection)
 function(_zephlet_capitalize INPUT OUTPUT_VAR)
-  string(SUBSTRING "${INPUT}" 0 1 _first)
-  string(TOUPPER "${_first}" _first)
-  string(SUBSTRING "${INPUT}" 1 -1 _rest)
-  set(${OUTPUT_VAR} "${_first}${_rest}" PARENT_SCOPE)
+  set(_result "")
+  string(REPLACE "_" ";" _parts "${INPUT}")
+  foreach(_part IN LISTS _parts)
+    string(SUBSTRING "${_part}" 0 1 _first)
+    string(TOUPPER "${_first}" _first)
+    string(SUBSTRING "${_part}" 1 -1 _rest)
+    string(APPEND _result "${_first}${_rest}")
+  endforeach()
+  set(${OUTPUT_VAR} "${_result}" PARENT_SCOPE)
 endfunction()
 
 # Adapter code generation
@@ -184,3 +189,55 @@ function(zephlet_adapter_generate)
   zephyr_library_sources(${BUILD_OUTPUT} "src/${ADAPTER_NAME}_impl.c")
   add_dependencies(${ZEPHYR_CURRENT_LIBRARY} ${ADAPTER_NAME}_codegen)
 endfunction()
+
+# Defines a complete zephlet: proto gen, codegen, interface library, and zephyr library.
+# Wraps the entire if(CONFIG_ZEPHLET_<NAME>) guard.
+#
+# Usage:
+#   zephyr_zephlet_define(tick)
+#   zephyr_zephlet_define(ui INCLUDE_DIRS ${EXTRA_INC} SRCS extra.c)
+macro(zephyr_zephlet_define _zephlet_name)
+  cmake_parse_arguments(_zdef "" "" "INCLUDE_DIRS;SRCS" ${ARGN})
+
+  string(TOUPPER "${_zephlet_name}" _zdef_NAME_UPPER)
+  set(_zdef_PREFIX "zlet_${_zephlet_name}")
+  set(_zdef_MODULE_DIR "${ZEPHYR_ZLET_${_zdef_NAME_UPPER}_MODULE_DIR}")
+
+  if(CONFIG_ZEPHLET_${_zdef_NAME_UPPER})
+    # Generate full proto from schema + base proto
+    zephyr_zephlet_generate_proto(${_zdef_PREFIX}
+        "${ZEPHYR_SHARED_ZEPHLET_MODULE_DIR}/zephlet.proto"
+        "${_zdef_MODULE_DIR}/${_zdef_PREFIX}.proto")
+
+    # Register generated proto for nanopb
+    set_property(GLOBAL APPEND PROPERTY PROTO_FILES_LIST
+        "${${_zdef_PREFIX}_GENERATED_PROTO}")
+
+    # Auto-generate zephlet infrastructure from generated proto
+    zephyr_zephlet_generate(${_zdef_PREFIX} "${${_zdef_PREFIX}_GENERATED_PROTO}")
+    add_dependencies(${_zdef_PREFIX}_codegen ${_zdef_PREFIX}_proto_gen)
+
+    # Expose build directory globally for zephlet headers
+    zephyr_include_directories("${CMAKE_CURRENT_BINARY_DIR}")
+
+    # Interface library with include paths
+    zephyr_interface_library_named(${_zdef_PREFIX})
+    target_include_directories(${_zdef_PREFIX} INTERFACE
+        ${_zdef_MODULE_DIR}
+        "${CMAKE_CURRENT_BINARY_DIR}"
+        "${CMAKE_BINARY_DIR}/zephlets"
+        ${_zdef_INCLUDE_DIRS}
+    )
+
+    # Zephyr library with generated + implementation sources
+    zephyr_library()
+    zephyr_library_sources(
+        ${${_zdef_PREFIX}_GENERATED_C}
+        ${_zdef_MODULE_DIR}/${_zdef_PREFIX}.c
+        ${_zdef_SRCS}
+    )
+
+    add_dependencies(${ZEPHYR_CURRENT_LIBRARY} ${_zdef_PREFIX}_codegen)
+    zephyr_library_link_libraries(${_zdef_PREFIX})
+  endif()
+endmacro()

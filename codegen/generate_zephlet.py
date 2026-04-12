@@ -270,7 +270,7 @@ def validate_field_numbers(invoke_fields: list, report_fields: list, zephlet_nam
         3: 'get_status',
         4: 'config',
         5: 'get_config',
-        6: 'get_events'
+        6: 'get_last_event'
     }
     REPORT_STANDARD_FIELDS = {
         1: 'empty',

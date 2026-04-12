@@ -9,7 +9,6 @@
 #include <zephyr/zbus/zbus.h>
 
 ZBUS_CHAN_DECLARE(chan_{{ zephlet_name }}_invoke, chan_{{ zephlet_name }}_report);
-ZBUS_OBS_DECLARE(msub_{{ zephlet_name }}_report);
 
 struct {{ zephlet_name }}_data {
 	struct k_spinlock lock;
@@ -36,46 +35,21 @@ struct {{ zephlet_name }}_api {
 {%- endfor %}
 };
 
-{%- for field in invoke_fields %}
-{%- if field.is_empty %}
-
-static inline int {{ zephlet_name }}_{{ field.name }}(uint32_t correlation_id, k_timeout_t timeout)
-{
-	struct {{ pb_prefix }}_invoke ivk = {
-		.which_{{ invoke_oneof_name }} = {{ pb_prefix_upper }}_INVOKE_{{ field.name|upper }}_TAG
-	};
-	if (correlation_id != 0) {
-		ivk.has_context = true;
-		ivk.context.correlation_id = correlation_id;
-	}
-	return zbus_chan_pub(&chan_{{ zephlet_name }}_invoke, &ivk, timeout);
-}
+/* Blocking call helpers (one per non-streaming RPC) */
+{%- for method in rpc_methods %}
+{%- if not method.output_streaming %}
+{%- if method.input_type == 'Empty' %}
+struct {{ pb_prefix }}_report {{ zephlet_name }}_{{ method.name }}(k_timeout_t timeout);
+{%- elif method.name == 'config' and config_fields %}
+struct {{ pb_prefix }}_report {{ zephlet_name }}_config_set({% for cfg in config_fields %}{{ cfg.type }} {{ cfg.name }}, {% endfor %}k_timeout_t timeout);
+{%- elif method.input_is_enum %}
+struct {{ pb_prefix }}_report {{ zephlet_name }}_{{ method.name }}(enum {{ pb_prefix }}_{{ method.input_type|proto_type_to_snake }} {{ method.input_type|proto_type_to_snake }}, k_timeout_t timeout);
 {%- else %}
-{%- if field.message_type|lower == 'config' and config_fields %}
-
-static inline int {{ zephlet_name }}_{{ field.name }}_set(uint32_t correlation_id, {% for cfg in config_fields %}{{ cfg.type }} {{ cfg.name }}{{ ", " if not loop.last else "" }}{% endfor %}, k_timeout_t timeout)
-{
-	struct {{ pb_prefix }}_invoke ivk = {
-		.which_{{ invoke_oneof_name }} = {{ pb_prefix_upper }}_INVOKE_{{ field.name|upper }}_TAG,
-		.config = {
-{%- for cfg in config_fields %}
-			.{{ cfg.name }} = {{ cfg.name }},
-{%- endfor %}
-		}
-	};
-	if (correlation_id != 0) {
-		ivk.has_context = true;
-		ivk.context.correlation_id = correlation_id;
-	}
-	return zbus_chan_pub(&chan_{{ zephlet_name }}_invoke, &ivk, timeout);
-}
+struct {{ pb_prefix }}_report {{ zephlet_name }}_{{ method.name }}(const struct {{ pb_prefix }}_{{ method.input_type|proto_type_to_snake }} *{{ method.input_type|proto_type_to_snake }}, k_timeout_t timeout);
 {%- endif %}
 {%- endif %}
 {%- endfor %}
 
 int {{ zephlet_name }}_set_implementation(const struct zephlet *implementation);
-
-struct {{ pb_prefix }}_report *{{ zephlet_name }}_wait_report(
-    int filter_tag, k_timeout_t timeout);
 
 #endif /* _{{ zephlet_name_upper }}_H_ */

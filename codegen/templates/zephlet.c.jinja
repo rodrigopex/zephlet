@@ -4,22 +4,45 @@
 #include "{{ zephlet_name }}_interface.h"
 #include <zephyr/zbus/zbus.h>
 #include <zephyr/kernel.h>
+#include <zephyr/sys/atomic.h>
 #include <zephyr/logging/log.h>
 
 LOG_MODULE_REGISTER({{ zephlet_name }}, CONFIG_ZEPHLET_{{ base_name_upper }}_LOG_LEVEL);
+
+/* Sync listener: captures matching report for blocking callers */
+static void {{ zephlet_name }}_sync_report_listener(const struct zbus_channel *chan);
+
+ZBUS_LISTENER_DEFINE_WITH_ENABLE(lis_{{ zephlet_name }}_sync, {{ zephlet_name }}_sync_report_listener, false);
 
 ZBUS_CHAN_DEFINE(chan_{{ zephlet_name }}_invoke, struct {{ pb_prefix }}_invoke, NULL, NULL,
 		 ZBUS_OBSERVERS(lis_{{ zephlet_name }}), {{ pb_prefix_upper }}_INVOKE_INIT_DEFAULT);
 
 ZBUS_CHAN_DEFINE(chan_{{ zephlet_name }}_report, struct {{ pb_prefix }}_report, NULL, NULL,
-		 ZBUS_OBSERVERS_EMPTY, {{ pb_prefix_upper }}_REPORT_INIT_DEFAULT);
-
-ZBUS_MSG_SUBSCRIBER_DEFINE_WITH_ENABLE(msub_{{ zephlet_name }}_report, false);
-ZBUS_CHAN_ADD_OBS(chan_{{ zephlet_name }}_report, msub_{{ zephlet_name }}_report, 3);
-
-static struct {{ pb_prefix }}_report {{ zephlet_name }}_last_report;
+		 ZBUS_OBSERVERS(lis_{{ zephlet_name }}_sync), {{ pb_prefix_upper }}_REPORT_INIT_DEFAULT);
 
 static const struct zephlet *impl = NULL;
+
+/* Correlation ID counter (starts at 1, 0 = no correlation) */
+static atomic_t {{ zephlet_name }}_corr_id_counter = ATOMIC_INIT(0);
+
+/* Zephlet semaphore: guards the entire invoke→report cycle */
+static K_SEM_DEFINE({{ zephlet_name }}_sem, 1, 1);
+
+/* Report signal: given by sync listener when matching report arrives */
+static K_SEM_DEFINE({{ zephlet_name }}_report_sem, 0, 1);
+
+/* Sync report storage: written by listener, read by blocking caller */
+static struct {{ pb_prefix }}_report {{ zephlet_name }}_sync_report;
+static uint32_t {{ zephlet_name }}_expected_cid;
+
+static uint32_t {{ zephlet_name }}_next_correlation_id(void)
+{
+	uint32_t id = (uint32_t)atomic_inc(&{{ zephlet_name }}_corr_id_counter) + 1;
+	if (id == 0) {
+		id = (uint32_t)atomic_inc(&{{ zephlet_name }}_corr_id_counter) + 1;
+	}
+	return id;
+}
 
 int {{ zephlet_name }}_set_implementation(const struct zephlet *implementation)
 {
@@ -57,6 +80,7 @@ static void api_handler(const struct zbus_channel *chan)
 
 	if (ivk->has_context) {
 		context_copy = ivk->context;
+		context_copy.invoke_tag = ivk->which_{{ invoke_oneof_name }};
 		context = &context_copy;
 	} else {
 		context = NULL;
@@ -84,27 +108,201 @@ static void api_handler(const struct zbus_channel *chan)
 
 ZBUS_LISTENER_DEFINE(lis_{{ zephlet_name }}, api_handler);
 
-struct {{ pb_prefix }}_report *{{ zephlet_name }}_wait_report(
-    int filter_tag, k_timeout_t timeout)
+static void {{ zephlet_name }}_sync_report_listener(const struct zbus_channel *chan)
 {
-	const struct zbus_channel *chan;
-	struct {{ pb_prefix }}_report *ret_report = NULL;
-	k_timepoint_t end_time = sys_timepoint_calc(timeout);
+	const struct {{ pb_prefix }}_report *msg = zbus_chan_const_msg(chan);
 
-	do {
-		int err = zbus_sub_wait_msg(&msub_{{ zephlet_name }}_report, &chan,
-					    &{{ zephlet_name }}_last_report,
-					    sys_timepoint_timeout(end_time));
-		if (err != 0 || chan != &chan_{{ zephlet_name }}_report) {
-			continue;
-		}
-		if (filter_tag >= 0 &&
-		    ({{ zephlet_name }}_last_report.which_{{ report_oneof_name }} != filter_tag)) {
-			continue;
-		}
-		ret_report = &{{ zephlet_name }}_last_report;
-	} while (ret_report == NULL &&
-		 !K_TIMEOUT_EQ(sys_timepoint_timeout(end_time), K_NO_WAIT));
-
-	return ret_report;
+	if (msg->has_context &&
+	    msg->context.correlation_id == {{ zephlet_name }}_expected_cid) {
+		{{ zephlet_name }}_sync_report = *msg;
+		k_sem_give(&{{ zephlet_name }}_report_sem);
+	}
 }
+
+/* Blocking call helpers (one per non-streaming RPC) */
+{%- for method in rpc_methods %}
+{%- if not method.output_streaming %}
+{%- set invoke_tag = pb_prefix_upper ~ "_INVOKE_" ~ method.name|upper ~ "_TAG" %}
+{%- set report_tag = pb_prefix_upper ~ "_REPORT_" ~ method.report_field_name|upper ~ "_TAG" %}
+
+{%- if method.input_type == 'Empty' %}
+
+struct {{ pb_prefix }}_report {{ zephlet_name }}_{{ method.name }}(k_timeout_t timeout)
+{
+	struct {{ pb_prefix }}_report report = {0};
+
+	if (k_sem_take(&{{ zephlet_name }}_sem, timeout) != 0) {
+		report.has_context = true;
+		report.context.return_code = -EBUSY;
+		return report;
+	}
+
+	uint32_t cid = {{ zephlet_name }}_next_correlation_id();
+	{{ zephlet_name }}_expected_cid = cid;
+	k_sem_reset(&{{ zephlet_name }}_report_sem);
+
+	struct {{ pb_prefix }}_invoke ivk = {
+		.which_{{ invoke_oneof_name }} = {{ invoke_tag }},
+		.has_context = true,
+		.context = { .correlation_id = cid }
+	};
+
+	int err = zbus_chan_pub(&chan_{{ zephlet_name }}_invoke, &ivk, timeout);
+	if (err != 0) {
+		report.has_context = true;
+		report.context.return_code = err;
+		k_sem_give(&{{ zephlet_name }}_sem);
+		return report;
+	}
+
+	if (k_sem_take(&{{ zephlet_name }}_report_sem, timeout) != 0) {
+		report.has_context = true;
+		report.context.invoke_tag = {{ invoke_tag }};
+		report.context.correlation_id = cid;
+		report.context.return_code = -ETIMEDOUT;
+	} else {
+		report = {{ zephlet_name }}_sync_report;
+	}
+
+	k_sem_give(&{{ zephlet_name }}_sem);
+	return report;
+}
+
+{%- elif method.name == 'config' and config_fields %}
+
+struct {{ pb_prefix }}_report {{ zephlet_name }}_config_set({% for cfg in config_fields %}{{ cfg.type }} {{ cfg.name }}, {% endfor %}k_timeout_t timeout)
+{
+	struct {{ pb_prefix }}_report report = {0};
+
+	if (k_sem_take(&{{ zephlet_name }}_sem, timeout) != 0) {
+		report.has_context = true;
+		report.context.return_code = -EBUSY;
+		return report;
+	}
+
+	uint32_t cid = {{ zephlet_name }}_next_correlation_id();
+	{{ zephlet_name }}_expected_cid = cid;
+	k_sem_reset(&{{ zephlet_name }}_report_sem);
+
+	struct {{ pb_prefix }}_invoke ivk = {
+		.which_{{ invoke_oneof_name }} = {{ invoke_tag }},
+		.config = {
+{%- for cfg in config_fields %}
+			.{{ cfg.name }} = {{ cfg.name }},
+{%- endfor %}
+		},
+		.has_context = true,
+		.context = { .correlation_id = cid }
+	};
+
+	int err = zbus_chan_pub(&chan_{{ zephlet_name }}_invoke, &ivk, timeout);
+	if (err != 0) {
+		report.has_context = true;
+		report.context.return_code = err;
+		k_sem_give(&{{ zephlet_name }}_sem);
+		return report;
+	}
+
+	if (k_sem_take(&{{ zephlet_name }}_report_sem, timeout) != 0) {
+		report.has_context = true;
+		report.context.invoke_tag = {{ invoke_tag }};
+		report.context.correlation_id = cid;
+		report.context.return_code = -ETIMEDOUT;
+	} else {
+		report = {{ zephlet_name }}_sync_report;
+	}
+
+	k_sem_give(&{{ zephlet_name }}_sem);
+	return report;
+}
+
+{%- elif method.input_is_enum %}
+
+struct {{ pb_prefix }}_report {{ zephlet_name }}_{{ method.name }}(enum {{ pb_prefix }}_{{ method.input_type|proto_type_to_snake }} {{ method.input_type|proto_type_to_snake }}, k_timeout_t timeout)
+{
+	struct {{ pb_prefix }}_report report = {0};
+
+	if (k_sem_take(&{{ zephlet_name }}_sem, timeout) != 0) {
+		report.has_context = true;
+		report.context.return_code = -EBUSY;
+		return report;
+	}
+
+	uint32_t cid = {{ zephlet_name }}_next_correlation_id();
+	{{ zephlet_name }}_expected_cid = cid;
+	k_sem_reset(&{{ zephlet_name }}_report_sem);
+
+	struct {{ pb_prefix }}_invoke ivk = {
+		.which_{{ invoke_oneof_name }} = {{ invoke_tag }},
+		.{{ method.name }} = {{ method.input_type|proto_type_to_snake }},
+		.has_context = true,
+		.context = { .correlation_id = cid }
+	};
+
+	int err = zbus_chan_pub(&chan_{{ zephlet_name }}_invoke, &ivk, timeout);
+	if (err != 0) {
+		report.has_context = true;
+		report.context.return_code = err;
+		k_sem_give(&{{ zephlet_name }}_sem);
+		return report;
+	}
+
+	if (k_sem_take(&{{ zephlet_name }}_report_sem, timeout) != 0) {
+		report.has_context = true;
+		report.context.invoke_tag = {{ invoke_tag }};
+		report.context.correlation_id = cid;
+		report.context.return_code = -ETIMEDOUT;
+	} else {
+		report = {{ zephlet_name }}_sync_report;
+	}
+
+	k_sem_give(&{{ zephlet_name }}_sem);
+	return report;
+}
+
+{%- else %}
+
+struct {{ pb_prefix }}_report {{ zephlet_name }}_{{ method.name }}(const struct {{ pb_prefix }}_{{ method.input_type|proto_type_to_snake }} *{{ method.input_type|proto_type_to_snake }}, k_timeout_t timeout)
+{
+	struct {{ pb_prefix }}_report report = {0};
+
+	if (k_sem_take(&{{ zephlet_name }}_sem, timeout) != 0) {
+		report.has_context = true;
+		report.context.return_code = -EBUSY;
+		return report;
+	}
+
+	uint32_t cid = {{ zephlet_name }}_next_correlation_id();
+	{{ zephlet_name }}_expected_cid = cid;
+	k_sem_reset(&{{ zephlet_name }}_report_sem);
+
+	struct {{ pb_prefix }}_invoke ivk = {
+		.which_{{ invoke_oneof_name }} = {{ invoke_tag }},
+		.{{ method.name }} = *{{ method.input_type|proto_type_to_snake }},
+		.has_context = true,
+		.context = { .correlation_id = cid }
+	};
+
+	int err = zbus_chan_pub(&chan_{{ zephlet_name }}_invoke, &ivk, timeout);
+	if (err != 0) {
+		report.has_context = true;
+		report.context.return_code = err;
+		k_sem_give(&{{ zephlet_name }}_sem);
+		return report;
+	}
+
+	if (k_sem_take(&{{ zephlet_name }}_report_sem, timeout) != 0) {
+		report.has_context = true;
+		report.context.invoke_tag = {{ invoke_tag }};
+		report.context.correlation_id = cid;
+		report.context.return_code = -ETIMEDOUT;
+	} else {
+		report = {{ zephlet_name }}_sync_report;
+	}
+
+	k_sem_give(&{{ zephlet_name }}_sem);
+	return report;
+}
+{%- endif %}
+{%- endif %}
+{%- endfor %}

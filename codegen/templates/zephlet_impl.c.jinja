@@ -11,17 +11,16 @@
 LOG_MODULE_DECLARE({{ zephlet_name }}, CONFIG_ZEPHLET_{{ base_name_upper }}_LOG_LEVEL);
 
 /* CONTEXT CORRELATION PATTERN:
- * - All API functions receive struct zephlet_context *context
- * - context->correlation_id: Request ID (caller sets)
+ * - All blocking calls auto-generate correlation_id and wait for response
  * - context->return_code: Set to 0 (success) or -errno (failure)
- * - report_*(context, data, timeout) - request-response (has_context=true)
+ * - report_*(context, data, timeout) - completes the blocking round-trip
  * - report_*_async(data, timeout) - events/timers (has_context=false)
+ * - RPCs returning Empty MUST call report_empty(context, timeout)
  *
  * Common return codes: 0 (success), -ENODEV (not ready),
  *   -EALREADY (wrong state), -EINVAL (bad params), -ENOMEM (alloc fail)
  *
- * Testing: Verify correlation_id echo, return_code, has_context flag,
- *   async events have has_context=false
+ * Caller usage: ZEPHLET_CALL_OK(report) checks has_context && return_code == 0
  */
 
 {%- if rpc_methods %}
@@ -171,10 +170,10 @@ static void {{ method.name }}(const struct zephlet *zephlet, struct zephlet_cont
 	{{ zephlet_name }}_report_config(context, &config, K_MSEC(250));
 }
 {%- endif %}
-{%- elif method.report_field_name == 'events' and method.name == 'get_events' %}
+{%- elif method.report_field_name == 'events' and method.name == 'get_last_event' %}
 
 /* RPC returns {{ method.output_type }} - publish to report field: {{ method.report_field_name }} */
-static void get_events(const struct zephlet *zephlet, struct zephlet_context *context)
+static void get_last_event(const struct zephlet *zephlet, struct zephlet_context *context)
 {
 	struct {{ zephlet_name }}_data *data = zephlet->data;
 	struct {{ pb_prefix }}_events events;
@@ -186,6 +185,28 @@ static void get_events(const struct zephlet *zephlet, struct zephlet_context *co
 	}
 
 	{{ zephlet_name }}_report_events(context, &events, K_MSEC(250));
+}
+{%- elif method.report_field_name == 'empty' %}
+
+/* RPC returns Empty - must call report_empty to complete blocking round-trip */
+static void {{ method.name }}(const struct zephlet *zephlet, struct zephlet_context *context
+{%- if method.input_type != 'Empty' -%}
+{%- if method.input_is_enum -%}
+, enum {{ pb_prefix }}_{{ method.input_type|proto_type_to_snake }} {{ method.input_type|proto_type_to_snake }}
+{%- else -%}
+, const struct {{ pb_prefix }}_{{ method.input_type|proto_type_to_snake }} *{{ method.input_type|proto_type_to_snake }}
+{%- endif -%}
+{%- endif -%})
+{
+	struct {{ zephlet_name }}_data *data = zephlet->data;
+
+	context->return_code = 0;
+
+	K_SPINLOCK(&data->lock) {
+		/* TODO: Implement {{ method.name }} logic */
+	}
+
+	{{ zephlet_name }}_report_empty(context, K_MSEC(250));
 }
 {%- else %}
 

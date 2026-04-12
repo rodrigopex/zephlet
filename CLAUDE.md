@@ -41,12 +41,14 @@
 **Generated (build):** zlet_<name>_interface.h (data/API/inline funcs), zlet_<name>_interface.c (channels/dispatcher/registration), zlet_<name>.h (report helpers), zlet_<name>.pb.h/.pb.c (nanopb)
 **Bootstrap:** CMake auto-generates .c once via `--impl-only` if missing. After initial creation, only manually edit .c.
 
-**\_interface.h:** `<zephlet>_data` (state+spinlock), `<zephlet>_api` (func ptrs with context param), inline `<zephlet>_start(correlation_id, timeout)` → pub invoke chan with optional context
-**\_interface.c:** Dispatcher (switch/case oneof tags + default), extracts context from invoke, passes to API functions, `<zephlet>_set_implementation()`
-**.c:** Init func (sets is_ready), API impls (add context param), K_SPINLOCK updates, pub reports with context+ret, ends with `ZEPHLET_DEFINE(<zephlet>, init_fn, &api, &data)`. Use `report_*_async()` for events without correlation.
-**Shared:** `struct zephlet` + `ZEPHLET_DEFINE()` → `STRUCT_SECTION_ITERABLE` discovery
+**\_interface.h:** `<zephlet>_data` (state+spinlock), `<zephlet>_api` (func ptrs with context param), blocking call declarations
+**\_interface.c:** Dispatcher (switch/case oneof tags + default, sets `context.invoke_tag`), blocking call implementations (semaphore-serialized, auto-correlated), `wait_report_sync`, `<zephlet>_set_implementation()`
+**.c:** Init func (sets is_ready), API impls (context param), K_SPINLOCK updates, pub reports with context+ret, ends with `ZEPHLET_DEFINE(<zephlet>, init_fn, &api, &data)`. Use `report_*_async()` for events. RPCs returning Empty must call `report_empty(context)`.
+**Shared:** `struct zephlet` + `ZEPHLET_DEFINE()` + `ZEPHLET_CALL_OK()` → `STRUCT_SECTION_ITERABLE` discovery
 
-**API signatures:** All API functions: `int fn(const struct zephlet*, const struct msg_api_context*, [params...])`. Inline helpers: `int <zephlet>_cmd(uint32_t correlation_id, [params...], k_timeout_t)`. Report helpers: `int <zephlet>_report_*(const struct msg_api_context *context, int ret, [data...], k_timeout_t)`. Async variants: `int <zephlet>_report_*_async([data...], k_timeout_t)` for events/timers.
+**Blocking API (gRPC-style):** All unary RPCs are blocking. `struct <report> <zephlet>_<cmd>([params...], k_timeout_t)`. Returns report by value. Use `ZEPHLET_CALL_OK(report)` to check success. On error: `report.context.return_code` has -ETIMEDOUT, -EBUSY, -EALREADY, etc. `report.context.invoke_tag` identifies which RPC produced the response. All standard lifecycle RPCs including `get_last_event` are blocking.
+**Report helpers (impl-side):** `int <zephlet>_report_*(context, [data...], k_timeout_t)`. Async: `int <zephlet>_report_*_async([data...], k_timeout_t)` for events/timers.
+**Advanced:** `ZEPHLET_OBSERVE_REPORT` + `wait_report` still available for listener patterns.
 
 ### Adapters
 
@@ -59,11 +61,11 @@ Uses `ZBUS_ASYNC_LISTENER_DEFINE()` + `ZBUS_CHAN_ADD_OBS(priority=3)`. Kconfig t
 
 `MsgZlet<Zephlet> { Config{}, Events{}, Invoke{oneof}, Report{oneof} }`. Invoke: start/stop/get_status/config/get_config+custom. Report: status/config+events. Import "zephlet.proto" for Empty/MsgZephletStatus. Use `option (nanopb_fileopt).anonymous_oneof = true` and `option (nanopb_fileopt).long_names = false` (shorter C symbols, e.g. `MSG_TICK_INVOKE` instead of `MSG_ZLET_TICK_MSG_ZLET_TICK_INVOKE`). Query: get_status/get_config → reports. PROTO_FILES_LIST → nanopb. RPC return types strictly validated against Invoke/Report fields.
 
-**Lifecycle Pattern:** Standard fields explicitly listed in all zephlet protos. Reserved numbers: Invoke 1-6 (start, stop, get_status, config, get_config, get_events), Report 1-3 (status, config, events). Custom commands/reports start at 7+/4+. Comments mark custom field ranges.
+**Lifecycle Pattern:** Standard fields explicitly listed in all zephlet protos. Reserved numbers: Invoke 1-6 (start, stop, get_status, config, get_config, get_last_event), Report 1-3 (status, config, events). Custom commands/reports start at 7+/4+. Comments mark custom field ranges.
 
 **Field validation:** `validate_field_numbers()` enforces reserved ranges at build time. Checks duplicates, standard names at reserved numbers (fails build), warns on gaps (non-fatal). Actionable error messages guide fixes.
 
-**Request-response context:** `MsgAPIContext {correlation_id, return_code}` enables invoke-report correlation + error propagation. `optional MsgAPIContext context = 999` in Invoke/Report. correlation_id=0 means fire-and-forget. return_code follows POSIX errno (0=success, <0=error). `has_context` distinguishes responses from async events.
+**Request-response context:** `ZephletContext {correlation_id, return_code, invoke_tag}` enables invoke-report correlation + error propagation. `optional ZephletContext context = 999` in Invoke/Report. Blocking calls auto-generate correlation_id and set invoke_tag. return_code follows POSIX errno (0=success, <0=error). `has_context` distinguishes responses from async events. `invoke_tag` identifies which RPC produced the response. `ZEPHLET_CALL_OK(report)` checks `has_context && return_code == 0`.
 
 **Lifecycle state:** `MsgZephletStatus {is_running, is_ready}`. `is_ready` set by init (SYS_INIT), `is_running` controlled by start/stop. Init happens once, start/stop multiple times.
 
@@ -71,6 +73,7 @@ Uses `ZBUS_ASYNC_LISTENER_DEFINE()` + `ZBUS_CHAN_ADD_OBS(priority=3)`. Kconfig t
 
 ## Build System
 
+**CMake macro:** `zephyr_zephlet_define(<name> [INCLUDE_DIRS ...] [SRCS ...])` - defines complete zephlet (proto gen, codegen, interface lib, zephyr lib). Wraps `CONFIG_ZEPHLET_<NAME>` guard. Derives all names from `<name>`. Each zephlet CMakeLists.txt is a single line: `zephyr_zephlet_define(tick)`.
 **CMake function:** `zephyr_zephlet_generate(<proto_path>)` - auto-generates interface files, handles bootstrap with `--impl-only` flag.
 **Include strategy:** shared_zephlet exposes `${CMAKE_BINARY_DIR}/zephlets` globally (for .pb.h). Each zephlet exposes build dir for interface headers via `zephyr_include_directories("${CMAKE_CURRENT_BINARY_DIR}")` after `zephyr_zephlet_generate()`. Interface library pattern: `zephyr_interface_library_named()` for include propagation.
 **Proto collection:** Each zephlet appends to `PROTO_FILES_LIST` global property, root retrieves and passes to `zephyr_nanopb_sources()`.
@@ -125,7 +128,7 @@ Via Kconfig in `prj.conf`:
 
 ## Data Flow
 
-Init: init_fn calls init() (sets is_ready) → register impl. Request-response: inline func (with correlation_id) → invoke chan (with context) → dispatcher extracts context → api->cmd(context) → spinlock update → report(context, ret) → observers check has_context + return_code. Async events: timer → report_*_async() (no context) → observers see has_context=false. Query: get_config(context) → dispatcher → api → read → pub with context+ret.
+Init: init_fn calls init() (sets is_ready) → register impl. Blocking call: `<zlet>_start(timeout)` → sem_take → auto correlation_id → pub invoke (with context+invoke_tag) → wait_report_sync (filters tag+invoke_tag+correlation_id) → sem_give → return report by value. Async events: timer → report_*_async() (no context) → observers see has_context=false. Error: -EBUSY (sem), -ETIMEDOUT (wait), or app error in return_code.
 
 ## Principles
 

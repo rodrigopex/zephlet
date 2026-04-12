@@ -113,7 +113,7 @@ report:
 	zlet_{{ zephlet_name_lower }}_report_config(context, &config, K_MSEC(250));
 }
 
-static void get_events(const struct zephlet *zephlet, struct zephlet_context *context)
+static void get_last_event(const struct zephlet *zephlet, struct zephlet_context *context)
 {
 	struct zlet_{{ zephlet_name_lower }}_data *data = zephlet->data;
 	struct {{ zephlet_name_lower }}_events events;
@@ -154,7 +154,7 @@ static struct zlet_{{ zephlet_name_lower }}_api api = {
 	.get_status = get_status,
 	.config = config,
 	.get_config = get_config,
-	.get_events = get_events,
+	.get_last_event = get_last_event,
 	/* TODO: Add custom RPC method pointers */
 };
 
