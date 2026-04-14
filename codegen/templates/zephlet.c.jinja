@@ -97,8 +97,8 @@ static void api_handler(const struct zbus_channel *chan)
 
 	struct {{ zephlet_name }}_context ctx = {
 		.zephlet = impl,
-		.timeout = ivk->has_result ? self.deadline
-					   : sys_timepoint_calc(K_FOREVER),
+		.deadline = ivk->has_result ? self.deadline
+					    : sys_timepoint_calc(K_FOREVER),
 	};
 
 	switch (ivk->which_{{ invoke_oneof_name }}) {
@@ -127,7 +127,8 @@ static void api_handler(const struct zbus_channel *chan)
 	if (result && ctx.response.which_{{ report_oneof_name }} != 0) {
 		ctx.response.has_result = true;
 		ctx.response.result = *result;
-		zbus_chan_pub(&chan_{{ zephlet_name }}_report, &ctx.response, K_MSEC(250));
+		zbus_chan_pub(&chan_{{ zephlet_name }}_report, &ctx.response,
+			      sys_timepoint_timeout(ctx.deadline));
 	}
 }
 
@@ -155,6 +156,7 @@ static void {{ zephlet_name }}_sync_report_listener(const struct zbus_channel *c
 struct {{ pb_prefix }}_report {{ zephlet_name }}_{{ method.name }}(k_timeout_t timeout)
 {
 	struct {{ pb_prefix }}_report report = {0};
+	k_timepoint_t deadline = sys_timepoint_calc(timeout);
 
 	if (k_sem_take(&{{ zephlet_name }}_sem, timeout) != 0) {
 		report.has_result = true;
@@ -164,7 +166,7 @@ struct {{ pb_prefix }}_report {{ zephlet_name }}_{{ method.name }}(k_timeout_t t
 
 	uint32_t cid = {{ zephlet_name }}_next_correlation_id();
 	self.expected_cid = cid;
-	self.deadline = sys_timepoint_calc(timeout);
+	self.deadline = deadline;
 	k_sem_reset(&{{ zephlet_name }}_report_sem);
 
 	struct {{ pb_prefix }}_invoke ivk = {
@@ -173,7 +175,8 @@ struct {{ pb_prefix }}_report {{ zephlet_name }}_{{ method.name }}(k_timeout_t t
 		.result = { .correlation_id = cid }
 	};
 
-	int err = zbus_chan_pub(&chan_{{ zephlet_name }}_invoke, &ivk, timeout);
+	int err = zbus_chan_pub(&chan_{{ zephlet_name }}_invoke, &ivk,
+				sys_timepoint_timeout(deadline));
 	if (err != 0) {
 		report.has_result = true;
 		report.result.return_code = err;
@@ -181,7 +184,7 @@ struct {{ pb_prefix }}_report {{ zephlet_name }}_{{ method.name }}(k_timeout_t t
 		return report;
 	}
 
-	if (k_sem_take(&{{ zephlet_name }}_report_sem, timeout) != 0) {
+	if (k_sem_take(&{{ zephlet_name }}_report_sem, sys_timepoint_timeout(deadline)) != 0) {
 		report.has_result = true;
 		report.result.invoke_tag = {{ invoke_tag }};
 		report.result.correlation_id = cid;
@@ -199,6 +202,7 @@ struct {{ pb_prefix }}_report {{ zephlet_name }}_{{ method.name }}(k_timeout_t t
 struct {{ pb_prefix }}_report {{ zephlet_name }}_config_set({% for cfg in config_fields %}{{ cfg.type }} {{ cfg.name }}, {% endfor %}k_timeout_t timeout)
 {
 	struct {{ pb_prefix }}_report report = {0};
+	k_timepoint_t deadline = sys_timepoint_calc(timeout);
 
 	if (k_sem_take(&{{ zephlet_name }}_sem, timeout) != 0) {
 		report.has_result = true;
@@ -208,7 +212,7 @@ struct {{ pb_prefix }}_report {{ zephlet_name }}_config_set({% for cfg in config
 
 	uint32_t cid = {{ zephlet_name }}_next_correlation_id();
 	self.expected_cid = cid;
-	self.deadline = sys_timepoint_calc(timeout);
+	self.deadline = deadline;
 	k_sem_reset(&{{ zephlet_name }}_report_sem);
 
 	struct {{ pb_prefix }}_invoke ivk = {
@@ -222,7 +226,8 @@ struct {{ pb_prefix }}_report {{ zephlet_name }}_config_set({% for cfg in config
 		.result = { .correlation_id = cid }
 	};
 
-	int err = zbus_chan_pub(&chan_{{ zephlet_name }}_invoke, &ivk, timeout);
+	int err = zbus_chan_pub(&chan_{{ zephlet_name }}_invoke, &ivk,
+				sys_timepoint_timeout(deadline));
 	if (err != 0) {
 		report.has_result = true;
 		report.result.return_code = err;
@@ -230,7 +235,7 @@ struct {{ pb_prefix }}_report {{ zephlet_name }}_config_set({% for cfg in config
 		return report;
 	}
 
-	if (k_sem_take(&{{ zephlet_name }}_report_sem, timeout) != 0) {
+	if (k_sem_take(&{{ zephlet_name }}_report_sem, sys_timepoint_timeout(deadline)) != 0) {
 		report.has_result = true;
 		report.result.invoke_tag = {{ invoke_tag }};
 		report.result.correlation_id = cid;
@@ -248,6 +253,7 @@ struct {{ pb_prefix }}_report {{ zephlet_name }}_config_set({% for cfg in config
 struct {{ pb_prefix }}_report {{ zephlet_name }}_{{ method.name }}(enum {{ pb_prefix }}_{{ method.input_type|proto_type_to_snake }} {{ method.input_type|proto_type_to_snake }}, k_timeout_t timeout)
 {
 	struct {{ pb_prefix }}_report report = {0};
+	k_timepoint_t deadline = sys_timepoint_calc(timeout);
 
 	if (k_sem_take(&{{ zephlet_name }}_sem, timeout) != 0) {
 		report.has_result = true;
@@ -257,7 +263,7 @@ struct {{ pb_prefix }}_report {{ zephlet_name }}_{{ method.name }}(enum {{ pb_pr
 
 	uint32_t cid = {{ zephlet_name }}_next_correlation_id();
 	self.expected_cid = cid;
-	self.deadline = sys_timepoint_calc(timeout);
+	self.deadline = deadline;
 	k_sem_reset(&{{ zephlet_name }}_report_sem);
 
 	struct {{ pb_prefix }}_invoke ivk = {
@@ -267,7 +273,8 @@ struct {{ pb_prefix }}_report {{ zephlet_name }}_{{ method.name }}(enum {{ pb_pr
 		.result = { .correlation_id = cid }
 	};
 
-	int err = zbus_chan_pub(&chan_{{ zephlet_name }}_invoke, &ivk, timeout);
+	int err = zbus_chan_pub(&chan_{{ zephlet_name }}_invoke, &ivk,
+				sys_timepoint_timeout(deadline));
 	if (err != 0) {
 		report.has_result = true;
 		report.result.return_code = err;
@@ -275,7 +282,7 @@ struct {{ pb_prefix }}_report {{ zephlet_name }}_{{ method.name }}(enum {{ pb_pr
 		return report;
 	}
 
-	if (k_sem_take(&{{ zephlet_name }}_report_sem, timeout) != 0) {
+	if (k_sem_take(&{{ zephlet_name }}_report_sem, sys_timepoint_timeout(deadline)) != 0) {
 		report.has_result = true;
 		report.result.invoke_tag = {{ invoke_tag }};
 		report.result.correlation_id = cid;
@@ -293,6 +300,7 @@ struct {{ pb_prefix }}_report {{ zephlet_name }}_{{ method.name }}(enum {{ pb_pr
 struct {{ pb_prefix }}_report {{ zephlet_name }}_{{ method.name }}(const struct {{ pb_prefix }}_{{ method.input_type|proto_type_to_snake }} *{{ method.input_type|proto_type_to_snake }}, k_timeout_t timeout)
 {
 	struct {{ pb_prefix }}_report report = {0};
+	k_timepoint_t deadline = sys_timepoint_calc(timeout);
 
 	if (k_sem_take(&{{ zephlet_name }}_sem, timeout) != 0) {
 		report.has_result = true;
@@ -302,7 +310,7 @@ struct {{ pb_prefix }}_report {{ zephlet_name }}_{{ method.name }}(const struct 
 
 	uint32_t cid = {{ zephlet_name }}_next_correlation_id();
 	self.expected_cid = cid;
-	self.deadline = sys_timepoint_calc(timeout);
+	self.deadline = deadline;
 	k_sem_reset(&{{ zephlet_name }}_report_sem);
 
 	struct {{ pb_prefix }}_invoke ivk = {
@@ -312,7 +320,8 @@ struct {{ pb_prefix }}_report {{ zephlet_name }}_{{ method.name }}(const struct 
 		.result = { .correlation_id = cid }
 	};
 
-	int err = zbus_chan_pub(&chan_{{ zephlet_name }}_invoke, &ivk, timeout);
+	int err = zbus_chan_pub(&chan_{{ zephlet_name }}_invoke, &ivk,
+				sys_timepoint_timeout(deadline));
 	if (err != 0) {
 		report.has_result = true;
 		report.result.return_code = err;
@@ -320,7 +329,7 @@ struct {{ pb_prefix }}_report {{ zephlet_name }}_{{ method.name }}(const struct 
 		return report;
 	}
 
-	if (k_sem_take(&{{ zephlet_name }}_report_sem, timeout) != 0) {
+	if (k_sem_take(&{{ zephlet_name }}_report_sem, sys_timepoint_timeout(deadline)) != 0) {
 		report.has_result = true;
 		report.result.invoke_tag = {{ invoke_tag }};
 		report.result.correlation_id = cid;

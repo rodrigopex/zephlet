@@ -24,7 +24,7 @@ struct {{ zephlet_name }}_data {
 struct {{ zephlet_name }}_context {
 	const struct zephlet *zephlet;
 	struct {{ pb_prefix }}_report response;
-	k_timepoint_t timeout;
+	k_timepoint_t deadline;
 };
 
 struct {{ zephlet_name }}_api {
