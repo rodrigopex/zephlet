@@ -7,8 +7,12 @@ option (nanopb_fileopt).anonymous_oneof = true;
 option (nanopb_fileopt).long_names = false;
 
 message {{ zephlet_name_pascal }} {
-  message Config {
-    /* TODO: Add configuration fields specific to {{ zephlet_name }} */
+  /* RPC-mutable runtime settings. Every field MUST be `optional` so the
+   * generated update_settings merge can use nanopb has_<field> flags. */
+  message Settings {
+    /* TODO: Add settings fields specific to {{ zephlet_name }}. Example:
+     *   optional uint32 some_param = 1;
+     */
   }
 
   message Events {
@@ -19,5 +23,5 @@ message {{ zephlet_name_pascal }} {
 
 service {{ zephlet_name_pascal }} {
   option (zephlet.extends_base) = true; /* Extends base zlet */
-  /* Custom RPCs below (base RPCs are auto-generated) */
+  /* Custom RPCs below (base lifecycle RPCs are auto-generated) */
 }

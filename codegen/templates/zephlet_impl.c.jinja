@@ -1,291 +1,94 @@
-/* GENERATED FILE - DO NOT EDIT */
-/* Complete TODO items and remove this header when implementation is done */
-
-#include "{{ zephlet_name }}_interface.h"
+/* Scaffold generated once when the zephlet is created.                    */
+/* Delete the TODO markers as you flesh out the implementation.             */
 
 #include "{{ zephlet_name }}.h"
+
 #include <errno.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
 LOG_MODULE_DECLARE({{ zephlet_name }}, CONFIG_ZEPHLET_{{ base_name_upper }}_LOG_LEVEL);
 
-/* API PATTERN:
- * - Each API function receives a {{ zephlet_name }}_context *ctx
- *   ctx->zephlet: the zephlet instance (access data via ctx->zephlet->data)
- *   ctx->response: the report to fill (set payload fields)
- * - Return 0 on success, <0 on error (POSIX errno)
- * - The interface layer handles publishing and result injection
- * - For async events use report_*_async(data, timeout) (has_result=false)
+/*
+ * Implementation notes
+ * --------------------
  *
- * Common return codes: 0 (success), -ENODEV (not ready),
- *   -EALREADY (wrong state), -EINVAL (bad params), -ENOMEM (alloc fail)
+ * Standard lifecycle RPCs (start/stop/get_status/update_settings/
+ * get_settings/get_events) are dispatched directly from the generated
+ * api_handler. To attach side effects, provide a strong override for
+ * any of the weak hooks declared in {{ zephlet_name }}_interface.h:
  *
- * Caller usage: ZEPHLET_CALL_OK(report) checks has_result && return_code == 0
- */
-
-{%- if rpc_methods %}
-{%- for method in rpc_methods %}
-
-{%- if method.report_field_name == 'status' %}
-{%- if method.name == 'start' %}
-static int start(struct {{ zephlet_name }}_context *ctx)
-{
-	struct {{ zephlet_name }}_data *data = ctx->zephlet->data;
-	int ret = 0;
-
-	K_SPINLOCK(&data->lock) {
-		if (!data->status.is_ready) {
-			ret = -ENODEV;
-		} else if (data->status.is_running) {
-			ret = -EALREADY;
-		} else {
-			data->status.is_running = true;
-			/* TODO: Start zephlet operation (if needed) */
-		}
-		ctx->response.status = data->status;
-	}
-
-	return ret;
-}
-{%- elif method.name == 'stop' %}
-
-static int stop(struct {{ zephlet_name }}_context *ctx)
-{
-	struct {{ zephlet_name }}_data *data = ctx->zephlet->data;
-	int ret = 0;
-
-	K_SPINLOCK(&data->lock) {
-		if (!data->status.is_running) {
-			ret = -EALREADY;
-		} else {
-			data->status.is_running = false;
-			/* TODO: Stop zephlet operation (if needed) */
-		}
-		ctx->response.status = data->status;
-	}
-
-	return ret;
-}
-{%- elif method.name == 'get_status' %}
-
-static int get_status(struct {{ zephlet_name }}_context *ctx)
-{
-	struct {{ zephlet_name }}_data *data = ctx->zephlet->data;
-
-	K_SPINLOCK(&data->lock) {
-		ctx->response.status = data->status;
-	}
-
-	return 0;
-}
-{%- else %}
-
-/* RPC returns {{ method.output_type }} (status) */
-static int {{ method.name }}(struct {{ zephlet_name }}_context *ctx
-{%- if method.input_type != 'Empty' -%}
-{%- if method.input_is_enum -%}
-, enum {{ pb_prefix }}_{{ method.input_type|proto_type_to_snake }} {{ method.input_type|proto_type_to_snake }}
-{%- else -%}
-, const struct {{ pb_prefix }}_{{ method.input_type|proto_type_to_snake }} *{{ method.input_type|proto_type_to_snake }}
-{%- endif -%}
-{%- endif -%})
-{
-	struct {{ zephlet_name }}_data *data = ctx->zephlet->data;
-
-	K_SPINLOCK(&data->lock) {
-		/* TODO: Implement {{ method.name }} logic */
-		ctx->response.status = data->status;
-	}
-
-	return 0;
-}
+ *   {{ zephlet_name }}_pre_start   / {{ zephlet_name }}_post_start
+ *   {{ zephlet_name }}_pre_stop    / {{ zephlet_name }}_post_stop
+{%- if has_settings %}
+ *   {{ zephlet_name }}_validate_settings
+ *   {{ zephlet_name }}_post_update_settings
 {%- endif %}
-{%- elif method.report_field_name == 'config' %}
-{%- if method.name == 'config' %}
-
-static int config(struct {{ zephlet_name }}_context *ctx, const struct {{ pb_prefix }}_config *config)
-{
-	struct {{ zephlet_name }}_data *data = ctx->zephlet->data;
-
-	/* TODO: Validate config (return -EINVAL on error) */
-
-	K_SPINLOCK(&data->lock) {
-		data->config = *config;
-		/* TODO: Apply configuration changes to zephlet resources */
-	}
-
-	ctx->response.config = *config;
-	return 0;
-}
-{%- elif method.name == 'get_config' %}
-
-static int get_config(struct {{ zephlet_name }}_context *ctx)
-{
-	struct {{ zephlet_name }}_data *data = ctx->zephlet->data;
-
-	K_SPINLOCK(&data->lock) {
-		ctx->response.config = data->config;
-	}
-
-	return 0;
-}
-{%- else %}
-
-/* RPC returns {{ method.output_type }} (config) */
-static int {{ method.name }}(struct {{ zephlet_name }}_context *ctx
-{%- if method.input_type != 'Empty' -%}
-{%- if method.input_is_enum -%}
-, enum {{ pb_prefix }}_{{ method.input_type|proto_type_to_snake }} {{ method.input_type|proto_type_to_snake }}
-{%- else -%}
-, const struct {{ pb_prefix }}_{{ method.input_type|proto_type_to_snake }} *{{ method.input_type|proto_type_to_snake }}
-{%- endif -%}
-{%- endif -%})
-{
-	struct {{ zephlet_name }}_data *data = ctx->zephlet->data;
-
-	K_SPINLOCK(&data->lock) {
-		/* TODO: Implement {{ method.name }} logic */
-		ctx->response.config = data->config;
-	}
-
-	return 0;
-}
-{%- endif %}
-{%- elif method.report_field_name == 'events' and method.name == 'get_events' %}
-
-static int get_events(struct {{ zephlet_name }}_context *ctx)
-{
-	struct {{ zephlet_name }}_data *data = ctx->zephlet->data;
-
-	K_SPINLOCK(&data->lock) {
-		ctx->response.events = data->events;
-	}
-
-	return 0;
-}
-{%- elif method.report_field_name == 'empty' %}
-
-static int {{ method.name }}(struct {{ zephlet_name }}_context *ctx
-{%- if method.input_type != 'Empty' -%}
-{%- if method.input_is_enum -%}
-, enum {{ pb_prefix }}_{{ method.input_type|proto_type_to_snake }} {{ method.input_type|proto_type_to_snake }}
-{%- else -%}
-, const struct {{ pb_prefix }}_{{ method.input_type|proto_type_to_snake }} *{{ method.input_type|proto_type_to_snake }}
-{%- endif -%}
-{%- endif -%})
-{
-	struct {{ zephlet_name }}_data *data = ctx->zephlet->data;
-
-	K_SPINLOCK(&data->lock) {
-		/* TODO: Implement {{ method.name }} logic */
-	}
-
-	return 0;
-}
-{%- else %}
-
-/* RPC returns {{ method.output_type }} - publish to report field: {{ method.report_field_name }} */
-static int {{ method.name }}(struct {{ zephlet_name }}_context *ctx
-{%- if method.input_type != 'Empty' -%}
-{%- if method.input_is_enum -%}
-, enum {{ pb_prefix }}_{{ method.input_type|proto_type_to_snake }} {{ method.input_type|proto_type_to_snake }}
-{%- else -%}
-, const struct {{ pb_prefix }}_{{ method.input_type|proto_type_to_snake }} *{{ method.input_type|proto_type_to_snake }}
-{%- endif -%}
-{%- endif -%})
-{
-	struct {{ zephlet_name }}_data *data = ctx->zephlet->data;
-
-	K_SPINLOCK(&data->lock) {
-		/* TODO: Implement {{ method.name }} logic */
-	}
-
-{%- if method.output_streaming %}
-	/* Output-streaming RPC: publish events from async contexts (timer/IRQ) */
-	/* {{ zephlet_name }}_report_{{ method.report_field_name }}_async(&event, K_NO_WAIT); */
-{%- endif %}
-
-	return 0;
-}
-{%- endif %}
-{%- endfor %}
-{%- else %}
-{%- for field in invoke_fields %}
-
-static int {{ field.name }}(struct {{ zephlet_name }}_context *ctx
-{%- if not field.is_empty -%}
-{%- if field.is_enum -%}
-, enum {{ pb_prefix }}_{{ field.message_type|camel_to_snake }} {{ field.message_type|camel_to_snake }}
-{%- else -%}
-, const struct {{ pb_prefix }}_{{ field.message_type|camel_to_snake }} *{{ field.message_type|camel_to_snake }}
-{%- endif -%}
-{%- endif -%})
-{
-	struct {{ zephlet_name }}_data *data = ctx->zephlet->data;
-
-	K_SPINLOCK(&data->lock) {
-		/* TODO: Access/modify zephlet state and fill ctx->response */
-	}
-
-	return 0;
-}
-{%- endfor %}
-{%- endif %}
-
-/* Called by init_fn during SYS_INIT - sets is_ready on success */
-static int {{ zephlet_name }}_init(const struct zephlet *zephlet)
-{
-	struct {{ zephlet_name }}_data *data = zephlet->data;
-	int ret = 0;
-
-	K_SPINLOCK(&data->lock) {
-		/* TODO: Initialize zephlet resources (one-time setup) */
-		if (ret == 0) {
-			data->status.is_ready = true;
-		}
-	}
-
-	return ret;
-}
-
-static struct {{ zephlet_name }}_api api = {
-{%- if rpc_methods %}
-{%- for method in rpc_methods %}
-	.{{ method.name }} = {{ method.name }},
-{%- endfor %}
-{%- else %}
-{%- for field in invoke_fields %}
-	.{{ field.name }} = {{ field.name }},
-{%- endfor %}
-{%- endif %}
-};
-
-static struct {{ zephlet_name }}_data data = {
-	.status = ZEPHLET_STATUS_INIT_ZERO,
-{%- if has_config %}
-	.config = {{ pb_prefix_upper }}_CONFIG_INIT_ZERO,
+ *
+ * Access mutable state through the internal helpers in {{ zephlet_name }}.h:
+ *
+ *   struct zephlet_status {{ base_name }}_status_clone(void);
+{%- if has_settings %}
+ *   struct {{ settings_type }} {{ base_name }}_settings_clone(void);
+ *   void {{ base_name }}_settings_init(const struct {{ settings_type }} *defaults);
 {%- endif %}
 {%- if has_events %}
-	.events = {{ pb_prefix_upper }}_EVENTS_INIT_ZERO
+ *   struct {{ pb_prefix }}_events {{ base_name }}_events_clone(void);
+ *   int {{ base_name }}_events_update(const struct {{ pb_prefix }}_events *ev, k_timeout_t timeout);
 {%- endif %}
+ */
+
+{%- for method in custom_rpc_methods %}
+{%- if not method.output_streaming %}
+
+static int {{ method.name }}(struct {{ zephlet_name }}_context *ctx
+{%- if method.input_type != 'Empty' and not method.input_type.endswith('.Empty') -%}
+{%- if method.input_is_enum -%}
+, enum {{ pb_prefix }}_{{ method.input_type|proto_type_to_snake }} {{ method.input_type|proto_type_to_snake }}
+{%- else -%}
+, const struct {{ pb_prefix }}_{{ method.input_type|proto_type_to_snake }} *{{ method.input_type|proto_type_to_snake }}
+{%- endif -%}
+{%- endif -%})
+{
+	ARG_UNUSED(ctx);
+{%- if method.input_type != 'Empty' and not method.input_type.endswith('.Empty') %}
+	ARG_UNUSED({{ method.input_type|proto_type_to_snake }});
+{%- endif %}
+
+	/* TODO: implement {{ method.name }} */
+	return 0;
+}
+{%- endif %}
+{%- endfor %}
+
+{%- if custom_invoke_fields %}
+
+static struct {{ zephlet_name }}_api api = {
+{%- for field in custom_invoke_fields %}
+	.{{ field.name }} = {{ field.name }},
+{%- endfor %}
 };
+{%- endif %}
 
 int {{ zephlet_name }}_init_fn(const struct zephlet *self)
 {
-	int err;
+{%- if has_settings %}
+	/* TODO: seed non-zero Settings defaults here. Example:
+	 *   struct {{ settings_type }} defaults = { .has_<field> = true, .<field> = <value> };
+	 *   {{ base_name }}_settings_init(&defaults);
+	 */
+{%- endif %}
 
-	/* Initialize zephlet resources */
-	err = {{ zephlet_name }}_init(self);
-
-	/* Register implementation */
+	int err = {{ zephlet_name }}_set_implementation(self);
 	if (err == 0) {
-		err = {{ zephlet_name }}_set_implementation(self);
+		zephlet_mark_ready(self);
 	}
-
 	printk("   -> %s %sinitialized\n", self->name, err == 0 ? "" : "not ");
-
 	return err;
 }
 
-ZEPHLET_DEFINE({{ zephlet_name }}, {{ zephlet_name }}_init_fn, &api, &data);
+{% if custom_invoke_fields -%}
+ZEPHLET_DEFINE({{ zephlet_name }}, {{ zephlet_name }}_init_fn, &api);
+{%- else -%}
+ZEPHLET_DEFINE({{ zephlet_name }}, {{ zephlet_name }}_init_fn, NULL);
+{%- endif %}

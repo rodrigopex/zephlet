@@ -268,14 +268,14 @@ def validate_field_numbers(invoke_fields: list, report_fields: list, zephlet_nam
         1: 'start',
         2: 'stop',
         3: 'get_status',
-        4: 'config',
-        5: 'get_config',
+        4: 'update_settings',
+        5: 'get_settings',
         6: 'get_events'
     }
     REPORT_STANDARD_FIELDS = {
         1: 'empty',
         2: 'status',
-        3: 'config',
+        3: 'settings',
         4: 'events'
     }
 
@@ -432,7 +432,7 @@ def parse_zephlet_proto(proto_path: str, zephlet_name: str, module_dir: str, out
     # Find nested messages
     invoke_msg = None
     report_msg = None
-    config_msg = None
+    settings_msg = None
     events_msg = None
 
     # Get nested messages and enums from elements
@@ -449,8 +449,8 @@ def parse_zephlet_proto(proto_path: str, zephlet_name: str, module_dir: str, out
             invoke_msg = nested
         elif nested.name == 'Report':
             report_msg = nested
-        elif nested.name == 'Config':
-            config_msg = nested
+        elif nested.name == 'Settings':
+            settings_msg = nested
         elif nested.name == 'Events':
             events_msg = nested
 
@@ -512,17 +512,41 @@ def parse_zephlet_proto(proto_path: str, zephlet_name: str, module_dir: str, out
                         })
                 break
 
-    # Extract config fields
-    config_fields = []
-    if config_msg:
-        for element in config_msg.elements:
+    # Extract settings fields and enforce proto3 `optional` on every scalar.
+    # Generator rejects non-optional Settings fields so partial merge always has
+    # has_<field> companions to work with.
+    settings_fields = []
+    if settings_msg:
+        non_optional = []
+        for element in settings_msg.elements:
             if hasattr(element, 'name') and element.__class__.__name__ == 'Field':
-                config_fields.append({
+                card_raw = getattr(element, 'cardinality', None)
+                is_optional = card_raw is not None and 'optional' in str(card_raw).lower()
+                if not is_optional:
+                    non_optional.append(element.name)
+                settings_fields.append({
                     'name': element.name,
                     'type': map_proto_type_to_c(element.type),
                     'proto_type': element.type,
-                    'is_optional': hasattr(element, 'cardinality') and element.cardinality == 'optional'
+                    'is_optional': is_optional,
                 })
+        if non_optional:
+            raise ValueError(
+                f"{zephlet_name}: Settings message fields must be declared "
+                f"`optional` to support partial updates via update_settings: "
+                f"{', '.join(non_optional)}"
+            )
+
+        # Collision check: user field literally named `has_<x>` clashes with
+        # the nanopb presence flag of an optional field `x`.
+        names = {f['name'] for f in settings_fields}
+        for f in settings_fields:
+            if f['name'].startswith('has_') and f['name'][4:] in names:
+                raise ValueError(
+                    f"{zephlet_name}: Settings field '{f['name']}' collides "
+                    f"with the nanopb presence flag for optional field "
+                    f"'{f['name'][4:]}'"
+                )
 
     # Extract RPC methods if zephlet definition exists
     rpc_methods = []
@@ -592,6 +616,16 @@ def parse_zephlet_proto(proto_path: str, zephlet_name: str, module_dir: str, out
         rpc = rpc_by_name.get(field['name'])
         field['report_field_name'] = rpc['report_field_name'] if rpc else None
 
+    # Partition invoke fields into standard lifecycle vs. custom. Standard
+    # ones are dispatched directly from api_handler via the base core
+    # helpers; custom ones flow through the user's api vtable.
+    STANDARD_METHODS = {'start', 'stop', 'get_status',
+                         'update_settings', 'get_settings', 'get_events'}
+    custom_invoke_fields = [f for f in invoke_fields
+                            if f['name'] not in STANDARD_METHODS]
+    custom_rpc_methods = [m for m in rpc_methods
+                           if m['name'] not in STANDARD_METHODS]
+
     # Nanopb C prefix: derived from proto message name
     # MsgZletTick → msg_zlet_tick, Tick → tick
     pb_prefix = camel_to_snake(zephlet_msg.name)
@@ -611,10 +645,12 @@ def parse_zephlet_proto(proto_path: str, zephlet_name: str, module_dir: str, out
         'invoke_oneof_name': invoke_oneof_name,
         'report_oneof_name': report_oneof_name,
         'invoke_fields': invoke_fields,
+        'custom_invoke_fields': custom_invoke_fields,
+        'custom_rpc_methods': custom_rpc_methods,
         'report_fields': report_fields,
-        'config_fields': config_fields,
-        'config_type': f"{pb_prefix}_config" if config_msg else None,
-        'has_config': config_msg is not None,
+        'settings_fields': settings_fields,
+        'settings_type': f"{pb_prefix}_settings" if settings_msg else None,
+        'has_settings': settings_msg is not None,
         'has_events': events_msg is not None,
         'rpc_methods': rpc_methods
     }
@@ -702,8 +738,8 @@ def main():
             in_stream = " (stream input)" if m.get('input_streaming') else ""
             out_stream = " (stream output)" if m.get('output_streaming') else ""
             print(f"  - {m['name']}({m['input_type']}{in_stream}) -> {m['output_type']}{out_stream} => report_{m['report_field_name']}()")
-    if context['has_config']:
-        print(f"Config fields: {[f['name'] for f in context['config_fields']]}")
+    if context['has_settings']:
+        print(f"Settings fields: {[f['name'] for f in context['settings_fields']]}")
 
     # Get template directory
     script_dir = os.path.dirname(os.path.abspath(__file__))

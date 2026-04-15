@@ -185,7 +185,7 @@ def extract_nested_types(message):
 # --- Type qualification ---
 
 BASE_TYPES = {'Empty', 'ZephletStatus', 'ZephletResult'}
-SCHEMA_PLACEHOLDER_TYPES = {'Config', 'Events'}
+SCHEMA_PLACEHOLDER_TYPES = {'Settings', 'Events'}
 
 
 def qualify_type(type_name, msg_name, nested_type_names):
@@ -256,7 +256,7 @@ def main():
 
     # Find top-level zephlet message (skip utility types)
     skip_names = {'_', 'Empty', 'ZephletStatus', 'ZephletResult',
-                  'Invoke', 'Report', 'Config', 'Events'}
+                  'Invoke', 'Report', 'Settings', 'Events'}
     base_messages = find_elements_by_type(base_ast.file_elements, 'Message')
     zephlet_msg = None
     for msg in base_messages:
@@ -294,8 +294,39 @@ def main():
     nested_types = extract_nested_types(zephlet_msg)
     nested_type_names = {n['name'] for n in nested_types}
 
-    has_config = 'Config' in nested_type_names
+    has_settings = 'Settings' in nested_type_names
     has_events = 'Events' in nested_type_names
+
+    # --- Validate Settings message contract (proto3 `optional` on every field) ---
+    if has_settings:
+        settings_msg = next(
+            (n for n in nested_types if n['name'] == 'Settings'), None)
+        if settings_msg is not None:
+            non_optional = [
+                f['name'] for f in settings_msg['fields']
+                if 'optional' not in (f.get('cardinality') or '')
+            ]
+            if non_optional:
+                print(
+                    f"Error: {msg_name}.Settings fields must be declared "
+                    f"`optional` to support partial updates via "
+                    f"update_settings: {', '.join(non_optional)}"
+                )
+                sys.exit(1)
+
+            # Detect the nanopb has_<field> companion name collision: if the
+            # user defined a field literally named `has_<x>` it will clash
+            # with the nanopb presence flag of an optional field `x`.
+            field_names = {f['name'] for f in settings_msg['fields']}
+            for field in settings_msg['fields']:
+                name = field['name']
+                if name.startswith('has_') and name[4:] in field_names:
+                    print(
+                        f"Error: {msg_name}.Settings field '{name}' collides "
+                        f"with the nanopb presence flag for optional field "
+                        f"'{name[4:]}'"
+                    )
+                    sys.exit(1)
 
     # --- Build Invoke fields ---
 
@@ -395,7 +426,7 @@ def main():
         'report_oneof_name': f"{msg_name_lower}_report_tag",
         'report_fields': report_fields,
         'all_rpcs': all_rpcs,
-        'has_config': has_config,
+        'has_settings': has_settings,
         'has_events': has_events,
     }
 
