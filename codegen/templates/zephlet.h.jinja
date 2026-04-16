@@ -115,4 +115,10 @@ struct {{ pb_prefix }}_report {{ zephlet_name }}_{{ method.name }}(const struct 
 
 int {{ zephlet_name }}_set_implementation(const struct zephlet *implementation);
 
+/** @brief Zero-arg readiness check for {{ zephlet_name }}. */
+static inline bool {{ zephlet_name }}_is_ready(void)
+{
+	return {{ zephlet_name }}_status_storage.is_ready;
+}
+
 #endif /* _{{ zephlet_name_upper }}_INTERFACE_H_ */

@@ -97,19 +97,6 @@ struct zephlet {
 
 #define ZEPHLET_CALL_OK(report) ((report).has_result && (report).result.return_code == 0)
 
-/** @brief Read-only predicate for zephlet readiness. */
-static inline bool zephlet_is_ready(const struct zephlet *self)
-{
-	return self != NULL && self->data != NULL && self->data->status != NULL &&
-	       self->data->status->is_ready;
-}
-
-/** @brief Flip the zephlet to the ready state. Call from init_fn after success. */
-static inline void zephlet_mark_ready(const struct zephlet *self)
-{
-	self->data->status->is_ready = true;
-}
-
 /**
  * @name Generic lifecycle core helpers
  *

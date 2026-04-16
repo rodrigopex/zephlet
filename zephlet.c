@@ -78,7 +78,10 @@ int zephlets_init_fn(void)
 	STRUCT_SECTION_FOREACH(zephlet, instance) {
 		printk("%p: %s initialing...\n", instance, instance->name);
 		if (instance->init_fn != NULL) {
-			instance->init_fn(instance);
+			int err = instance->init_fn(instance);
+			if (err == 0) {
+				instance->data->status->is_ready = true;
+			}
 		}
 	}
 

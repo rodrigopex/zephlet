@@ -39,9 +39,6 @@ int zlet_{{ zephlet_name_lower }}_init_fn(const struct zephlet *self)
 	 */
 
 	int err = zlet_{{ zephlet_name_lower }}_set_implementation(self);
-	if (err == 0) {
-		zephlet_mark_ready(self);
-	}
 	printk("   -> %s %sinitialized\n", self->name, err == 0 ? "" : "not ");
 	return err;
 }

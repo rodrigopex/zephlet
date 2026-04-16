@@ -84,9 +84,6 @@ int {{ zephlet_name }}_init_fn(const struct zephlet *self)
 {%- endif %}
 
 	int err = {{ zephlet_name }}_set_implementation(self);
-	if (err == 0) {
-		zephlet_mark_ready(self);
-	}
 	printk("   -> %s %sinitialized\n", self->name, err == 0 ? "" : "not ");
 	return err;
 }
