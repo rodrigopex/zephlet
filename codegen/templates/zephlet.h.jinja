@@ -31,7 +31,7 @@ struct {{ zephlet_name }}_context {
  * not appear here.
  *
  * Define this struct as a file-local `static` in {{ zephlet_name }}.c,
- * wire in your custom handlers, and pass `&api` to ZEPHLET_DEFINE().
+ * wire in your custom handlers, and pass `&api` to ZEPHLET_IMPL_REGISTER().
  */
 struct {{ zephlet_name }}_api {
 {%- for field in custom_invoke_fields %}
@@ -49,7 +49,7 @@ struct {{ zephlet_name }}_api {
 {%- else %}
 
 /*
- * This zephlet has no custom RPCs. ZEPHLET_DEFINE() should pass NULL
+ * This zephlet has no custom RPCs. ZEPHLET_IMPL_REGISTER() should pass NULL
  * for the api pointer — all lifecycle dispatch is handled internally.
  */
 {%- endif %}
@@ -82,7 +82,7 @@ struct {{ zephlet_name }}_data {
 
 /*
  * Per-zephlet consolidated storage (L1). Declared in
- * {{ zephlet_name }}_interface.c, referenced by ZEPHLET_DEFINE via
+ * {{ zephlet_name }}_interface.c, referenced by ZEPHLET_IMPL_REGISTER via
  * token concatenation. Internal helpers access it directly.
  */
 extern struct {{ zephlet_name }}_data {{ zephlet_name }}_data_storage;

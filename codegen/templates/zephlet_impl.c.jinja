@@ -14,7 +14,7 @@ LOG_MODULE_DECLARE({{ zephlet_name }}, CONFIG_ZEPHLET_{{ base_name_upper }}_LOG_
  *
  * Add any zephlet-specific resources here (timers, work items, custom
  * state). Retrieved in hooks via ZEPHLET_INSTANCE(self, type).
- * Delete this struct and pass NULL to ZEPHLET_DEFINE if not needed.
+ * Delete this struct and pass NULL to ZEPHLET_IMPL_REGISTER if not needed.
  */
 struct {{ zephlet_name }}_instance {
 	/* TODO: add per-instance resources here (timers, work items, etc.) */
@@ -103,7 +103,7 @@ int {{ zephlet_name }}_init_fn(const struct zephlet *self)
 }
 
 {% if custom_invoke_fields -%}
-ZEPHLET_DEFINE({{ zephlet_name }}, {{ zephlet_name }}_init_fn, &api, &inst);
+ZEPHLET_IMPL_REGISTER({{ zephlet_name_lower }}, {{ zephlet_name }}_init_fn, &api, &inst);
 {%- else -%}
-ZEPHLET_DEFINE({{ zephlet_name }}, {{ zephlet_name }}_init_fn, NULL, &inst);
+ZEPHLET_IMPL_REGISTER({{ zephlet_name_lower }}, {{ zephlet_name }}_init_fn, NULL, &inst);
 {%- endif %}

@@ -29,8 +29,8 @@ Per zephlet: `chan_<z>_invoke` (cmds), `chan_<z>_report` (status/settings/events
 - **Generated:** `zlet_<n>_interface.{h,c}` (types/api/dispatcher/channels/weak hooks/lifecycle shims/blocking helpers/`<z>_set_implementation`), `zlet_<n>.h` (async report helpers), `.pb.{h,c}`
 - **Bootstrap:** CMake auto-gens `.c` via `--impl-only` if missing; hand-edit only.
 - `_interface.h` exports: `extern <z>_api`, `extern <z>_data` (base `zephlet_data`), `extern <z>_config` (base `zephlet_config`, const), `<z>_context` (self+response+deadline), weak hook decls, typed `<z>_settings_mut(self)` / `<z>_events_mut(self)` accessors, blocking call decls.
-- `.c` (user-owned): non-lifecycle RPC bodies (external linkage: `int <z>_<method>(ctx, …)`), strong hook overrides, `init_fn` (seeds Settings defaults; framework auto-marks ready on return 0). Ends `ZEPHLET_DEFINE(<z>, init_fn, &<z>_api, &<z>_config, &<z>_data)`.
-- Shared base: `struct zephlet{name,channel,init_fn,api,config,data}`, `struct zephlet_data{status}`, `struct zephlet_config{settings_storage,settings_size,events_storage,events_size}`, `ZEPHLET_DEFINE(name,init,api,config,data)`, `ZEPHLET_CALL_OK()`, `<z>_is_ready()` (per-zephlet, zero-arg), `zephlet_{start,stop,get_status,get_settings,update_settings,get_events}_core()` (pure state machine).
+- `.c` (user-owned): non-lifecycle RPC bodies (external linkage: `int <z>_<method>(ctx, …)`), strong hook overrides, `init_fn` (seeds Settings defaults; framework auto-marks ready on return 0). Ends `ZEPHLET_IMPL_REGISTER(<name>, init_fn, &api, &inst)` — developer passes clean name (e.g. `tick`), macro prepends `zlet_` for channel/data symbols.
+- Shared base: `struct zephlet{name,channel,init_fn,api,config,data}`, `struct zephlet_data{status}`, `struct zephlet_config{settings_storage,settings_size,events_storage,events_size}`, `ZEPHLET_IMPL_REGISTER(name,init,api,inst)`, `ZEPHLET_CALL_OK()`, `<z>_is_ready()` (per-zephlet, zero-arg), `zephlet_{start,stop,get_status,get_settings,update_settings,get_events}_core()` (pure state machine).
 
 ## Lifecycle: shims + weak hooks
 

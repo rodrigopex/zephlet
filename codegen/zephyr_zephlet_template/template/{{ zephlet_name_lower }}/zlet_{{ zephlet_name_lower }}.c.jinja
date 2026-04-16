@@ -44,4 +44,4 @@ int zlet_{{ zephlet_name_lower }}_init_fn(const struct zephlet *self)
 }
 
 /* Pass &api below once custom RPCs exist, else NULL. */
-ZEPHLET_DEFINE(zlet_{{ zephlet_name_lower }}, zlet_{{ zephlet_name_lower }}_init_fn, NULL);
+ZEPHLET_IMPL_REGISTER({{ zephlet_name_lower }}, zlet_{{ zephlet_name_lower }}_init_fn, NULL);

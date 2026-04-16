@@ -93,27 +93,29 @@ struct zephlet {
 };
 
 /*
- * ZEPHLET_DEFINE(name, init_fn, api, inst_ptr)
+ * ZEPHLET_IMPL_REGISTER(name, init_fn, api, inst_ptr)
  *
- * Registers the zephlet. `base_data` is auto-resolved via token
- * concatenation to `<name>_data_storage.base`. `inst_ptr` is a pointer
- * to user-defined instance data (or NULL if none).
+ * Registers the zephlet implementation. The developer passes a clean
+ * name (e.g. `tick`); the macro prepends `zlet_` internally for
+ * channel and data-storage symbol resolution.
+ *
+ * `inst_ptr` is a pointer to user-defined instance data (or NULL).
  */
-#define ZEPHLET_DEFINE(_name, _init_fn, _api, _inst_ptr)                                           \
+#define ZEPHLET_IMPL_REGISTER(_name, _init_fn, _api, _inst_ptr)                                    \
 	const STRUCT_SECTION_ITERABLE(zephlet, _name) = {                                          \
 		.config =                                                                          \
 			{                                                                          \
 				.name = #_name,                                                    \
 				.channel =                                                         \
 					{                                                          \
-						.invoke = &CONCAT(chan_, _name, _invoke),          \
-						.report = &CONCAT(chan_, _name, _report),          \
+						.invoke = &CONCAT(chan_zlet_, _name, _invoke),     \
+						.report = &CONCAT(chan_zlet_, _name, _report),     \
 					},                                                         \
 				.init_fn = (_init_fn),                                             \
 			},                                                                         \
 		.api = (_api),                                                                     \
 		.instance_data = (_inst_ptr),                                                      \
-		.base_data = &CONCAT(_name, _data_storage).base,                                   \
+		.base_data = &CONCAT(zlet_, _name, _data_storage).base,                            \
 	}
 
 #define ZEPHLET_CALL_OK(report) ((report).has_result && (report).result.return_code == 0)

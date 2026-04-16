@@ -16,7 +16,7 @@ LOG_MODULE_REGISTER({{ zephlet_name }}, CONFIG_ZEPHLET_{{ base_name_upper }}_LOG
 /* ---------------------------------------------------------------------- */
 /* Per-zephlet consolidated storage (L1). All framework mutable state     */
 /* (status, settings, events, correlation) lives here. Extern-visible so  */
-/* ZEPHLET_DEFINE and the inline helpers in {{ zephlet_name }}.h can      */
+/* ZEPHLET_IMPL_REGISTER and the inline helpers in {{ zephlet_name }}.h   */
 /* access it by name.                                                     */
 /* ---------------------------------------------------------------------- */
 
