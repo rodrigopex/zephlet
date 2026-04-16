@@ -14,38 +14,13 @@
 LOG_MODULE_REGISTER({{ zephlet_name }}, CONFIG_ZEPHLET_{{ base_name_upper }}_LOG_LEVEL);
 
 /* ---------------------------------------------------------------------- */
-/* Per-zephlet mutable storage + spinlock.                                */
-/* File-scope (not static) so the inline helpers in {{ zephlet_name }}.h  */
-/* can reference them across TUs. Prefixed with {{ zephlet_name }}_ for   */
-/* collision-free naming.                                                 */
+/* Per-zephlet consolidated storage (L1). All framework mutable state     */
+/* (status, settings, events, correlation) lives here. Extern-visible so  */
+/* ZEPHLET_DEFINE and the inline helpers in {{ zephlet_name }}.h can      */
+/* access it by name.                                                     */
 /* ---------------------------------------------------------------------- */
 
-struct k_spinlock     {{ zephlet_name }}_lock;
-struct zephlet_status {{ zephlet_name }}_status_storage = ZEPHLET_STATUS_INIT_ZERO;
-{%- if has_settings %}
-struct {{ settings_type }} {{ zephlet_name }}_settings_storage = {{ pb_prefix_upper }}_SETTINGS_INIT_ZERO;
-{%- endif %}
-{%- if has_events %}
-struct {{ pb_prefix }}_events {{ zephlet_name }}_events_storage = {{ pb_prefix_upper }}_EVENTS_INIT_ZERO;
-{%- endif %}
-
-struct zephlet_data {{ zephlet_name }}_data = {
-	.status = &{{ zephlet_name }}_status_storage,
-{%- if has_settings %}
-	.settings = &{{ zephlet_name }}_settings_storage,
-	.settings_size = sizeof({{ zephlet_name }}_settings_storage),
-{%- else %}
-	.settings = NULL,
-	.settings_size = 0,
-{%- endif %}
-{%- if has_events %}
-	.events = &{{ zephlet_name }}_events_storage,
-	.events_size = sizeof({{ zephlet_name }}_events_storage),
-{%- else %}
-	.events = NULL,
-	.events_size = 0,
-{%- endif %}
-};
+struct {{ zephlet_name }}_data {{ zephlet_name }}_data_storage;
 
 /* ---------------------------------------------------------------------- */
 /* Weak hook defaults — override in {{ zephlet_name }}.c with strong defs. */
@@ -114,16 +89,18 @@ static void {{ zephlet_name }}_merge_settings(struct {{ settings_type }} *dst,
 
 static int do_start(struct {{ zephlet_name }}_context *ctx)
 {
+	struct {{ zephlet_name }}_data *d = &{{ zephlet_name }}_data_storage;
+
 	int err = {{ zephlet_name }}_pre_start(ctx->zephlet);
 	if (err != 0) {
-		K_SPINLOCK(&{{ zephlet_name }}_lock) {
-			ctx->response.status = {{ zephlet_name }}_status_storage;
+		K_SPINLOCK(&d->base.lock) {
+			ctx->response.status = d->base.status;
 		}
 		return err;
 	}
 
-	K_SPINLOCK(&{{ zephlet_name }}_lock) {
-		err = zephlet_start_core(ctx->zephlet->data, &ctx->response.status);
+	K_SPINLOCK(&d->base.lock) {
+		err = zephlet_start_core(&d->base, &ctx->response.status);
 	}
 	if (err != 0) {
 		return err;
@@ -131,8 +108,8 @@ static int do_start(struct {{ zephlet_name }}_context *ctx)
 
 	err = {{ zephlet_name }}_post_start(ctx->zephlet);
 	if (err != 0) {
-		K_SPINLOCK(&{{ zephlet_name }}_lock) {
-			(void)zephlet_stop_core(ctx->zephlet->data, &ctx->response.status);
+		K_SPINLOCK(&d->base.lock) {
+			(void)zephlet_stop_core(&d->base, &ctx->response.status);
 		}
 	}
 	return err;
@@ -140,16 +117,18 @@ static int do_start(struct {{ zephlet_name }}_context *ctx)
 
 static int do_stop(struct {{ zephlet_name }}_context *ctx)
 {
+	struct {{ zephlet_name }}_data *d = &{{ zephlet_name }}_data_storage;
+
 	int err = {{ zephlet_name }}_pre_stop(ctx->zephlet);
 	if (err != 0) {
-		K_SPINLOCK(&{{ zephlet_name }}_lock) {
-			ctx->response.status = {{ zephlet_name }}_status_storage;
+		K_SPINLOCK(&d->base.lock) {
+			ctx->response.status = d->base.status;
 		}
 		return err;
 	}
 
-	K_SPINLOCK(&{{ zephlet_name }}_lock) {
-		err = zephlet_stop_core(ctx->zephlet->data, &ctx->response.status);
+	K_SPINLOCK(&d->base.lock) {
+		err = zephlet_stop_core(&d->base, &ctx->response.status);
 	}
 	if (err != 0) {
 		return err;
@@ -161,9 +140,11 @@ static int do_stop(struct {{ zephlet_name }}_context *ctx)
 
 static int do_get_status(struct {{ zephlet_name }}_context *ctx)
 {
+	struct {{ zephlet_name }}_data *d = &{{ zephlet_name }}_data_storage;
 	int err;
-	K_SPINLOCK(&{{ zephlet_name }}_lock) {
-		err = zephlet_get_status_core(ctx->zephlet->data, &ctx->response.status);
+
+	K_SPINLOCK(&d->base.lock) {
+		err = zephlet_get_status_core(&d->base, &ctx->response.status);
 	}
 	return err;
 }
@@ -173,28 +154,29 @@ static int do_get_status(struct {{ zephlet_name }}_context *ctx)
 static int do_update_settings(struct {{ zephlet_name }}_context *ctx,
                                 const struct {{ settings_type }} *delta)
 {
+	struct {{ zephlet_name }}_data *d = &{{ zephlet_name }}_data_storage;
 	struct {{ settings_type }} merged = {0};
 
 	/* Snapshot current settings into a local so we can merge and
 	 * validate outside the lock (weak hooks must not run locked). */
-	K_SPINLOCK(&{{ zephlet_name }}_lock) {
-		merged = {{ zephlet_name }}_settings_storage;
+	K_SPINLOCK(&d->base.lock) {
+		merged = d->settings;
 	}
 	{{ zephlet_name }}_merge_settings(&merged, delta);
 
 	int err = {{ zephlet_name }}_validate_settings(&merged);
 	if (err != 0) {
 		/* Rejected — reflect unchanged stored settings in the response. */
-		K_SPINLOCK(&{{ zephlet_name }}_lock) {
-			ctx->response.settings = {{ zephlet_name }}_settings_storage;
+		K_SPINLOCK(&d->base.lock) {
+			ctx->response.settings = d->settings;
 		}
 		return err;
 	}
 
-	K_SPINLOCK(&{{ zephlet_name }}_lock) {
-		err = zephlet_update_settings_core(ctx->zephlet->data, &merged);
+	K_SPINLOCK(&d->base.lock) {
+		err = zephlet_update_settings_core(&d->base, &merged);
 		if (err == 0) {
-			ctx->response.settings = {{ zephlet_name }}_settings_storage;
+			ctx->response.settings = d->settings;
 		}
 	}
 	if (err != 0) {
@@ -208,9 +190,11 @@ static int do_update_settings(struct {{ zephlet_name }}_context *ctx,
 
 static int do_get_settings(struct {{ zephlet_name }}_context *ctx)
 {
+	struct {{ zephlet_name }}_data *d = &{{ zephlet_name }}_data_storage;
 	int err;
-	K_SPINLOCK(&{{ zephlet_name }}_lock) {
-		err = zephlet_get_settings_core(ctx->zephlet->data, &ctx->response.settings);
+
+	K_SPINLOCK(&d->base.lock) {
+		err = zephlet_get_settings_core(&d->base, &ctx->response.settings);
 	}
 	return err;
 }
@@ -220,16 +204,18 @@ static int do_get_settings(struct {{ zephlet_name }}_context *ctx)
 
 static int do_get_events(struct {{ zephlet_name }}_context *ctx)
 {
+	struct {{ zephlet_name }}_data *d = &{{ zephlet_name }}_data_storage;
 	int err;
-	K_SPINLOCK(&{{ zephlet_name }}_lock) {
-		err = zephlet_get_events_core(ctx->zephlet->data, &ctx->response.events);
+
+	K_SPINLOCK(&d->base.lock) {
+		err = zephlet_get_events_core(&d->base, &ctx->response.events);
 	}
 	return err;
 }
 {%- endif %}
 
 /* ---------------------------------------------------------------------- */
-/* zbus channels, correlation state, sync listener, api_handler.          */
+/* zbus channels, sync listener, api_handler.                             */
 /* The api vtable itself is constructed in {{ zephlet_name }}.c.          */
 /* ---------------------------------------------------------------------- */
 
@@ -246,44 +232,50 @@ ZBUS_CHAN_DEFINE(chan_{{ zephlet_name }}_invoke, struct {{ pb_prefix }}_invoke, 
 ZBUS_CHAN_DEFINE(chan_{{ zephlet_name }}_report, struct {{ pb_prefix }}_report, NULL, NULL,
 		 ZBUS_OBSERVERS(lis_{{ zephlet_name }}_sync), {{ pb_prefix_upper }}_REPORT_INIT_DEFAULT);
 
-static const struct zephlet *impl = NULL;
-
-/* Correlation ID counter (starts at 1, 0 = no correlation) */
-static atomic_t {{ zephlet_name }}_corr_id_counter = ATOMIC_INIT(0);
-
-/* Blocking-helper serialization sem (correlation slot). */
-static K_SEM_DEFINE({{ zephlet_name }}_sem, 1, 1);
-
-/* Report signal: given by sync listener when matching report arrives */
-static K_SEM_DEFINE({{ zephlet_name }}_report_sem, 0, 1);
-
-static struct {
-	struct {{ pb_prefix }}_report sync_report;
-	uint32_t expected_cid;
-	k_timepoint_t deadline;
-} self;
+static const struct zephlet *impl;
 
 static uint32_t {{ zephlet_name }}_next_correlation_id(void)
 {
-	uint32_t id = (uint32_t)atomic_inc(&{{ zephlet_name }}_corr_id_counter) + 1;
+	struct {{ zephlet_name }}_data *d = &{{ zephlet_name }}_data_storage;
+	uint32_t id = (uint32_t)atomic_inc(&d->corr_id_counter) + 1;
+
 	if (id == 0) {
-		id = (uint32_t)atomic_inc(&{{ zephlet_name }}_corr_id_counter) + 1;
+		id = (uint32_t)atomic_inc(&d->corr_id_counter) + 1;
 	}
 	return id;
 }
 
 int {{ zephlet_name }}_set_implementation(const struct zephlet *implementation)
 {
-	int ret = -EBUSY;
-
-	if (impl == NULL) {
-		impl = implementation;
-		ret = 0;
-	} else {
+	if (impl != NULL) {
 		LOG_ERR("Trying to replace implementation for {{ zephlet_name_camel }} Zephlet");
+		return -EBUSY;
 	}
 
-	return ret;
+	impl = implementation;
+
+	/* Wire void pointers in base to typed siblings. */
+	struct {{ zephlet_name }}_data *d = &{{ zephlet_name }}_data_storage;
+{%- if has_settings %}
+	d->base.settings = &d->settings;
+	d->base.settings_size = sizeof(d->settings);
+{%- else %}
+	d->base.settings = NULL;
+	d->base.settings_size = 0;
+{%- endif %}
+{%- if has_events %}
+	d->base.events = &d->events;
+	d->base.events_size = sizeof(d->events);
+{%- else %}
+	d->base.events = NULL;
+	d->base.events_size = 0;
+{%- endif %}
+
+	/* Init sync primitives (can't use K_SEM_DEFINE inside structs). */
+	k_sem_init(&d->sem, 1, 1);
+	k_sem_init(&d->report_sem, 0, 1);
+
+	return 0;
 }
 
 #define {{ zephlet_name|upper }}_RECORD_RC(rc_expr)                                                \
@@ -296,6 +288,7 @@ int {{ zephlet_name }}_set_implementation(const struct zephlet *implementation)
 
 static void {{ zephlet_name }}_api_handler(const struct zbus_channel *chan)
 {
+	struct {{ zephlet_name }}_data *d = &{{ zephlet_name }}_data_storage;
 	const struct {{ pb_prefix }}_invoke *ivk;
 	struct zephlet_result result_copy;
 	struct zephlet_result *result;
@@ -317,7 +310,7 @@ static void {{ zephlet_name }}_api_handler(const struct zbus_channel *chan)
 
 	struct {{ zephlet_name }}_context ctx = {
 		.zephlet = impl,
-		.deadline = ivk->has_result ? self.deadline
+		.deadline = ivk->has_result ? d->sync_deadline
 					    : sys_timepoint_calc(K_FOREVER),
 	};
 
@@ -388,12 +381,13 @@ static void {{ zephlet_name }}_api_handler(const struct zbus_channel *chan)
 
 static void {{ zephlet_name }}_sync_report_listener(const struct zbus_channel *chan)
 {
+	struct {{ zephlet_name }}_data *d = &{{ zephlet_name }}_data_storage;
 	const struct {{ pb_prefix }}_report *msg = zbus_chan_const_msg(chan);
 
 	if (msg->has_result &&
-	    msg->result.correlation_id == self.expected_cid) {
-		self.sync_report = *msg;
-		k_sem_give(&{{ zephlet_name }}_report_sem);
+	    msg->result.correlation_id == d->expected_cid) {
+		d->sync_report = *msg;
+		k_sem_give(&d->report_sem);
 	}
 }
 
@@ -408,19 +402,20 @@ static void {{ zephlet_name }}_sync_report_listener(const struct zbus_channel *c
 
 struct {{ pb_prefix }}_report {{ zephlet_name }}_{{ method.name }}(k_timeout_t timeout)
 {
+	struct {{ zephlet_name }}_data *d = &{{ zephlet_name }}_data_storage;
 	struct {{ pb_prefix }}_report report = {0};
 	k_timepoint_t deadline = sys_timepoint_calc(timeout);
 
-	if (k_sem_take(&{{ zephlet_name }}_sem, timeout) != 0) {
+	if (k_sem_take(&d->sem, timeout) != 0) {
 		report.has_result = true;
 		report.result.return_code = -EBUSY;
 		return report;
 	}
 
 	uint32_t cid = {{ zephlet_name }}_next_correlation_id();
-	self.expected_cid = cid;
-	self.deadline = deadline;
-	k_sem_reset(&{{ zephlet_name }}_report_sem);
+	d->expected_cid = cid;
+	d->sync_deadline = deadline;
+	k_sem_reset(&d->report_sem);
 
 	struct {{ pb_prefix }}_invoke ivk = {
 		.which_{{ invoke_oneof_name }} = {{ invoke_tag }},
@@ -433,20 +428,20 @@ struct {{ pb_prefix }}_report {{ zephlet_name }}_{{ method.name }}(k_timeout_t t
 	if (err != 0) {
 		report.has_result = true;
 		report.result.return_code = err;
-		k_sem_give(&{{ zephlet_name }}_sem);
+		k_sem_give(&d->sem);
 		return report;
 	}
 
-	if (k_sem_take(&{{ zephlet_name }}_report_sem, sys_timepoint_timeout(deadline)) != 0) {
+	if (k_sem_take(&d->report_sem, sys_timepoint_timeout(deadline)) != 0) {
 		report.has_result = true;
 		report.result.invoke_tag = {{ invoke_tag }};
 		report.result.correlation_id = cid;
 		report.result.return_code = -ETIMEDOUT;
 	} else {
-		report = self.sync_report;
+		report = d->sync_report;
 	}
 
-	k_sem_give(&{{ zephlet_name }}_sem);
+	k_sem_give(&d->sem);
 	return report;
 }
 
@@ -454,19 +449,20 @@ struct {{ pb_prefix }}_report {{ zephlet_name }}_{{ method.name }}(k_timeout_t t
 
 struct {{ pb_prefix }}_report {{ zephlet_name }}_{{ method.name }}(enum {{ pb_prefix }}_{{ method.input_type|proto_type_to_snake }} {{ method.input_type|proto_type_to_snake }}, k_timeout_t timeout)
 {
+	struct {{ zephlet_name }}_data *d = &{{ zephlet_name }}_data_storage;
 	struct {{ pb_prefix }}_report report = {0};
 	k_timepoint_t deadline = sys_timepoint_calc(timeout);
 
-	if (k_sem_take(&{{ zephlet_name }}_sem, timeout) != 0) {
+	if (k_sem_take(&d->sem, timeout) != 0) {
 		report.has_result = true;
 		report.result.return_code = -EBUSY;
 		return report;
 	}
 
 	uint32_t cid = {{ zephlet_name }}_next_correlation_id();
-	self.expected_cid = cid;
-	self.deadline = deadline;
-	k_sem_reset(&{{ zephlet_name }}_report_sem);
+	d->expected_cid = cid;
+	d->sync_deadline = deadline;
+	k_sem_reset(&d->report_sem);
 
 	struct {{ pb_prefix }}_invoke ivk = {
 		.which_{{ invoke_oneof_name }} = {{ invoke_tag }},
@@ -480,20 +476,20 @@ struct {{ pb_prefix }}_report {{ zephlet_name }}_{{ method.name }}(enum {{ pb_pr
 	if (err != 0) {
 		report.has_result = true;
 		report.result.return_code = err;
-		k_sem_give(&{{ zephlet_name }}_sem);
+		k_sem_give(&d->sem);
 		return report;
 	}
 
-	if (k_sem_take(&{{ zephlet_name }}_report_sem, sys_timepoint_timeout(deadline)) != 0) {
+	if (k_sem_take(&d->report_sem, sys_timepoint_timeout(deadline)) != 0) {
 		report.has_result = true;
 		report.result.invoke_tag = {{ invoke_tag }};
 		report.result.correlation_id = cid;
 		report.result.return_code = -ETIMEDOUT;
 	} else {
-		report = self.sync_report;
+		report = d->sync_report;
 	}
 
-	k_sem_give(&{{ zephlet_name }}_sem);
+	k_sem_give(&d->sem);
 	return report;
 }
 
@@ -501,19 +497,20 @@ struct {{ pb_prefix }}_report {{ zephlet_name }}_{{ method.name }}(enum {{ pb_pr
 
 struct {{ pb_prefix }}_report {{ zephlet_name }}_{{ method.name }}(const struct {{ pb_prefix }}_{{ method.input_type|proto_type_to_snake }} *{{ method.input_type|proto_type_to_snake }}, k_timeout_t timeout)
 {
+	struct {{ zephlet_name }}_data *d = &{{ zephlet_name }}_data_storage;
 	struct {{ pb_prefix }}_report report = {0};
 	k_timepoint_t deadline = sys_timepoint_calc(timeout);
 
-	if (k_sem_take(&{{ zephlet_name }}_sem, timeout) != 0) {
+	if (k_sem_take(&d->sem, timeout) != 0) {
 		report.has_result = true;
 		report.result.return_code = -EBUSY;
 		return report;
 	}
 
 	uint32_t cid = {{ zephlet_name }}_next_correlation_id();
-	self.expected_cid = cid;
-	self.deadline = deadline;
-	k_sem_reset(&{{ zephlet_name }}_report_sem);
+	d->expected_cid = cid;
+	d->sync_deadline = deadline;
+	k_sem_reset(&d->report_sem);
 
 	struct {{ pb_prefix }}_invoke ivk = {
 		.which_{{ invoke_oneof_name }} = {{ invoke_tag }},
@@ -527,20 +524,20 @@ struct {{ pb_prefix }}_report {{ zephlet_name }}_{{ method.name }}(const struct 
 	if (err != 0) {
 		report.has_result = true;
 		report.result.return_code = err;
-		k_sem_give(&{{ zephlet_name }}_sem);
+		k_sem_give(&d->sem);
 		return report;
 	}
 
-	if (k_sem_take(&{{ zephlet_name }}_report_sem, sys_timepoint_timeout(deadline)) != 0) {
+	if (k_sem_take(&d->report_sem, sys_timepoint_timeout(deadline)) != 0) {
 		report.has_result = true;
 		report.result.invoke_tag = {{ invoke_tag }};
 		report.result.correlation_id = cid;
 		report.result.return_code = -ETIMEDOUT;
 	} else {
-		report = self.sync_report;
+		report = d->sync_report;
 	}
 
-	k_sem_give(&{{ zephlet_name }}_sem);
+	k_sem_give(&d->sem);
 	return report;
 }
 {%- endif %}

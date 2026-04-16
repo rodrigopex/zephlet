@@ -9,15 +9,15 @@ int zephlet_start_core(struct zephlet_data *data, struct zephlet_status *out_sta
 {
 	int ret = 0;
 
-	if (!data->status->is_ready) {
+	if (!data->status.is_ready) {
 		ret = -ENODEV;
-	} else if (data->status->is_running) {
+	} else if (data->status.is_running) {
 		ret = -EALREADY;
 	} else {
-		data->status->is_running = true;
+		data->status.is_running = true;
 	}
 
-	*out_status = *data->status;
+	*out_status = data->status;
 	return ret;
 }
 
@@ -25,19 +25,19 @@ int zephlet_stop_core(struct zephlet_data *data, struct zephlet_status *out_stat
 {
 	int ret = 0;
 
-	if (!data->status->is_running) {
+	if (!data->status.is_running) {
 		ret = -EALREADY;
 	} else {
-		data->status->is_running = false;
+		data->status.is_running = false;
 	}
 
-	*out_status = *data->status;
+	*out_status = data->status;
 	return ret;
 }
 
 int zephlet_get_status_core(const struct zephlet_data *data, struct zephlet_status *out_status)
 {
-	*out_status = *data->status;
+	*out_status = data->status;
 	return 0;
 }
 
@@ -76,11 +76,11 @@ int zephlets_init_fn(void)
 	printk("Init zephlets:\n");
 
 	STRUCT_SECTION_FOREACH(zephlet, instance) {
-		printk("%p: %s initialing...\n", instance, instance->name);
-		if (instance->init_fn != NULL) {
-			int err = instance->init_fn(instance);
+		printk("%p: %s initialing...\n", instance, instance->config.name);
+		if (instance->config.init_fn != NULL) {
+			int err = instance->config.init_fn(instance);
 			if (err == 0) {
-				instance->data->status->is_ready = true;
+				instance->base_data->status.is_ready = true;
 			}
 		}
 	}

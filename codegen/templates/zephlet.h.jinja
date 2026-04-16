@@ -8,6 +8,7 @@
 #include "{{ zephlet_name }}.pb.h"
 #include <stdbool.h>
 #include <zephyr/kernel.h>
+#include <zephyr/sys/atomic.h>
 #include <zephyr/zbus/zbus.h>
 
 ZBUS_CHAN_DECLARE(chan_{{ zephlet_name }}_invoke, chan_{{ zephlet_name }}_report);
@@ -54,21 +55,37 @@ struct {{ zephlet_name }}_api {
 {%- endif %}
 
 /*
- * Mutable storage exported for per-zephlet internal helpers in
- * {{ zephlet_name }}.h. Declared file-scope (not `static`) so the
- * inline clone/update/init helpers can reference them across TUs.
- * User code should go through the internal helpers, not touch these
- * directly.
+ * Per-zephlet instance data (L1).
+ *
+ * Embeds the framework base (`struct zephlet_data`) as its first member,
+ * followed by typed proto storage and synchronization state. Owned by
+ * the generated `_interface.c` as `{{ zephlet_name }}_data_storage`.
+ *
+ * Use the clone/update helpers in {{ zephlet_name }}.h rather than
+ * accessing fields directly.
  */
-extern struct zephlet_data   {{ zephlet_name }}_data;
-extern struct zephlet_status {{ zephlet_name }}_status_storage;
+struct {{ zephlet_name }}_data {
+	struct zephlet_data base;
 {%- if has_settings %}
-extern struct {{ settings_type }} {{ zephlet_name }}_settings_storage;
+	struct {{ settings_type }} settings;
 {%- endif %}
 {%- if has_events %}
-extern struct {{ pb_prefix }}_events {{ zephlet_name }}_events_storage;
+	struct {{ pb_prefix }}_events events;
 {%- endif %}
-extern struct k_spinlock     {{ zephlet_name }}_lock;
+	atomic_t corr_id_counter;
+	struct k_sem sem;
+	struct k_sem report_sem;
+	struct {{ pb_prefix }}_report sync_report;
+	uint32_t expected_cid;
+	k_timepoint_t sync_deadline;
+};
+
+/*
+ * Per-zephlet consolidated storage (L1). Declared in
+ * {{ zephlet_name }}_interface.c, referenced by ZEPHLET_DEFINE via
+ * token concatenation. Internal helpers access it directly.
+ */
+extern struct {{ zephlet_name }}_data {{ zephlet_name }}_data_storage;
 
 /*
  * Weak hook symbols.
@@ -118,7 +135,7 @@ int {{ zephlet_name }}_set_implementation(const struct zephlet *implementation);
 /** @brief Zero-arg readiness check for {{ zephlet_name }}. */
 static inline bool {{ zephlet_name }}_is_ready(void)
 {
-	return {{ zephlet_name }}_status_storage.is_ready;
+	return {{ zephlet_name }}_data_storage.base.status.is_ready;
 }
 
 #endif /* _{{ zephlet_name_upper }}_INTERFACE_H_ */

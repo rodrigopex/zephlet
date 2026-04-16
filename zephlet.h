@@ -12,11 +12,11 @@
  * Concurrency model
  * =================
  *
- * Every zephlet owns a file-local `struct k_spinlock` (declared in the
- * generated `_interface.c`) that serializes access to all three storage
- * bags: `status`, `settings`, `events`. Read and write paths — from
- * thread context or ISR context — use the same primitive via
- * `K_SPINLOCK(&<z>_lock) { ... }`.
+ * Every zephlet owns a `struct k_spinlock` embedded in its
+ * `struct zephlet_data` (`base_data->lock`) that serializes access to
+ * all three storage bags: `status`, `settings`, `events`. Read and
+ * write paths — from thread context or ISR context — use the same
+ * primitive via `K_SPINLOCK(&<z>_data_storage.base.lock) { ... }`.
  *
  *   1. Critical sections are memcpy-scope only.
  *      Take the spinlock, copy data in or out, release. Never hold it
@@ -44,55 +44,76 @@
  */
 
 /**
- * @brief Runtime state of a zephlet instance (mutable, lives in RAM).
+ * @brief Base runtime state of a zephlet (mutable, lives in RAM).
  *
- * All three storage bags are reachable through this struct. The pointers
- * themselves are fixed at link time (`*const`); the targets they point to
- * are the per-zephlet mutable state in file-local statics declared inside
- * the generated `<z>_interface.c`.
+ * Every generated `struct <z>_data` places this as its first member
+ * (`base`), so a pointer to `struct zephlet_data` can be converted to
+ * the enclosing per-zephlet struct via CONTAINER_OF.
  *
- * There is no separate `zephlet_config` — zephlets don't have
- * compile-time per-instance const data, and treating runtime-mutable
- * state as "config" only muddies the Zephyr-convention split between
- * `config` (flash) and `data` (RAM).
+ * `settings` and `events` are void pointers wired by
+ * `<z>_set_implementation()` to typed siblings within the same
+ * `struct <z>_data` at runtime.
  */
 struct zephlet_data {
-	struct zephlet_status *const status;
-	void                  *const settings;
-	const size_t                 settings_size;
-	void                  *const events;
-	const size_t                 events_size;
+	struct k_spinlock lock;
+	struct zephlet_status status;
+	void *settings;
+	size_t settings_size;
+	void *events;
+	size_t events_size;
 };
 
-struct zephlet {
+/* Forward declaration for init_fn signature in zephlet_config. */
+struct zephlet;
+
+/**
+ * @brief Immutable per-type configuration (lives in flash with the zephlet).
+ */
+struct zephlet_config {
 	const char *name;
 	struct {
 		const struct zbus_channel *invoke;
 		const struct zbus_channel *report;
 	} channel;
 	int (*init_fn)(const struct zephlet *self);
-	void                *api;
-	struct zephlet_data *data;
+};
+
+/**
+ * @brief Zephlet descriptor — const, stored in flash.
+ *
+ * All members are either constant values or constant pointers.
+ * Mutable state is reached indirectly through `base_data` (framework
+ * storage in RAM) and `instance_data` (user-defined private data in RAM).
+ */
+struct zephlet {
+	struct zephlet_config config;
+	struct zephlet_data *base_data;
+	void *instance_data;
+	void *api;
 };
 
 /*
- * ZEPHLET_DEFINE(name, init_fn, api)
+ * ZEPHLET_DEFINE(name, init_fn, api, inst_ptr)
  *
- * Registers the zephlet instance. The generated `_interface.c` owns the
- * mutable state as a file-scope `struct zephlet_data <name>_data = {...}`,
- * so this macro reaches it via token concatenation — you never pass it in.
+ * Registers the zephlet. `base_data` is auto-resolved via token
+ * concatenation to `<name>_data_storage.base`. `inst_ptr` is a pointer
+ * to user-defined instance data (or NULL if none).
  */
-#define ZEPHLET_DEFINE(_name, _init_fn, _api)                                                      \
+#define ZEPHLET_DEFINE(_name, _init_fn, _api, _inst_ptr)                                           \
 	const STRUCT_SECTION_ITERABLE(zephlet, _name) = {                                          \
-		.name = #_name,                                                                    \
-		.channel =                                                                         \
+		.config =                                                                          \
 			{                                                                          \
-				.invoke = &CONCAT(chan_, _name, _invoke),                          \
-				.report = &CONCAT(chan_, _name, _report),                          \
+				.name = #_name,                                                    \
+				.channel =                                                         \
+					{                                                          \
+						.invoke = &CONCAT(chan_, _name, _invoke),          \
+						.report = &CONCAT(chan_, _name, _report),          \
+					},                                                         \
+				.init_fn = (_init_fn),                                             \
 			},                                                                         \
-		.init_fn = (_init_fn),                                                             \
 		.api = (_api),                                                                     \
-		.data = &CONCAT(_name, _data),                                                     \
+		.instance_data = (_inst_ptr),                                                      \
+		.base_data = &CONCAT(_name, _data_storage).base,                                   \
 	}
 
 #define ZEPHLET_CALL_OK(report) ((report).has_result && (report).result.return_code == 0)
@@ -103,7 +124,7 @@ struct zephlet {
  * Pure state-machine primitives. They take `struct zephlet_data *data`
  * and operate on the storage bags reachable through it. They do NOT
  * touch the per-zephlet spinlock — the per-zephlet generated shim wraps
- * calls with `K_SPINLOCK(&<z>_lock) { ... }`.
+ * calls with `K_SPINLOCK(...)`.
  *
  * @{
  */

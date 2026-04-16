@@ -16,9 +16,11 @@
 
 static inline struct zephlet_status {{ base_name }}_status_clone(void)
 {
+	struct {{ zephlet_name }}_data *d = &{{ zephlet_name }}_data_storage;
 	struct zephlet_status out = {0};
-	K_SPINLOCK(&{{ zephlet_name }}_lock) {
-		out = {{ zephlet_name }}_status_storage;
+
+	K_SPINLOCK(&d->base.lock) {
+		out = d->base.status;
 	}
 	return out;
 }
@@ -27,9 +29,11 @@ static inline struct zephlet_status {{ base_name }}_status_clone(void)
 
 static inline struct {{ settings_type }} {{ base_name }}_settings_clone(void)
 {
+	struct {{ zephlet_name }}_data *d = &{{ zephlet_name }}_data_storage;
 	struct {{ settings_type }} out = {0};
-	K_SPINLOCK(&{{ zephlet_name }}_lock) {
-		out = {{ zephlet_name }}_settings_storage;
+
+	K_SPINLOCK(&d->base.lock) {
+		out = d->settings;
 	}
 	return out;
 }
@@ -41,7 +45,7 @@ static inline struct {{ settings_type }} {{ base_name }}_settings_clone(void)
 
 static inline void {{ base_name }}_settings_init(const struct {{ settings_type }} *defaults)
 {
-	{{ zephlet_name }}_settings_storage = *defaults;
+	{{ zephlet_name }}_data_storage.settings = *defaults;
 }
 {%- endif %}
 
@@ -49,9 +53,11 @@ static inline void {{ base_name }}_settings_init(const struct {{ settings_type }
 
 static inline struct {{ pb_prefix }}_events {{ base_name }}_events_clone(void)
 {
+	struct {{ zephlet_name }}_data *d = &{{ zephlet_name }}_data_storage;
 	struct {{ pb_prefix }}_events out = {0};
-	K_SPINLOCK(&{{ zephlet_name }}_lock) {
-		out = {{ zephlet_name }}_events_storage;
+
+	K_SPINLOCK(&d->base.lock) {
+		out = d->events;
 	}
 	return out;
 }
@@ -90,13 +96,14 @@ static inline void {{ zephlet_name }}_merge_events(struct {{ events_type }} *dst
 static inline int {{ base_name }}_events_update(struct {{ zephlet_name }}_context *ctx,
                                                  const struct {{ events_type }} *delta)
 {
+	struct {{ zephlet_name }}_data *d = &{{ zephlet_name }}_data_storage;
 	struct {{ events_type }} merged;
 
-	K_SPINLOCK(&{{ zephlet_name }}_lock) {
-		merged = {{ zephlet_name }}_events_storage;
+	K_SPINLOCK(&d->base.lock) {
+		merged = d->events;
 		{{ zephlet_name }}_merge_events(&merged, delta);
 		merged.timestamp = (int32_t)k_uptime_get();
-		{{ zephlet_name }}_events_storage = merged;
+		d->events = merged;
 	}
 
 	struct {{ pb_prefix }}_report rpt = {

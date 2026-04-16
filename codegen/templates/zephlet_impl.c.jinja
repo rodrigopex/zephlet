@@ -10,6 +10,20 @@
 LOG_MODULE_DECLARE({{ zephlet_name }}, CONFIG_ZEPHLET_{{ base_name_upper }}_LOG_LEVEL);
 
 /*
+ * Private instance data — opaque to the framework.
+ *
+ * Add any zephlet-specific resources here (timers, work items, custom
+ * state). Retrieved in hooks via ZEPHLET_INSTANCE(self, type).
+ * Delete this struct and pass NULL to ZEPHLET_DEFINE if not needed.
+ */
+struct {{ zephlet_name }}_instance {
+	/* TODO: add per-instance resources here (timers, work items, etc.) */
+	int placeholder;
+};
+
+static struct {{ zephlet_name }}_instance inst;
+
+/*
  * Implementation notes
  * --------------------
  *
@@ -84,12 +98,12 @@ int {{ zephlet_name }}_init_fn(const struct zephlet *self)
 {%- endif %}
 
 	int err = {{ zephlet_name }}_set_implementation(self);
-	printk("   -> %s %sinitialized\n", self->name, err == 0 ? "" : "not ");
+	printk("   -> %s %sinitialized\n", self->config.name, err == 0 ? "" : "not ");
 	return err;
 }
 
 {% if custom_invoke_fields -%}
-ZEPHLET_DEFINE({{ zephlet_name }}, {{ zephlet_name }}_init_fn, &api);
+ZEPHLET_DEFINE({{ zephlet_name }}, {{ zephlet_name }}_init_fn, &api, &inst);
 {%- else -%}
-ZEPHLET_DEFINE({{ zephlet_name }}, {{ zephlet_name }}_init_fn, NULL);
+ZEPHLET_DEFINE({{ zephlet_name }}, {{ zephlet_name }}_init_fn, NULL, &inst);
 {%- endif %}
