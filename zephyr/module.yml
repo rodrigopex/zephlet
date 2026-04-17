@@ -1,6 +1,10 @@
-name: shared_zephlet
+name: zephlet
+
 build:
   cmake: .
   kconfig: Kconfig
-build-settings:
-  west-commands: west/west-commands.yml
+
+package-managers:
+  pip:
+    requirement-files:
+      - codegen/requirements.txt

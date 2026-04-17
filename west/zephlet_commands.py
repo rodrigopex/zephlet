@@ -76,18 +76,21 @@ class Zephlet(WestCommand):
         # Module directory: this file is in <module>/west/
         shared_dir = Path(__file__).parent.parent
 
-        # Workspace root from manifest
-        manifest_path = self.manifest.posixpath
-        workspace_root = Path(manifest_path).parent
+        # Manifest repo root (where west.yml lives)
+        workspace_root = Path(self.manifest.repo_abspath)
+
+        def _resolve(p):
+            """Resolve a path against workspace_root if relative."""
+            p = Path(p)
+            return p if p.is_absolute() else workspace_root / p
 
         # Check west config for custom zephlets path
         try:
             from west.configuration import config
             zephlets_dir = config.get('zephlet', 'zephlets-dir', fallback=None)
             if zephlets_dir:
-                zephlets_dir = Path(zephlets_dir)
+                zephlets_dir = _resolve(zephlets_dir)
             else:
-                # New default: src/zephlets, fallback to zephlets
                 zephlets_dir = workspace_root / 'src' / 'zephlets'
                 if not zephlets_dir.exists():
                     zephlets_dir = workspace_root / 'zephlets'
@@ -101,9 +104,8 @@ class Zephlet(WestCommand):
             from west.configuration import config
             adapters_dir = config.get('zephlet', 'adapters-dir', fallback=None)
             if adapters_dir:
-                adapters_dir = Path(adapters_dir)
+                adapters_dir = _resolve(adapters_dir)
             else:
-                # New default: src/adapters, fallback to adapters
                 adapters_dir = workspace_root / 'src' / 'adapters'
                 if not adapters_dir.exists():
                     adapters_dir = workspace_root / 'adapters'
@@ -230,12 +232,14 @@ build:
             log.die('failed to create zephlet')
 
         if args.name:
+            zephlet_dir = paths['zephlets_dir'] / args.name
+            rel = zephlet_dir.relative_to(paths['workspace_root'])
             log.inf(f'Zephlet "{args.name}" created successfully')
             log.inf(f'Next steps:')
-            log.inf(f'  1. Edit zephlets/{args.name}/zlet_{args.name}.proto')
+            log.inf(f'  1. Edit {rel}/zlet_{args.name}.proto')
             log.inf(f'  2. Add to root CMakeLists.txt EXTRA_ZEPHYR_MODULES')
             log.inf(f'  3. Enable CONFIG_ZEPHLET_{args.name.upper()}=y in prj.conf')
-            log.inf(f'  4. Run: just b')
+            log.inf(f'  4. Compile the project (west build -b <board>)')
 
     def _new_adapter(self, args):
         """Create a new adapter between two zephlets."""
@@ -293,7 +297,7 @@ build:
         zephlet_build_dir = paths['build_dir'] / 'modules' / f'{args.zephlet_name}_zephlet'
         if not zephlet_build_dir.exists():
             log.die(f'build directory not found: {zephlet_build_dir}\n'
-                   f'Run "just b" first to create the build directory')
+                   f'Run "west build" first to create the build directory')
 
         # Locate proto file
         zephlet_source_dir = paths['zephlets_dir'] / args.zephlet_name

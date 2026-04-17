@@ -4,31 +4,54 @@ Reusable zephlet infrastructure for Zephyr RTOS implementing Ports & Adapters pa
 
 ## Quick Start
 
-### Add to west.yml
+### 1. Create your west.yml
 
 ```yaml
-projects:
-  - name: zephlet
-    url: https://github.com/rodrigopex/zephlet
-    revision: main
-    path: modules/lib/zephlet
+manifest:
+  projects:
+    - name: zephlet
+      url: https://github.com/rodrigopex/zephlet
+      revision: main
+      path: modules/lib/zephlet
+      west-commands: west/west-commands.yml
+  self:
+    path: app
 ```
 
-### Install dependencies
-
-Explicitly install required Python packages:
+### 2. Initialize and update the workspace
 
 ```bash
-pip install -r modules/lib/zephlet/codegen/requirements.txt
+west init -l .
+west update --narrow --fetch-opt=--depth=1
 ```
 
-### Create a zephlet
+### 3. Install Python dependencies
 
 ```bash
-west zephlet new -n MyZephlet -d "Description" -a "Author"
+west packages pip --install
 ```
 
-Edit your `.proto` file to define Settings/Events/RPCs (every Settings scalar field must be declared `optional` so update_settings can merge partial deltas), then run `just b` to bootstrap the `.c` file (auto-generated once if missing via `--impl-only`). After bootstrap, implement TODOs in the `.c` file manually (never overwritten). Add to root `CMakeLists.txt` `EXTRA_ZEPHYR_MODULES`, enable `CONFIG_ZEPHLET_<ZEPHLET>=y`, rebuild.
+### 4. Create a zephlet
+
+```bash
+mkdir -p src/zephlets
+west zephlet new -n <name> -d "<description>" -a "<author>"
+```
+
+If your source lives in a subdirectory (e.g. `app/`), configure the path once:
+
+```bash
+west config zephlet.zephlets-dir app/src/zephlets
+mkdir -p app/src/zephlets
+west zephlet new -n <name> -d "<description>" -a "<author>"
+```
+
+### 5. Wire it up
+
+1. Edit `src/zephlets/<name>/zlet_<name>.proto` to define Settings/Events/RPCs
+2. Add the zephlet directory to `CMakeLists.txt` `EXTRA_ZEPHYR_MODULES`
+3. Enable `CONFIG_ZEPHLET_<NAME>=y` in `prj.conf`
+4. Run `west build -b <board>` — the `.c` implementation file is generated once, then never overwritten
 
 ## Configuration
 
