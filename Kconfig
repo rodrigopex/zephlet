@@ -1,6 +1,8 @@
 config ZEPHLETS
     bool "Isolated zephlet system"
     default y
+    select ZBUS
+    select ZBUS_ASYNC_LISTENER
 
 if ZEPHLETS
 
