@@ -119,9 +119,8 @@ zbus-only coupling. No spinlocks (zbus serializes). No direct deps except inline
 
 ## Code generation
 
-Scripts: `codegen/generate_proto.py` (schema+base→full proto, validates Settings-optional), `codegen/generate_zephlet.py` (parses full proto, validates Settings-optional + field-number conventions, renders templates), `codegen/generate_adapter.py`. Templates: `codegen/templates/` — `zephlet.h.jinja→_interface.h`, `zephlet.c.jinja→_interface.c`, `zephlet_priv.h.jinja→.h`, `zephlet_impl.c.jinja→.c` (bootstrap only), adapter templates. Filters: `camel_to_snake`, `proto_type_to_snake`, `upper`, `lower`. Copier: `zephyr_zephlet_template/`.
+Single script: `codegen/generate_zephlet.py` parses the per-zephlet `.proto` service block, classifies each RPC by (`req_is_empty`, `resp_is_empty`), and emits `<prefix>_interface.{h,c}` into the build dir via jinja templates `codegen/templates/zephlet_interface.{h,c}.jinja`. Copier scaffold at `codegen/zephyr_zephlet_template/`.
 
-**Flags:** `--generate-impl` / `--no-generate-impl` / `--impl-only` (bootstrap).
-**Parser:** proto-schema-parser extracts service/invoke/report/settings oneofs → api func ptrs + dispatcher switch/case + merge helper.
-**RPC validation:** return type must match Report oneof field (`ZephletStatus`→status, `Settings`→settings, `Events`→events).
-**Helper header `<z>.h`:** `report_*_async()` only. Interface layer owns correlated publishing.
+CMake helper `zephyr_zephlet_generate(TYPE PREFIX SOURCES ...)` in `codegen/zephyr_zephlet_codegen.cmake` registers the proto for nanopb, invokes the generator, and wires up a `zephyr_library`.
+
+**Adapters are not generated.** Users write C directly using the `ZEPHLET_EVENTS_LISTENER(instance, type, callback)` macro from `zephlet.h`; dependency safety is enforced at CMake level with an `if(CONFIG_...) target_sources(...)` guard.

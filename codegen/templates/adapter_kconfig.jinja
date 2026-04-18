@@ -1,4 +1,0 @@
-config {{ adapter_config }}
-	bool "From {{ origin_zephlet }} to {{ dest_zephlet }} zephlet adapter"
-	default y
-	depends on ZEPHLET_{{ origin_base_upper }} && ZEPHLET_{{ dest_base_upper }}
