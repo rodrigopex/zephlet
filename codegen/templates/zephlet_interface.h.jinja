@@ -1,0 +1,85 @@
+/* GENERATED FILE — DO NOT EDIT. Source: {{ prefix }}.proto. */
+
+#ifndef GENERATED_{{ prefix|upper }}_INTERFACE_H_
+#define GENERATED_{{ prefix|upper }}_INTERFACE_H_
+
+#include <stdbool.h>
+
+#include <zephyr/kernel.h>
+
+#include "zephlet.h"
+#include "{{ type_snake }}/{{ prefix }}.pb.h"
+
+/**
+ * @file
+ * @brief v0.3 interface for the `{{ type_snake }}` zephlet.
+ *
+ * Four wrapper shapes follow the envelope-pointer contract (see
+ * docs/REFACTOR_V3_PLAN.md §1). Handler weak stubs default to
+ * `-ENOSYS`; developer overrides in user source.
+ */
+
+/* Method ids — declaration order in the .proto service block.
+ * Slot 0 is reserved by the v0.3 contract. */
+enum {{ type_snake }}_method_id {
+	{{ type_upper }}_M_RESERVED_0 = 0,
+	{% for rpc in rpcs %}
+	{{ type_upper }}_M_{{ rpc.name|upper }} = {{ rpc.method_id }},
+	{% endfor %}
+	{{ type_upper }}_M__COUNT = {{ num_methods_including_reserved }},
+};
+
+/** Method dispatch table exposed via ZEPHLET_DEFINE({{ type_snake }}, ...). */
+extern const struct zephlet_api {{ type_snake }}_api;
+
+/* ----- Synchronous RPC wrappers ---------------------------------------- */
+
+{% for rpc in rpcs %}
+{% if rpc.req_is_empty and rpc.resp_is_empty %}
+int {{ type_snake }}_{{ rpc.name }}(const struct zephlet *z, k_timeout_t timeout);
+{% elif rpc.req_is_empty %}
+int {{ type_snake }}_{{ rpc.name }}(const struct zephlet *z, struct {{ rpc.resp_c_name }} *resp, k_timeout_t timeout);
+{% elif rpc.resp_is_empty %}
+int {{ type_snake }}_{{ rpc.name }}(const struct zephlet *z, const struct {{ rpc.req_c_name }} *req, k_timeout_t timeout);
+{% else %}
+int {{ type_snake }}_{{ rpc.name }}(const struct zephlet *z, const struct {{ rpc.req_c_name }} *req, struct {{ rpc.resp_c_name }} *resp, k_timeout_t timeout);
+{% endif %}
+{% endfor %}
+
+/* ----- Events helper --------------------------------------------------- */
+
+/**
+ * @brief Publish a {{ type_snake }}_events message on z->channel.events.
+ *
+ * Zbus value-type channel: consumers receive a copy. ISR-safe when
+ * called with K_NO_WAIT.
+ */
+int {{ type_snake }}_emit(const struct zephlet *z, const struct {{ type_snake }}_events *ev, k_timeout_t timeout);
+
+/* ----- Readiness sugar ------------------------------------------------- */
+
+/**
+ * @brief Return true if `get_status` reports is_ready.
+ *
+ * Sugar over {{ type_snake }}_get_status(). Blocks up to 100 ms.
+ */
+bool {{ type_snake }}_is_ready(const struct zephlet *z);
+
+/* ----- Weak handler contract ------------------------------------------
+ * The generator emits `__weak` defaults returning -ENOSYS. Developer
+ * overrides in user source. Handler signatures follow the four wrapper
+ * shapes driven by (req_is_empty, resp_is_empty). */
+
+{% for rpc in rpcs %}
+{% if rpc.req_is_empty and rpc.resp_is_empty %}
+int {{ type_snake }}_on_{{ rpc.name }}(const struct zephlet *z);
+{% elif rpc.req_is_empty %}
+int {{ type_snake }}_on_{{ rpc.name }}(const struct zephlet *z, struct {{ rpc.resp_c_name }} *resp);
+{% elif rpc.resp_is_empty %}
+int {{ type_snake }}_on_{{ rpc.name }}(const struct zephlet *z, const struct {{ rpc.req_c_name }} *req);
+{% else %}
+int {{ type_snake }}_on_{{ rpc.name }}(const struct zephlet *z, const struct {{ rpc.req_c_name }} *req, struct {{ rpc.resp_c_name }} *resp);
+{% endif %}
+{% endfor %}
+
+#endif /* GENERATED_{{ prefix|upper }}_INTERFACE_H_ */
