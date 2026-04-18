@@ -1,43 +1,36 @@
 cmake_minimum_required(VERSION 3.20.0)
 
-# Get absolute path to project root (go up 5 levels from tests/integration)
-get_filename_component(PROJECT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../../.." ABSOLUTE)
-set(ZEPHLETS_ROOT "${PROJECT_ROOT}/src/zephlets")
+# Paths are computed relative to this test file; the zephlet can live
+# anywhere in the user's app tree.
+get_filename_component(ZEPHLET_DIR    "${CMAKE_CURRENT_SOURCE_DIR}/../.." REALPATH)
+get_filename_component(ZEPHLET_PARENT "${ZEPHLET_DIR}/.."                  REALPATH)
 
-# Initialize global property for proto files (modules will append to this)
 set_property(GLOBAL PROPERTY PROTO_FILES_LIST)
 
-# Set up external modules - they register their proto files
-# shared_zephlet is loaded via west.yml, so only add application zephlets
-list(APPEND EXTRA_ZEPHYR_MODULES
-    "${ZEPHLETS_ROOT}/{{ zephlet_name_lower }}"
-)
+list(APPEND EXTRA_ZEPHYR_MODULES "${ZEPHLET_DIR}")
 
-# Find Zephyr - this loads external modules which register proto files
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 
 project(test_{{ zephlet_name_lower }}_integration)
 
-# Process proto files that were registered by modules
+# Process proto files registered by the zephlet module.
 list(APPEND CMAKE_MODULE_PATH ${ZEPHYR_BASE}/modules/nanopb)
 include(nanopb)
 set(NANOPB_OPTIONS "--c-style")
 get_property(LOCAL_PROTO_FILES_LIST GLOBAL PROPERTY PROTO_FILES_LIST)
 
-# IMPORTANT: Override CMAKE_CURRENT_SOURCE_DIR temporarily so nanopb generates
-# files with correct directory structure ({{ zephlet_name_lower }}/*.pb.h)
+# Anchor nanopb output at the zephlet's parent so each proto lands at
+# <zephlet-basename>/<prefix>.pb.{h,c}; generator emits `#include
+# "<type>/<prefix>.pb.h"` which resolves against ${CMAKE_BINARY_DIR}.
 set(SAVED_CMAKE_CURRENT_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
-set(CMAKE_CURRENT_SOURCE_DIR "${PROJECT_ROOT}/src/zephlets")
+set(CMAKE_CURRENT_SOURCE_DIR "${ZEPHLET_PARENT}")
 zephyr_nanopb_sources(app ${LOCAL_PROTO_FILES_LIST})
 set(CMAKE_CURRENT_SOURCE_DIR ${SAVED_CMAKE_CURRENT_SOURCE_DIR})
 
-# Test sources
 target_sources(app PRIVATE
     src/test_{{ zephlet_name_lower }}_integration.c
 )
 
-# Include paths for test helpers
 target_include_directories(app PRIVATE
-    ${PROJECT_ROOT}/tests/common
     ${ZEPHYR_BASE}/subsys/testsuite/include
 )
