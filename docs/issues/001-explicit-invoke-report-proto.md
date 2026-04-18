@@ -1,5 +1,10 @@
 # Issue 001: Make Invoke/Report explicit in zephlet protos
 
+> **Superseded by v0.3** (see app repo `docs/REFACTOR_V3_PLAN.md`).
+> The Invoke/Report oneof model is gone entirely. Each RPC has its own
+> request/response message; the service block in the source `.proto`
+> is authoritative.
+
 ## Problem
 
 The developer writes a minimal `.proto` with only `Config`, `Events`, and a `service` block with `extends_base = true`. The build system then generates a completely different proto file that includes `Invoke` and `Report` messages with all base lifecycle fields merged in.

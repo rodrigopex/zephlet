@@ -1,5 +1,10 @@
 # Issue 002: Simplify request-response with synchronous call helpers
 
+> **Resolved by v0.3.** Sync RPC happens natively via zbus sync-listener
+> semantics on the `rpc` pointer channel. No semaphores, no correlation
+> IDs, no blocking-helper layer. Wrappers return `call.return_code`
+> directly.
+
 ## Problem
 
 The current request-response pattern requires the caller to:

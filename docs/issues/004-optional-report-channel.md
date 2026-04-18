@@ -1,5 +1,10 @@
 # Issue 004: Make the report channel optional
 
+> **Resolved by v0.3.** The report channel no longer exists. Every
+> instance has an `rpc` channel (sync, pointer) and an `events` channel
+> (async, value-typed). Replies to RPCs are returned in the wrapper's
+> return value; they are never republished on a channel.
+
 ## Problem
 
 Every zephlet currently defines two zbus channels: invoke and report. This is the right model for zephlets that both receive commands and publish state/events. But some zephlets don't fit neatly:
