@@ -1,25 +1,41 @@
 #!/usr/bin/env python3
 """
-Zephlet Code Generator for Zephyr RTOS
+Zephlet v0.3 code generator.
 
-Generates zephlet infrastructure (.h and .c files) from protobuf definitions.
-Uses proto-schema-parser to parse .proto files and Jinja2 templates to generate
-boilerplate code following the ports & adapters architecture pattern.
+Reads a per-zephlet .proto file of the shape:
+
+    message <Type> {
+      message Config { ... }
+      message Events { ... }
+    }
+
+    service <Type>Api {
+      rpc start       (Empty)        returns (ZephletStatus);
+      rpc stop        (Empty)        returns (ZephletStatus);
+      rpc get_status  (Empty)        returns (ZephletStatus);
+      rpc config      (<Type>.Config) returns (<Type>.Config);
+      rpc get_config  (Empty)         returns (<Type>.Config);
+      ...
+    }
+
+and emits:
+
+    <output-dir>/<prefix>_interface.h
+    <output-dir>/<prefix>_interface.c
+
+The envelope shape, method-table layout, weak-handler contract, and
+four-shape wrappers are fixed by the v0.3 architecture decisions (see
+`docs/REFACTOR_V3_PLAN.md`).
 
 Usage:
-    # Generate only .h and .c files:
-    python3 generate_zephlet.py --proto ../../tick/tick_zephlet.proto \
-                                --output-dir ../../tick \
-                                --zephlet-name tick_zephlet \
-                                --module-dir tick
-
-    # Generate .h, .c, and _impl.c template (only if _impl.c doesn't exist):
-    python3 generate_zephlet.py --proto ../../tick/tick_zephlet.proto \
-                                --output-dir ../../tick \
-                                --zephlet-name tick_zephlet \
-                                --module-dir tick \
-                                --generate-impl
+    python3 generate_zephlet.py \
+        --proto .../zlet_tick.proto \
+        --output-dir ${CMAKE_BINARY_DIR}/modules/zlet_tick \
+        --type tick \
+        --prefix zlet_tick
 """
+
+from __future__ import annotations
 
 import argparse
 import os
@@ -29,836 +45,216 @@ import sys
 try:
     from proto_schema_parser.parser import Parser
 except ImportError:
-    print("Error: proto-schema-parser not installed")
-    print("Install with: pip install proto-schema-parser")
+    print("Error: proto-schema-parser not installed", file=sys.stderr)
     sys.exit(1)
 
 try:
     from jinja2 import Environment, FileSystemLoader
 except ImportError:
-    print("Error: jinja2 not installed")
-    print("Install with: pip install jinja2")
+    print("Error: jinja2 not installed", file=sys.stderr)
     sys.exit(1)
 
 
 def camel_to_snake(name: str) -> str:
-    """Convert CamelCase to snake_case"""
-    name = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', name)
-    return re.sub('([a-z0-9])([A-Z])', r'\1_\2', name).lower()
+    s = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", name)
+    return re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s).lower()
 
 
-def proto_type_to_snake(type_str: str) -> str:
+def strip_parent_qualifier(type_ref: str) -> str:
     """
-    Extract type name from qualified proto type and convert to snake_case.
-    Examples:
-      - "MsgStorageZephlet.KeyValue" → "key_value"
-      - "KeyValue" → "key_value"
-      - "Empty" → "empty"
+    Turn 'Tick.Config' into 'Config'. Leaves bare names untouched.
     """
-    # Extract just the type name (after last dot if qualified)
-    type_name = type_str.split('.')[-1] if '.' in type_str else type_str
-    return camel_to_snake(type_name)
+    return type_ref.rsplit(".", 1)[-1] if "." in type_ref else type_ref
 
 
-def snake_to_upper(name: str) -> str:
-    """Convert snake_case to UPPER_CASE"""
-    return name.upper()
-
-
-def snake_to_camel(name: str) -> str:
-    """Convert snake_case to CamelCase"""
-    return ''.join(word.capitalize() for word in name.split('_'))
-
-
-def normalize_proto_type(type_str: str, zephlet_name: str) -> str:
+def message_c_name(type_ref: str, owning_type: str) -> str:
     """
-    Normalize proto types to snake_case for comparison.
+    Map a proto message reference to its nanopb C struct name.
 
-    Handles both qualified and unqualified nested types:
-    - "Empty" → "empty"
-    - "MsgZephletStatus" → "msg_zephlet_status"
-    - "MsgTickZephlet.Config" → "config" (nested type uses short form)
-    - "Config" → "config"
-
-    For types nested within the zephlet message (like Config, Events),
-    we use the short form since that's how they appear in Invoke/Report oneofs.
+    - 'Empty'              -> ''    (caller handles NULL descriptor)
+    - 'ZephletStatus'      -> 'zephlet_status'
+    - 'Tick.Config'        -> 'tick_config'     (with owning_type='Tick')
+    - 'Config'             -> 'tick_config'     (unqualified nested type)
     """
-    if not type_str:
+    if type_ref == "Empty":
         return ""
 
-    # Handle nested types like "MsgTickZephlet.Config"
-    if '.' in type_str:
-        # Extract just the nested type name: "MsgTickZephlet.Config" → "Config"
-        # Then normalize to snake_case
-        nested_type = type_str.split('.')[-1]
-        return camel_to_snake(nested_type).lower()
+    if "." in type_ref:
+        parent, child = type_ref.split(".", 1)
+        return f"{camel_to_snake(parent)}_{camel_to_snake(child)}"
 
-    # Simple types
-    return camel_to_snake(type_str).lower()
+    # Unqualified. Best-effort: treat bare 'Config'/'Events' as owning_type
+    # nested types; any other bare type passes through snake_cased.
+    if owning_type and type_ref in ("Config", "Events"):
+        return f"{camel_to_snake(owning_type)}_{camel_to_snake(type_ref)}"
+    return camel_to_snake(type_ref)
 
 
-def build_type_maps(invoke_fields: list, report_fields: list, zephlet_name: str) -> tuple:
+def nanopb_descriptor(c_name: str) -> str:
     """
-    Build type maps for validation.
-
-    Returns:
-        (invoke_map, report_map) where each map is:
-        {field_name: {'type': normalized_type, 'raw_type': original_type, 'is_empty': bool}}
+    Nanopb with --c-style appends '_t_msg' to the message descriptor symbol.
     """
-    invoke_map = {}
-    for field in invoke_fields:
-        invoke_map[field['name']] = {
-            'type': normalize_proto_type(field['type'], zephlet_name),
-            'raw_type': field['type'],
-            'is_empty': field['is_empty']
+    return f"{c_name}_t_msg" if c_name else ""
+
+
+def parse_proto(proto_path: str) -> dict:
+    """
+    Parse the .proto and return a flat dict for the Jinja templates.
+    """
+    with open(proto_path, "r") as f:
+        content = f.read()
+    tree = Parser().parse(content)
+
+    # Locate the outer zephlet message (the one containing Config / Events).
+    owning_msg = None
+    for elem in tree.file_elements:
+        if elem.__class__.__name__ != "Message":
+            continue
+        nested_names = {
+            n.name
+            for n in elem.elements
+            if n.__class__.__name__ == "Message"
         }
+        if nested_names & {"Config", "Events"}:
+            owning_msg = elem
+            break
 
-    report_map = {}
-    for field in report_fields:
-        report_map[field['name']] = {
-            'type': normalize_proto_type(field['type'], zephlet_name),
-            'raw_type': field['type'],
-            'is_empty': field['is_empty']
-        }
+    if owning_msg is None:
+        print(f"{proto_path}: no message with nested Config/Events found",
+              file=sys.stderr)
+        sys.exit(1)
 
-    return invoke_map, report_map
+    owning_type = owning_msg.name
 
+    # Locate the service block. Exactly one service expected.
+    service = None
+    for elem in tree.file_elements:
+        if elem.__class__.__name__ == "Service":
+            service = elem
+            break
 
-def map_proto_type_to_c(proto_type: str) -> str:
-    """Map protobuf types to C types
+    if service is None:
+        print(f"{proto_path}: no service block found", file=sys.stderr)
+        sys.exit(1)
 
-    Note: For message types, use nanopb generated names without struct prefix
-    """
-    mapping = {
-        'uint32': 'uint32_t',
-        'uint64': 'uint64_t',
-        'int32': 'int32_t',
-        'int64': 'int64_t',
-        'bool': 'bool',
-        'string': 'char*',
-        'bytes': 'uint8_t*',
-        'Empty': 'empty',
-        'MsgZephletStatus': 'msg_zephlet_status',
-        'ZephletStatus': 'zephlet_status',
-        'ZephletResult': 'zephlet_result',
-    }
-    return mapping.get(proto_type, proto_type)
-
-
-def extract_report_field_from_return_type(return_type: str, zephlet_name: str, report_fields: list) -> str:
-    """
-    Map RPC return type to Report field name using hybrid lookup+inference.
-
-    Examples:
-    - "MsgZephletStatus" → "status"
-    - "MsgTickZephlet.Config" → "config"
-    - "MsgTickZephlet.Events" → "events"
-
-    Strategy:
-    1. Build type-to-name map from Report fields
-    2. Try exact type match first (handles multiple fields with same type)
-    3. Fall back to inference from type name
-    """
-    # Build type-to-name map from Report fields
-    type_map = {}
-    for field in report_fields:
-        normalized = normalize_proto_type(field['type'], zephlet_name)
-        if normalized not in type_map:
-            type_map[normalized] = []
-        type_map[normalized].append(field['name'])
-
-    # Lookup: Try exact type match
-    normalized_output = normalize_proto_type(return_type, zephlet_name)
-    if normalized_output in type_map:
-        matches = type_map[normalized_output]
-        if len(matches) == 1:
-            return matches[0]  # Exact match found
-        # Multiple fields with same type: fall through to inference
-
-    # Fallback: Infer from type name
-    if return_type in ('MsgZephletStatus', 'ZephletStatus'):
-        return 'status'
-    if return_type == 'Empty':
-        return 'empty'
-    if '.' in return_type:
-        # Extract nested type: "MsgTickZephlet.Config" → "config"
-        return camel_to_snake(return_type.split('.')[-1]).lower()
-    return camel_to_snake(return_type).lower()
-
-
-def validate_zephlet_consistency(rpc_methods: list, report_fields: list, invoke_fields: list, zephlet_name: str) -> None:
-    """
-    Validate that zephlet definition is consistent with strict type checking:
-    1. Each RPC method has a corresponding Invoke oneof field
-    2. RPC input type matches Invoke field type (normalized)
-    3. Each RPC return type has a corresponding Report oneof field
-    4. RPC output type matches Report field type (normalized)
-
-    Raises ValueError on validation failure to fail the build.
-    """
-    if not rpc_methods:
-        return  # No zephlet definition, skip validation
-
-    # Build type maps for validation
-    invoke_map, report_map = build_type_maps(invoke_fields, report_fields, zephlet_name)
-
-    errors = []
-
-    for method in rpc_methods:
-        method_name = method['name']
-        input_type = method['input_type']
-        output_type = method['output_type']
-        report_field_name = method['report_field_name']
-        output_streaming = method.get('output_streaming', False)
-
-        # 1. Check Invoke field exists (skip for output-streaming RPCs)
-        if not output_streaming:
-            if method_name not in invoke_map:
-                errors.append(
-                    f"RPC method '{method_name}' has no corresponding Invoke oneof field"
-                )
-            else:
-                # 2. Check input type matches Invoke field type
-                invoke_field = invoke_map[method_name]
-                normalized_input = normalize_proto_type(input_type, zephlet_name)
-                if normalized_input != invoke_field['type']:
-                    errors.append(
-                        f"RPC method '{method_name}' input type mismatch:\n"
-                        f"  RPC input: {input_type} (normalized: {normalized_input})\n"
-                        f"  Invoke field '{method_name}' type: {invoke_field['raw_type']} (normalized: {invoke_field['type']})"
-                    )
-
-        # Skip Report validation for Empty returns (no report needed)
-        if output_type == 'Empty' or output_type.endswith('.Empty'):
+    # Walk RPCs, allocate method_id in declaration order starting at 1.
+    rpcs = []
+    next_id = 1
+    for method in service.elements:
+        if method.__class__.__name__ != "Method":
             continue
 
-        # 3. Check Report field exists
-        if report_field_name not in report_map:
-            errors.append(
-                f"RPC method '{method_name}' returns '{output_type}' "
-                f"but Report has no field '{report_field_name}'"
-            )
-        else:
-            # 4. Check output type matches Report field type
-            report_field = report_map[report_field_name]
-            normalized_output = normalize_proto_type(output_type, zephlet_name)
-            if normalized_output != report_field['type']:
-                errors.append(
-                    f"RPC method '{method_name}' output type mismatch:\n"
-                    f"  RPC output: {output_type} (normalized: {normalized_output})\n"
-                    f"  Report field '{report_field_name}' type: {report_field['raw_type']} (normalized: {report_field['type']})"
-                )
+        input_type = method.input_type
+        output_type = method.output_type
+        # proto-schema-parser exposes MessageType with a `.type` attr for the
+        # name; strings pass through.
+        input_type = getattr(input_type, "type",
+                             getattr(input_type, "name", str(input_type)))
+        output_type = getattr(output_type, "type",
+                              getattr(output_type, "name", str(output_type)))
 
-    if errors:
-        error_msg = "Zephlet validation failed:\n" + "\n".join(f"  - {e}" for e in errors)
-        raise ValueError(error_msg)
+        # Reject streaming RPCs (out of scope for v0.3).
+        for attr in ("input_streaming", "output_streaming"):
+            if getattr(method, attr, False):
+                print(
+                    f"{proto_path}: RPC '{method.name}' uses streaming; "
+                    f"streaming is out of scope for v0.3.",
+                    file=sys.stderr)
+                sys.exit(1)
 
+        req_c = message_c_name(input_type, owning_type)
+        resp_c = message_c_name(output_type, owning_type)
 
-def validate_field_numbers(invoke_fields: list, report_fields: list, zephlet_name: str) -> None:
-    """
-    Validate field number and name assignments follow reserved range conventions.
-    Reserved: Invoke 1-6 (standard), 7+ (custom); Report 1-3 (standard), 4+ (custom)
-    Enforces: no duplicates, standard names at reserved numbers, warns on gaps (non-fatal)
-    """
-    errors = []
-    warnings = []
+        rpcs.append({
+            "name": method.name,
+            "method_id": next_id,
+            "req_c_name": req_c,
+            "resp_c_name": resp_c,
+            "req_is_empty": (input_type == "Empty"),
+            "resp_is_empty": (output_type == "Empty"),
+            "req_desc": nanopb_descriptor(req_c) or None,
+            "resp_desc": nanopb_descriptor(resp_c) or None,
+        })
+        next_id += 1
 
-    # Standard field names at reserved numbers
-    INVOKE_STANDARD_FIELDS = {
-        1: 'start',
-        2: 'stop',
-        3: 'get_status',
-        4: 'update_settings',
-        5: 'get_settings',
-        6: 'get_events'
-    }
-    REPORT_STANDARD_FIELDS = {
-        1: 'empty',
-        2: 'status',
-        3: 'settings',
-        4: 'events'
-    }
-
-    # Validate Invoke fields
-    invoke_numbers = {}
-    for field in invoke_fields:
-        tag = field['tag']
-        name = field['name']
-
-        # Check duplicates
-        if tag in invoke_numbers:
-            errors.append(f"Invoke field '{name}' duplicate number {tag} (already '{invoke_numbers[tag]}')")
-        invoke_numbers[tag] = name
-
-        # Check standard field names at reserved numbers
-        if tag in INVOKE_STANDARD_FIELDS:
-            expected_name = INVOKE_STANDARD_FIELDS[tag]
-            if name != expected_name:
-                errors.append(
-                    f"Invoke field {tag} has name '{name}' but should be '{expected_name}' "
-                    f"(reserved numbers 1-6 require standard names)"
-                )
-
-    # Warn on Invoke gaps
-    if invoke_numbers:
-        min_tag, max_tag = min(invoke_numbers.keys()), max(invoke_numbers.keys())
-        gaps = set(range(min_tag, max_tag + 1)) - set(invoke_numbers.keys())
-        if gaps:
-            warnings.append(f"Invoke gaps in field numbers: {sorted(gaps)} (range {min_tag}-{max_tag})")
-
-    # Validate Report fields
-    report_numbers = {}
-    for field in report_fields:
-        tag = field['tag']
-        name = field['name']
-
-        # Check duplicates
-        if tag in report_numbers:
-            errors.append(f"Report field '{name}' duplicate number {tag} (already '{report_numbers[tag]}')")
-        report_numbers[tag] = name
-
-        # Check standard field names at reserved numbers
-        if tag in REPORT_STANDARD_FIELDS:
-            expected_name = REPORT_STANDARD_FIELDS[tag]
-            if name != expected_name:
-                errors.append(
-                    f"Report field {tag} has name '{name}' but should be '{expected_name}' "
-                    f"(reserved numbers 1-4 require standard names)"
-                )
-
-    # Warn on Report gaps
-    if report_numbers:
-        min_tag, max_tag = min(report_numbers.keys()), max(report_numbers.keys())
-        gaps = set(range(min_tag, max_tag + 1)) - set(report_numbers.keys())
-        if gaps:
-            warnings.append(f"Report gaps in field numbers: {sorted(gaps)} (range {min_tag}-{max_tag})")
-
-    # Print warnings, raise errors
-    if warnings:
-        print("Validation warnings:")
-        for w in warnings:
-            print(f"  - {w}")
-
-    if errors:
-        error_msg = "Field number validation failed:\n" + "\n".join(f"  - {e}" for e in errors)
-        raise ValueError(error_msg)
-
-
-def parse_zephlet_proto(proto_path: str, zephlet_name: str, module_dir: str, output_dir: str = None) -> dict:
-    """Parse zephlet protobuf file and extract structure information"""
-    parser = Parser()
-
-    with open(proto_path, 'r') as f:
-        proto_content = f.read()
-
-    try:
-        proto_file = parser.parse(proto_content)
-    except Exception as e:
-        print(f"Error parsing proto file: {e}")
+    if not rpcs:
+        print(f"{proto_path}: service block has no RPCs", file=sys.stderr)
         sys.exit(1)
-
-    # Get messages from file_elements
-    messages = []
-    for element in proto_file.file_elements:
-        if hasattr(element, 'name') and element.__class__.__name__ == 'Message':
-            messages.append(element)
-
-    # Find the zephlet message
-    # Supports: old pattern (MsgZletTick, MsgTickZephlet) and new pattern (Tick, Ui)
-    zephlet_msg = None
-    for message in messages:
-        # Old pattern: Msg*Zephlet or MsgZlet*
-        if message.name.startswith('Msg') and (message.name.endswith('Zephlet') or message.name.startswith('MsgZlet')):
-            zephlet_msg = message
-            break
-
-    if not zephlet_msg:
-        # New pattern: message containing Invoke + Report sub-messages
-        for message in messages:
-            if message.name in ('_', 'Empty', 'ZephletStatus', 'ZephletResult'):
-                continue
-            nested_names = set()
-            for elem in message.elements:
-                if hasattr(elem, 'name') and elem.__class__.__name__ == 'Message':
-                    nested_names.add(elem.name)
-            if 'Invoke' in nested_names and 'Report' in nested_names:
-                zephlet_msg = message
-                break
-
-    if not zephlet_msg:
-        print("Error: No zephlet message found")
-        sys.exit(1)
-
-    # Extract base name from zephlet_name (e.g., "zlet_ui" -> "ui")
-    # This handles both old (ui_zephlet) and new (zlet_ui) patterns
-    base_name = zephlet_name
-    if zephlet_name.startswith('zlet_'):
-        base_name = zephlet_name[5:]  # Remove "zlet_" prefix
-    elif zephlet_name.endswith('_zephlet'):
-        base_name = zephlet_name[:-8]  # Remove "_zephlet" suffix
-
-    base_name_upper = base_name.upper()
-    base_name_camel = snake_to_camel(base_name)
-
-    # Extract zephlet definition (for RPC methods)
-    # First try: service at top level of proto file
-    zephlet_def = None
-    for element in proto_file.file_elements:
-        if hasattr(element, 'name') and element.__class__.__name__ == 'Service':
-            zephlet_def = element
-            break
-
-    # Second try: service inside a /* ... */ comment block (generated protos)
-    if not zephlet_def:
-        import re
-        svc_match = re.search(
-            r'/\*.*?(service\s+\w+\s*\{[^}]*\}).*?\*/',
-            proto_content,
-            re.DOTALL
-        )
-        if svc_match:
-            svc_text = svc_match.group(1).strip()
-            # Wrap in minimal proto so parser can handle it
-            svc_proto = f'syntax = "proto3";\nmessage Empty {{}}\n{svc_text}\n'
-            try:
-                svc_parsed = parser.parse(svc_proto)
-                for element in svc_parsed.file_elements:
-                    if hasattr(element, 'name') and element.__class__.__name__ == 'Service':
-                        zephlet_def = element
-                        break
-            except Exception:
-                pass
-
-    # Find nested messages
-    invoke_msg = None
-    report_msg = None
-    settings_msg = None
-    events_msg = None
-
-    # Get nested messages and enums from elements
-    nested_messages = []
-    nested_enum_names = set()
-    for element in zephlet_msg.elements:
-        if hasattr(element, 'name') and element.__class__.__name__ == 'Message':
-            nested_messages.append(element)
-        elif hasattr(element, 'name') and element.__class__.__name__ == 'Enum':
-            nested_enum_names.add(element.name)
-
-    for nested in nested_messages:
-        if nested.name == 'Invoke':
-            invoke_msg = nested
-        elif nested.name == 'Report':
-            report_msg = nested
-        elif nested.name == 'Settings':
-            settings_msg = nested
-        elif nested.name == 'Events':
-            events_msg = nested
-
-    if not invoke_msg:
-        print("Error: No Invoke message found in zephlet")
-        sys.exit(1)
-
-    # Extract invoke fields from oneof
-    invoke_fields = []
-    invoke_oneof_name = None
-
-    # Get oneof groups from Invoke message
-    for element in invoke_msg.elements:
-        if element.__class__.__name__ == 'OneOf':
-            # Capture the oneof name (e.g., "tick_invoke")
-            invoke_oneof_name = element.name
-            # Extract fields from oneof
-            for field_element in element.elements:
-                if hasattr(field_element, 'name') and field_element.__class__.__name__ == 'Field':
-                    # Strip parent qualifier (e.g., Tick.Config -> Config)
-                    raw_type = field_element.type
-                    unqualified_type = raw_type.rsplit('.', 1)[-1] if '.' in raw_type else raw_type
-                    invoke_fields.append({
-                        'name': field_element.name,
-                        'tag': field_element.number,
-                        'type': raw_type,
-                        'is_empty': raw_type == 'Empty',
-                        'is_enum': unqualified_type in nested_enum_names,
-                        'message_type': unqualified_type if raw_type != 'Empty' else None
-                    })
-
-    if not invoke_fields:
-        print("Error: No invoke fields found in Invoke message oneof")
-        sys.exit(1)
-
-    if not invoke_oneof_name:
-        print("Error: No oneof found in Invoke message")
-        sys.exit(1)
-
-    # Extract report oneof name and fields from Report message
-    report_oneof_name = None
-    report_fields = []
-    if report_msg:
-        for element in report_msg.elements:
-            if element.__class__.__name__ == 'OneOf':
-                report_oneof_name = element.name
-                # Extract fields from oneof
-                for field_element in element.elements:
-                    if hasattr(field_element, 'name') and field_element.__class__.__name__ == 'Field':
-                        # Strip parent qualifier (e.g., Tick.Events -> Events)
-                        raw_type = field_element.type
-                        unqualified_type = raw_type.rsplit('.', 1)[-1] if '.' in raw_type else raw_type
-                        report_fields.append({
-                            'name': field_element.name,
-                            'tag': field_element.number,
-                            'type': raw_type,
-                            'is_empty': raw_type == 'Empty',
-                            'message_type': unqualified_type if raw_type != 'Empty' else None
-                        })
-                break
-
-    # Extract settings fields and enforce proto3 `optional` on every scalar.
-    # Generator rejects non-optional Settings fields so partial merge always has
-    # has_<field> companions to work with.
-    settings_fields = []
-    if settings_msg:
-        non_optional = []
-        for element in settings_msg.elements:
-            if hasattr(element, 'name') and element.__class__.__name__ == 'Field':
-                card_raw = getattr(element, 'cardinality', None)
-                is_optional = card_raw is not None and 'optional' in str(card_raw).lower()
-                if not is_optional:
-                    non_optional.append(element.name)
-                settings_fields.append({
-                    'name': element.name,
-                    'type': map_proto_type_to_c(element.type),
-                    'proto_type': element.type,
-                    'is_optional': is_optional,
-                })
-        if non_optional:
-            raise ValueError(
-                f"{zephlet_name}: Settings message fields must be declared "
-                f"`optional` to support partial updates via update_settings: "
-                f"{', '.join(non_optional)}"
-            )
-
-        # Collision check: user field literally named `has_<x>` clashes with
-        # the nanopb presence flag of an optional field `x`.
-        names = {f['name'] for f in settings_fields}
-        for f in settings_fields:
-            if f['name'].startswith('has_') and f['name'][4:] in names:
-                raise ValueError(
-                    f"{zephlet_name}: Settings field '{f['name']}' collides "
-                    f"with the nanopb presence flag for optional field "
-                    f"'{f['name'][4:]}'"
-                )
-
-    # Extract events fields.  The `timestamp` field (always field #1, non-
-    # optional) is always overwritten by events_update; every other field
-    # must be `optional` so the differential merge has has_<field> flags.
-    events_fields = []
-    if events_msg:
-        non_optional_non_ts = []
-        has_timestamp = False
-        for element in events_msg.elements:
-            if hasattr(element, 'name') and element.__class__.__name__ == 'Field':
-                card_raw = getattr(element, 'cardinality', None)
-                is_optional = card_raw is not None and 'optional' in str(card_raw).lower()
-                is_timestamp = (element.name == 'timestamp')
-                if is_timestamp:
-                    has_timestamp = True
-                    if is_optional:
-                        raise ValueError(
-                            f"{zephlet_name}: Events.timestamp must NOT be "
-                            f"declared `optional` — it is always auto-set "
-                            f"by events_update"
-                        )
-                elif not is_optional:
-                    non_optional_non_ts.append(element.name)
-                events_fields.append({
-                    'name': element.name,
-                    'type': map_proto_type_to_c(element.type),
-                    'proto_type': element.type,
-                    'is_optional': is_optional,
-                    'is_timestamp': is_timestamp,
-                })
-        if not has_timestamp:
-            raise ValueError(
-                f"{zephlet_name}: Events message must contain a "
-                f"non-optional `timestamp` field"
-            )
-        if non_optional_non_ts:
-            raise ValueError(
-                f"{zephlet_name}: Events fields (except timestamp) must be "
-                f"declared `optional` to support differential merge via "
-                f"events_update: {', '.join(non_optional_non_ts)}"
-            )
-
-        # Collision check: has_<x> vs optional field x.
-        names = {f['name'] for f in events_fields}
-        for f in events_fields:
-            if f['name'].startswith('has_') and f['name'][4:] in names:
-                raise ValueError(
-                    f"{zephlet_name}: Events field '{f['name']}' collides "
-                    f"with the nanopb presence flag for optional field "
-                    f"'{f['name'][4:]}'"
-                )
-
-    # Extract RPC methods if zephlet definition exists
-    rpc_methods = []
-    if zephlet_def and hasattr(zephlet_def, 'elements'):
-        for method_element in zephlet_def.elements:
-            if hasattr(method_element, 'name') and method_element.__class__.__name__ == 'Method':
-                # Extract input type name (handle MessageType objects)
-                input_type = method_element.input_type
-                if hasattr(input_type, 'type'):
-                    input_type = input_type.type
-                elif hasattr(input_type, 'name'):
-                    input_type = input_type.name
-                else:
-                    input_type = str(input_type)
-
-                # Extract input streaming flag
-                input_streaming = False
-                if hasattr(input_type, 'stream') and input_type.stream:
-                    input_streaming = True
-
-                # Extract output type name and check for streaming
-                output_type = method_element.output_type
-                output_streaming = False
-
-                # Check if it's a stream type
-                if hasattr(output_type, 'stream') and output_type.stream:
-                    output_streaming = True
-
-                # Get the type name
-                if hasattr(output_type, 'type'):
-                    output_type_name = output_type.type
-                elif hasattr(output_type, 'name'):
-                    output_type_name = output_type.name
-                else:
-                    output_type_name = str(output_type)
-
-                # Parse return type to determine report field
-                report_field_name = extract_report_field_from_return_type(
-                    output_type_name,
-                    zephlet_name,
-                    report_fields
-                )
-
-                # Check if input type is an enum
-                unqualified_input = input_type.rsplit('.', 1)[-1] if '.' in str(input_type) else str(input_type)
-                input_is_enum = unqualified_input in nested_enum_names
-
-                rpc_methods.append({
-                    'name': method_element.name,
-                    'input_type': input_type,
-                    'output_type': output_type_name,
-                    'input_streaming': input_streaming,
-                    'output_streaming': output_streaming,
-                    'report_field_name': report_field_name,
-                    'input_is_enum': input_is_enum,
-                })
-
-    # Validate field numbers (NEW)
-    validate_field_numbers(invoke_fields, report_fields, zephlet_name)
-
-    # Validate zephlet consistency (raises ValueError on failure)
-    validate_zephlet_consistency(rpc_methods, report_fields, invoke_fields, zephlet_name)
-
-    # Enrich invoke_fields with report_field_name from rpc_methods
-    rpc_by_name = {m['name']: m for m in rpc_methods}
-    for field in invoke_fields:
-        rpc = rpc_by_name.get(field['name'])
-        field['report_field_name'] = rpc['report_field_name'] if rpc else None
-
-    # Partition invoke fields into standard lifecycle vs. custom. Standard
-    # ones are dispatched directly from api_handler via the base core
-    # helpers; custom ones flow through the user's api vtable.
-    STANDARD_METHODS = {'start', 'stop', 'get_status',
-                         'update_settings', 'get_settings', 'get_events'}
-    custom_invoke_fields = [f for f in invoke_fields
-                            if f['name'] not in STANDARD_METHODS]
-    custom_rpc_methods = [m for m in rpc_methods
-                           if m['name'] not in STANDARD_METHODS]
-
-    # Nanopb C prefix: derived from proto message name
-    # MsgZletTick → msg_zlet_tick, Tick → tick
-    pb_prefix = camel_to_snake(zephlet_msg.name)
-    pb_prefix_upper = pb_prefix.upper()
 
     return {
-        'zephlet_name': zephlet_name,
-        'zephlet_name_upper': snake_to_upper(zephlet_name),
-        'zephlet_name_camel': zephlet_msg.name.replace('Msg', '').replace('Zephlet', '').replace('Zlet', ''),
-        'base_name': base_name,
-        'base_name_upper': base_name_upper,
-        'base_name_camel': base_name_camel,
-        'pb_prefix': pb_prefix,
-        'pb_prefix_upper': pb_prefix_upper,
-        'module_dir': module_dir,
-        'module_name': os.path.basename(module_dir),
-        'invoke_oneof_name': invoke_oneof_name,
-        'report_oneof_name': report_oneof_name,
-        'invoke_fields': invoke_fields,
-        'custom_invoke_fields': custom_invoke_fields,
-        'custom_rpc_methods': custom_rpc_methods,
-        'report_fields': report_fields,
-        'settings_fields': settings_fields,
-        'settings_type': f"{pb_prefix}_settings" if settings_msg else None,
-        'has_settings': settings_msg is not None,
-        'events_fields': events_fields,
-        'events_type': f"{pb_prefix}_events" if events_msg else None,
-        'has_events': events_msg is not None,
-        'rpc_methods': rpc_methods
+        "owning_type_camel": owning_type,
+        "type_snake": camel_to_snake(owning_type),
+        "type_upper": camel_to_snake(owning_type).upper(),
+        "rpcs": rpcs,
+        "num_methods_including_reserved": rpcs[-1]["method_id"] + 1,
     }
 
 
-def render_templates(context: dict, template_dir: str) -> tuple:
-    """Render Jinja2 templates using context"""
-    env = Environment(loader=FileSystemLoader(template_dir))
-
-    # Add custom filters
-    env.filters['camel_to_snake'] = camel_to_snake
-    env.filters['proto_type_to_snake'] = proto_type_to_snake
-
-    # Render header
-    header_template = env.get_template('zephlet.h.jinja')
-    header_content = header_template.render(**context)
-
-    # Render implementation
-    impl_template = env.get_template('zephlet.c.jinja')
-    impl_content = impl_template.render(**context)
-
-    return header_content, impl_content
-
-
-def main():
-    parser = argparse.ArgumentParser(
-        description="Generate zephlet infrastructure from protobuf definition"
+def render_templates(ctx: dict, prefix: str, template_dir: str,
+                     output_dir: str) -> tuple[str, str]:
+    env = Environment(
+        loader=FileSystemLoader(template_dir),
+        trim_blocks=True,
+        lstrip_blocks=True,
+        keep_trailing_newline=True,
     )
-    parser.add_argument(
-        '--proto',
-        required=True,
-        help='Path to .proto file'
-    )
-    parser.add_argument(
-        '--output-dir',
-        required=True,
-        help='Output directory for generated files'
-    )
-    parser.add_argument(
-        '--zephlet-name',
-        required=True,
-        help='Zephlet name (e.g., tick_zephlet)'
-    )
-    parser.add_argument(
-        '--module-dir',
-        required=True,
-        help='Module directory name (e.g., tick for tick zephlet)'
-    )
-    parser.add_argument(
-        '--generate-impl',
-        action='store_true',
-        help='Generate _impl.c template file (only if it does not exist)'
-    )
-    parser.add_argument(
-        '--no-generate-impl',
-        action='store_true',
-        help='Skip _impl.c generation (for build-time codegen)'
-    )
-    parser.add_argument(
-        '--impl-only',
-        action='store_true',
-        help='Only generate _impl.c, skip .h/.c/.priv.h (for bootstrap)'
-    )
+    header_tpl = env.get_template("zephlet_interface.h.jinja")
+    source_tpl = env.get_template("zephlet_interface.c.jinja")
 
-    args = parser.parse_args()
+    ctx = {**ctx, "prefix": prefix}
+    header = header_tpl.render(**ctx)
+    source = source_tpl.render(**ctx)
 
-    # Validate inputs
+    os.makedirs(output_dir, exist_ok=True)
+    header_path = os.path.join(output_dir, f"{prefix}_interface.h")
+    source_path = os.path.join(output_dir, f"{prefix}_interface.c")
+
+    with open(header_path, "w") as f:
+        f.write(header)
+    with open(source_path, "w") as f:
+        f.write(source)
+
+    return header_path, source_path
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--proto", required=True, help="Path to per-zephlet .proto")
+    p.add_argument("--output-dir", required=True,
+                   help="Directory to emit <prefix>_interface.{h,c} into")
+    p.add_argument("--type", required=True,
+                   help="Zephlet type (e.g. 'tick'). Used for symbol names "
+                        "(tick_api, lis_tick, tick_on_*, ...).")
+    p.add_argument("--prefix", required=True,
+                   help="File-name prefix (e.g. 'zlet_tick'). "
+                        "Output: <prefix>_interface.{h,c}.")
+    args = p.parse_args()
+
     if not os.path.exists(args.proto):
-        print(f"Error: Proto file not found: {args.proto}")
-        sys.exit(1)
+        print(f"Proto not found: {args.proto}", file=sys.stderr)
+        return 1
 
-    if not os.path.exists(args.output_dir):
-        print(f"Error: Output directory not found: {args.output_dir}")
-        sys.exit(1)
+    ctx = parse_proto(args.proto)
 
-    # Parse proto file
-    print(f"Parsing {args.proto}...")
-    context = parse_zephlet_proto(args.proto, args.zephlet_name, args.module_dir, args.output_dir)
+    # Sanity: --type must agree with the owning message's snake-cased name.
+    if ctx["type_snake"] != args.type:
+        print(
+            f"warning: --type '{args.type}' differs from derived "
+            f"'{ctx['type_snake']}'; using --type for symbol emission",
+            file=sys.stderr)
+    ctx["type_snake"] = args.type
+    ctx["type_upper"] = args.type.upper()
 
-    print(f"Zephlet: {context['zephlet_name']}")
-    print(f"Invoke fields: {[f['name'] for f in context['invoke_fields']]}")
-    if context['rpc_methods']:
-        print(f"RPC methods: {len(context['rpc_methods'])} found")
-        for m in context['rpc_methods']:
-            in_stream = " (stream input)" if m.get('input_streaming') else ""
-            out_stream = " (stream output)" if m.get('output_streaming') else ""
-            print(f"  - {m['name']}({m['input_type']}{in_stream}) -> {m['output_type']}{out_stream} => report_{m['report_field_name']}()")
-    if context['has_settings']:
-        print(f"Settings fields: {[f['name'] for f in context['settings_fields']]}")
-
-    # Get template directory
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    template_dir = os.path.join(script_dir, 'templates')
+    template_dir = os.path.join(script_dir, "templates")
 
-    if not os.path.exists(template_dir):
-        print(f"Error: Template directory not found: {template_dir}")
-        sys.exit(1)
+    header_path, source_path = render_templates(
+        ctx, args.prefix, template_dir, args.output_dir)
 
-    # Render templates
-    print("Rendering templates...")
-
-    # Skip .h/.c/.priv.h generation if --impl-only is set
-    if not args.impl_only:
-        header_content, impl_content = render_templates(context, template_dir)
-
-        # Write header file
-        header_path = os.path.join(args.output_dir, f"{args.zephlet_name}_interface.h")
-        with open(header_path, 'w') as f:
-            f.write(header_content)
-        print(f"Generated: {header_path}")
-
-        # Write implementation file
-        impl_path = os.path.join(args.output_dir, f"{args.zephlet_name}_interface.c")
-        with open(impl_path, 'w') as f:
-            f.write(impl_content)
-        print(f"Generated: {impl_path}")
-
-        # Always generate helper header (contains report helper functions used by .c)
-        env = Environment(loader=FileSystemLoader(template_dir))
-        env.filters['camel_to_snake'] = camel_to_snake
-        env.filters['proto_type_to_snake'] = proto_type_to_snake
-
-        helper_h_path = os.path.join(args.output_dir, f"{args.zephlet_name}.h")
-        priv_h_template = env.get_template('zephlet_priv.h.jinja')
-        helper_h_content = priv_h_template.render(**context)
-
-        with open(helper_h_path, 'w') as f:
-            f.write(helper_h_content)
-        print(f"Generated: {helper_h_path}")
-
-    # Generate _impl.c template if --impl-only OR (--generate-impl and not --no-generate-impl)
-    if args.impl_only or (args.generate_impl and not args.no_generate_impl):
-        env = Environment(loader=FileSystemLoader(template_dir))
-        env.filters['camel_to_snake'] = camel_to_snake
-        env.filters['proto_type_to_snake'] = proto_type_to_snake
-
-        impl_c_path = os.path.join(args.output_dir, f"{args.zephlet_name}.c")
-
-        if os.path.exists(impl_c_path):
-            print(f"Skipping: {impl_c_path} already exists (not overwriting)")
-        else:
-            impl_c_template = env.get_template('zephlet_impl.c.jinja')
-            impl_c_content = impl_c_template.render(**context)
-
-            with open(impl_c_path, 'w') as f:
-                f.write(impl_c_content)
-            print(f"Generated template: {impl_c_path}")
-
-        print(f"\nNote: Complete TODO items in {args.zephlet_name}.c")
-    else:
-        # Remind about _impl.c if neither flag set
-        if not args.no_generate_impl:
-            print(f"\nNote: {args.zephlet_name}_impl.c must be written manually")
-            print(f"      Implement functions defined in struct {args.zephlet_name}_api")
+    print(f"generated: {header_path}")
+    print(f"generated: {source_path}")
+    return 0
 
 
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    sys.exit(main())

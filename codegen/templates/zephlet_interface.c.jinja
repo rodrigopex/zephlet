@@ -1,0 +1,169 @@
+/* GENERATED FILE — DO NOT EDIT. Source: {{ prefix }}.proto. */
+
+#include "{{ prefix }}_interface.h"
+
+#include <errno.h>
+#include <string.h>
+
+#include <zephyr/kernel.h>
+#include <zephyr/logging/log.h>
+#include <zephyr/zbus/zbus.h>
+
+LOG_MODULE_REGISTER({{ prefix }}, CONFIG_ZEPHLET_{{ type_upper }}_LOG_LEVEL);
+
+/* ----- Weak default handlers (overridden in user source) -------------- */
+
+{% for rpc in rpcs %}
+{% if rpc.req_is_empty and rpc.resp_is_empty %}
+__weak int {{ type_snake }}_on_{{ rpc.name }}(const struct zephlet *z)
+{
+	ARG_UNUSED(z);
+	return -ENOSYS;
+}
+{% elif rpc.req_is_empty %}
+__weak int {{ type_snake }}_on_{{ rpc.name }}(const struct zephlet *z, struct {{ rpc.resp_c_name }} *resp)
+{
+	ARG_UNUSED(z);
+	ARG_UNUSED(resp);
+	return -ENOSYS;
+}
+{% elif rpc.resp_is_empty %}
+__weak int {{ type_snake }}_on_{{ rpc.name }}(const struct zephlet *z, const struct {{ rpc.req_c_name }} *req)
+{
+	ARG_UNUSED(z);
+	ARG_UNUSED(req);
+	return -ENOSYS;
+}
+{% else %}
+__weak int {{ type_snake }}_on_{{ rpc.name }}(const struct zephlet *z, const struct {{ rpc.req_c_name }} *req, struct {{ rpc.resp_c_name }} *resp)
+{
+	ARG_UNUSED(z);
+	ARG_UNUSED(req);
+	ARG_UNUSED(resp);
+	return -ENOSYS;
+}
+{% endif %}
+
+{% endfor %}
+/* ----- Trampolines: unpack zephlet_call -> handler --------------------- */
+
+{% for rpc in rpcs %}
+static int trampoline_{{ rpc.name }}(const struct zephlet *z, struct zephlet_call *c)
+{
+{% if rpc.req_is_empty and rpc.resp_is_empty %}
+	ARG_UNUSED(c);
+	return {{ type_snake }}_on_{{ rpc.name }}(z);
+{% elif rpc.req_is_empty %}
+	return {{ type_snake }}_on_{{ rpc.name }}(z, (struct {{ rpc.resp_c_name }} *)c->resp);
+{% elif rpc.resp_is_empty %}
+	return {{ type_snake }}_on_{{ rpc.name }}(z, (const struct {{ rpc.req_c_name }} *)c->req);
+{% else %}
+	return {{ type_snake }}_on_{{ rpc.name }}(z,
+		(const struct {{ rpc.req_c_name }} *)c->req,
+		(struct {{ rpc.resp_c_name }} *)c->resp);
+{% endif %}
+}
+
+{% endfor %}
+/* ----- Method table + api ---------------------------------------------- */
+
+static const struct zephlet_method {{ type_snake }}_methods[{{ type_upper }}_M__COUNT] = {
+	[{{ type_upper }}_M_RESERVED_0] = {0},
+	{% for rpc in rpcs %}
+	[{{ type_upper }}_M_{{ rpc.name|upper }}] = {
+		.req_desc = {% if rpc.req_desc %}&{{ rpc.req_desc }}{% else %}NULL{% endif %},
+		.resp_desc = {% if rpc.resp_desc %}&{{ rpc.resp_desc }}{% else %}NULL{% endif %},
+		.handler = trampoline_{{ rpc.name }},
+	},
+	{% endfor %}
+};
+
+const struct zephlet_api {{ type_snake }}_api = {
+	.methods = {{ type_snake }}_methods,
+	.num_methods = ARRAY_SIZE({{ type_snake }}_methods),
+};
+
+/* ----- Sync listener --------------------------------------------------- */
+
+static void lis_{{ type_snake }}_fn(const struct zbus_channel *chan)
+{
+	const struct zephlet *z = zbus_chan_user_data(chan);
+	struct zephlet_call *call = *(struct zephlet_call *const *)zbus_chan_const_msg(chan);
+
+	zephlet_dispatch(z, call);
+}
+ZBUS_LISTENER_DEFINE(lis_{{ type_snake }}, lis_{{ type_snake }}_fn);
+
+/* ----- Wrappers -------------------------------------------------------- */
+
+static int {{ type_snake }}_sync_pub(const struct zephlet *z, struct zephlet_call *call,
+				     k_timeout_t timeout)
+{
+	struct zephlet_call *p = call;
+	int err = zbus_chan_pub(z->channel.rpc, &p, timeout);
+	if (err != 0) {
+		return err;
+	}
+	return call->return_code;
+}
+
+{% for rpc in rpcs %}
+{% if rpc.req_is_empty and rpc.resp_is_empty %}
+int {{ type_snake }}_{{ rpc.name }}(const struct zephlet *z, k_timeout_t timeout)
+{
+	struct zephlet_call call = {
+		.method_id = {{ type_upper }}_M_{{ rpc.name|upper }},
+	};
+	return {{ type_snake }}_sync_pub(z, &call, timeout);
+}
+{% elif rpc.req_is_empty %}
+int {{ type_snake }}_{{ rpc.name }}(const struct zephlet *z, struct {{ rpc.resp_c_name }} *resp,
+			     k_timeout_t timeout)
+{
+	struct zephlet_call call = {
+		.method_id = {{ type_upper }}_M_{{ rpc.name|upper }},
+		.resp_desc = &{{ rpc.resp_desc }},
+		.resp = resp,
+	};
+	return {{ type_snake }}_sync_pub(z, &call, timeout);
+}
+{% elif rpc.resp_is_empty %}
+int {{ type_snake }}_{{ rpc.name }}(const struct zephlet *z, const struct {{ rpc.req_c_name }} *req,
+			     k_timeout_t timeout)
+{
+	struct zephlet_call call = {
+		.method_id = {{ type_upper }}_M_{{ rpc.name|upper }},
+		.req_desc = &{{ rpc.req_desc }},
+		.req = req,
+	};
+	return {{ type_snake }}_sync_pub(z, &call, timeout);
+}
+{% else %}
+int {{ type_snake }}_{{ rpc.name }}(const struct zephlet *z, const struct {{ rpc.req_c_name }} *req,
+			     struct {{ rpc.resp_c_name }} *resp, k_timeout_t timeout)
+{
+	struct zephlet_call call = {
+		.method_id = {{ type_upper }}_M_{{ rpc.name|upper }},
+		.req_desc = &{{ rpc.req_desc }},
+		.req = req,
+		.resp_desc = &{{ rpc.resp_desc }},
+		.resp = resp,
+	};
+	return {{ type_snake }}_sync_pub(z, &call, timeout);
+}
+{% endif %}
+
+{% endfor %}
+int {{ type_snake }}_emit(const struct zephlet *z, const struct {{ type_snake }}_events *ev,
+			  k_timeout_t timeout)
+{
+	return zbus_chan_pub(z->channel.events, ev, timeout);
+}
+
+bool {{ type_snake }}_is_ready(const struct zephlet *z)
+{
+	struct zephlet_status status = {0};
+	int rc = {{ type_snake }}_get_status(z, &status, K_MSEC(100));
+
+	return (rc == 0 && status.is_ready);
+}
