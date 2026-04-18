@@ -1,5 +1,9 @@
 # Objectives
 
+> **Stale (pre-v0.3).** The plan below reflects the Invoke/Report model.
+> v0.3 replaced it with the envelope + rpc/events channel split.
+> A fresh presentation plan belongs in a follow-up task.
+
 - Create presentation about Zephlet framework
 - Demonstrate with `ports_adapters_zbus` example
 - Use typst with `main.typ` as base

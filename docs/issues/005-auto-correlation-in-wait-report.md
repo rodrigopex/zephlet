@@ -1,5 +1,11 @@
 # Issue 005: Auto-correlate responses in wait_report
 
+> **Resolved by v0.3.** Correlation is gone entirely. `wait_report` is
+> gone. Sync RPC uses zbus sync-listener semantics: by the time
+> `zbus_chan_pub()` returns, the dispatcher has already mutated the
+> in-place envelope. Identity is the pointer; nothing else needs to
+> correlate.
+
 ## Problem
 
 `wait_report()` currently filters only by report tag (e.g., `TICK_REPORT_STATUS_TAG`). It does **not** filter by `correlation_id`. This means:

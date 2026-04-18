@@ -1,3 +1,7 @@
+// NOTE: This presentation describes the pre-v0.3 zephlet architecture
+// (Invoke/Report oneof + correlation IDs). It has not been updated for
+// v0.3. See the current CLAUDE.md / README.md for the up-to-date model.
+
 #import "@preview/typslides:1.2.5": *
 #import "@preview/codly:1.2.0": *
 #import "@preview/fletcher:0.5.8": diagram, node, edge

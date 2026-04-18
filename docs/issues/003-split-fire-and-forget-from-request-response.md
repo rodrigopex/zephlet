@@ -1,5 +1,10 @@
 # Issue 003: Split fire-and-forget from request-response at the API level
 
+> **Resolved by v0.3.** The split is structural: request-response flows
+> through the sync `rpc` channel (pointer envelope); fire-and-forget
+> events flow through a separate `events` channel (value-typed). No
+> oneof tag gymnastics.
+
 ## Problem
 
 Currently, fire-and-forget and request-response use the same API surface. The only difference is whether `correlation_id` is 0 or non-zero. This means:
