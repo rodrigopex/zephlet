@@ -162,7 +162,7 @@ int {{ type_snake }}_emit(const struct zephlet *z, const struct {{ type_snake }}
 
 bool {{ type_snake }}_is_ready(const struct zephlet *z)
 {
-	struct zephlet_status status = {0};
+	struct lifecycle_status status = {0};
 	int rc = {{ type_snake }}_get_status(z, &status, K_MSEC(100));
 
 	return (rc == 0 && status.is_ready);

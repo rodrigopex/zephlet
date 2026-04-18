@@ -1,79 +1,84 @@
 # SPDX-License-Identifier: Apache-2.0
-# Zephlet code generation CMake module
-# Auto-generates zephlet infrastructure (.h, .c, private/*_priv.h) during build
+#
+# Zephlet v0.3 CMake helpers.
+#
+# Provides:
+#   zephyr_zephlet_generate(TYPE <snake_name> PREFIX <file_prefix>
+#                           [SOURCES <user.c...>]
+#                           [INCLUDE_DIRS <dir...>])
+#       Register the zephlet's .proto for nanopb, run the v0.3 Python
+#       generator to emit <prefix>_interface.{h,c} into the build dir,
+#       and wire up a zephyr_library with the user sources + generated
+#       interface source.
+#
+#       The caller is the zephlet module's top-level CMakeLists.txt and
+#       runs in the module's Zephyr module scope. Expected layout:
+#
+#         <module-root>/
+#           <prefix>.proto
+#           <prefix>.c                       ← user strong overrides
+#           <prefix>.h                       ← user-owned types / init_fn
+#
+#       Emitted into build dir:
+#           ${CMAKE_BINARY_DIR}/modules/<prefix>/<prefix>_interface.{h,c}
+#
+#   zephlet_adapter_generate(...)   — Phase 5. Kept as the existing
+#                                     Invoke/Report-shaped generator for
+#                                     now; will be rewritten in the
+#                                     adapters phase.
 
-function(zephyr_zephlet_generate ZEPHLET_NAME PROTO_FILE)
-  set(CODEGEN_SCRIPT "${ZEPHYR_SHARED_ZEPHLET_MODULE_DIR}/codegen/generate_zephlet.py")
-  set(OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}")
+function(zephyr_zephlet_generate)
+  cmake_parse_arguments(_zg "" "TYPE;PREFIX" "SOURCES;INCLUDE_DIRS" ${ARGN})
 
-  set(GENERATED_H "${OUTPUT_DIR}/${ZEPHLET_NAME}_interface.h")
-  set(GENERATED_C "${OUTPUT_DIR}/${ZEPHLET_NAME}_interface.c")
-  set(GENERATED_PRIV_H "${OUTPUT_DIR}/${ZEPHLET_NAME}.h")
-
-  file(GLOB TEMPLATE_FILES "${ZEPHYR_SHARED_ZEPHLET_MODULE_DIR}/codegen/templates/*.jinja")
-
-  # Check if .c exists in source, generate once if missing (bootstrap)
-  set(IMPL_FILE "${CMAKE_CURRENT_SOURCE_DIR}/${ZEPHLET_NAME}.c")
-  if(NOT EXISTS ${IMPL_FILE})
-    message(STATUS "Bootstrapping ${ZEPHLET_NAME}.c (one-time generation)")
-    execute_process(
-      COMMAND ${PYTHON_EXECUTABLE} ${CODEGEN_SCRIPT}
-        --proto ${PROTO_FILE}
-        --output-dir ${CMAKE_CURRENT_SOURCE_DIR}
-        --zephlet-name ${ZEPHLET_NAME}
-        --module-dir ${CMAKE_CURRENT_SOURCE_DIR}
-        --impl-only
-      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-      RESULT_VARIABLE BOOTSTRAP_RESULT
-    )
-    if(NOT BOOTSTRAP_RESULT EQUAL 0)
-      message(FATAL_ERROR "Failed to bootstrap ${ZEPHLET_NAME}.c")
-    endif()
+  if(NOT _zg_TYPE OR NOT _zg_PREFIX)
+    message(FATAL_ERROR "zephyr_zephlet_generate: TYPE and PREFIX are required")
   endif()
 
-  # Auto-generate infrastructure files to build directory
+  set(CODEGEN_SCRIPT
+      "${ZEPHYR_ZEPHLET_MODULE_DIR}/codegen/generate_zephlet.py")
+  set(TEMPLATE_GLOB
+      "${ZEPHYR_ZEPHLET_MODULE_DIR}/codegen/templates/zephlet_interface*.jinja")
+  file(GLOB _zg_TEMPLATES ${TEMPLATE_GLOB})
+
+  set(_zg_PROTO "${CMAKE_CURRENT_SOURCE_DIR}/${_zg_PREFIX}.proto")
+  set(_zg_GEN_DIR "${CMAKE_BINARY_DIR}/modules/${_zg_PREFIX}")
+  set(_zg_GEN_H "${_zg_GEN_DIR}/${_zg_PREFIX}_interface.h")
+  set(_zg_GEN_C "${_zg_GEN_DIR}/${_zg_PREFIX}_interface.c")
+
+  # Register proto for nanopb (top-level CMakeLists consumes the list).
+  set_property(GLOBAL APPEND PROPERTY PROTO_FILES_LIST "${_zg_PROTO}")
+
+  file(MAKE_DIRECTORY "${_zg_GEN_DIR}")
   add_custom_command(
-    OUTPUT ${GENERATED_H} ${GENERATED_C} ${GENERATED_PRIV_H}
+    OUTPUT ${_zg_GEN_H} ${_zg_GEN_C}
     COMMAND ${PYTHON_EXECUTABLE} ${CODEGEN_SCRIPT}
-      --proto ${PROTO_FILE}
-      --output-dir ${OUTPUT_DIR}
-      --zephlet-name ${ZEPHLET_NAME}
-      --module-dir ${CMAKE_CURRENT_SOURCE_DIR}
-      --no-generate-impl
-    DEPENDS ${PROTO_FILE} ${TEMPLATE_FILES} ${CODEGEN_SCRIPT}
-    COMMENT "Generating ${ZEPHLET_NAME} from ${PROTO_FILE}"
-    VERBATIM
-  )
+        --proto ${_zg_PROTO}
+        --output-dir ${_zg_GEN_DIR}
+        --type ${_zg_TYPE}
+        --prefix ${_zg_PREFIX}
+    DEPENDS ${_zg_PROTO} ${CODEGEN_SCRIPT} ${_zg_TEMPLATES}
+    COMMENT "zephlet v0.3: generating ${_zg_PREFIX}_interface"
+    VERBATIM)
 
-  add_custom_target(${ZEPHLET_NAME}_codegen
-    DEPENDS ${GENERATED_H} ${GENERATED_C} ${GENERATED_PRIV_H})
+  add_custom_target(${_zg_PREFIX}_codegen DEPENDS ${_zg_GEN_H} ${_zg_GEN_C})
 
-  set(${ZEPHLET_NAME}_GENERATED_C ${GENERATED_C} PARENT_SCOPE)
+  zephyr_include_directories(
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${_zg_GEN_DIR}
+      ${CMAKE_BINARY_DIR}
+      ${_zg_INCLUDE_DIRS})
+
+  zephyr_library()
+  zephyr_library_sources(${_zg_GEN_C})
+  foreach(_src IN LISTS _zg_SOURCES)
+    zephyr_library_sources("${CMAKE_CURRENT_SOURCE_DIR}/${_src}")
+  endforeach()
+  add_dependencies(${ZEPHYR_CURRENT_LIBRARY} ${_zg_PREFIX}_codegen)
 endfunction()
 
-# Proto generation: generates full .proto from schema + simplified base proto
-# Outputs the generated proto to build directory for nanopb compilation.
-function(zephyr_zephlet_generate_proto ZEPHLET_NAME SCHEMA_FILE BASE_PROTO)
-  set(GENERATE_PROTO_SCRIPT "${ZEPHYR_SHARED_ZEPHLET_MODULE_DIR}/codegen/generate_proto.py")
-  set(GENERATED_PROTO "${CMAKE_CURRENT_BINARY_DIR}/${ZEPHLET_NAME}.proto")
-
-  file(GLOB PROTO_TEMPLATE_FILES "${ZEPHYR_SHARED_ZEPHLET_MODULE_DIR}/codegen/templates/zephlet_proto*.jinja")
-
-  add_custom_command(
-    OUTPUT ${GENERATED_PROTO}
-    COMMAND ${PYTHON_EXECUTABLE} ${GENERATE_PROTO_SCRIPT}
-      --schema ${SCHEMA_FILE}
-      --proto ${BASE_PROTO}
-      --output ${GENERATED_PROTO}
-    DEPENDS ${SCHEMA_FILE} ${BASE_PROTO} ${GENERATE_PROTO_SCRIPT} ${PROTO_TEMPLATE_FILES}
-    COMMENT "Generating ${ZEPHLET_NAME}.proto from base"
-    VERBATIM
-  )
-
-  add_custom_target(${ZEPHLET_NAME}_proto_gen DEPENDS ${GENERATED_PROTO})
-
-  set(${ZEPHLET_NAME}_GENERATED_PROTO ${GENERATED_PROTO} PARENT_SCOPE)
-endfunction()
+# ---------------------------------------------------------------------------
+# Legacy helpers — kept until their callers migrate.
+# ---------------------------------------------------------------------------
 
 # Helper: snake_case to PascalCase (tick -> Tick, tamper_detection -> TamperDetection)
 function(_zephlet_capitalize INPUT OUTPUT_VAR)
@@ -88,15 +93,10 @@ function(_zephlet_capitalize INPUT OUTPUT_VAR)
   set(${OUTPUT_VAR} "${_result}" PARENT_SCOPE)
 endfunction()
 
-# Adapter code generation
-# Generates auto-gen adapter.c (build dir) and bootstraps _impl.c (source dir)
-# Handles Kconfig guard, zephyr_library_sources, and add_dependencies internally.
-#
-# Usage:
-#   zephlet_adapter_generate(ORIGIN tick DEST ui REPORTS events)
-#
-# Derives CONFIG_<ORIGIN>_TO_<DEST>_ADAPTER and skips if disabled.
-# Requires ZEPHLETS_PATH to be set in caller scope.
+# Adapter code generation — Phase 5 rewrites this. The function currently
+# targets the pre-v0.3 Invoke/Report adapter shape and will not work
+# against v0.3 zephlets; callers should treat it as unavailable until
+# the adapter generator is rewritten.
 function(zephlet_adapter_generate)
   cmake_parse_arguments(ARG "" "ORIGIN;DEST" "REPORTS" ${ARGN})
 
@@ -108,7 +108,6 @@ function(zephlet_adapter_generate)
     message(FATAL_ERROR "zephlet_adapter_generate: ZEPHLETS_PATH must be set")
   endif()
 
-  # Derive Kconfig symbol: CONFIG_TICK_TO_UI_ADAPTER
   string(TOUPPER "${ARG_ORIGIN}" _origin_upper)
   string(TOUPPER "${ARG_DEST}" _dest_upper)
   set(_config_var "CONFIG_${_origin_upper}_TO_${_dest_upper}_ADAPTER")
@@ -117,27 +116,23 @@ function(zephlet_adapter_generate)
     return()
   endif()
 
-  # Derive adapter name: Tick+Ui_zlet_adapter
   _zephlet_capitalize(${ARG_ORIGIN} _origin_cap)
   _zephlet_capitalize(${ARG_DEST} _dest_cap)
   set(ADAPTER_NAME "${_origin_cap}+${_dest_cap}_zlet_adapter")
 
-  # Join REPORTS list into comma-separated string for --fields
   list(JOIN ARG_REPORTS "," SELECTED_FIELDS)
 
-  set(CODEGEN_SCRIPT "${ZEPHYR_SHARED_ZEPHLET_MODULE_DIR}/codegen/generate_adapter.py")
+  set(CODEGEN_SCRIPT "${ZEPHYR_ZEPHLET_MODULE_DIR}/codegen/generate_adapter.py")
   set(BUILD_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/${ADAPTER_NAME}.c")
   set(IMPL_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/${ADAPTER_NAME}_impl.c")
   set(GENERATED_PROTOS_PATH "${CMAKE_BINARY_DIR}/modules")
 
-  file(GLOB TEMPLATE_FILES "${ZEPHYR_SHARED_ZEPHLET_MODULE_DIR}/codegen/templates/adapter*.jinja")
+  file(GLOB TEMPLATE_FILES "${ZEPHYR_ZEPHLET_MODULE_DIR}/codegen/templates/adapter*.jinja")
   file(GLOB PROTO_FILES "${ZEPHLETS_PATH}/*/*.proto")
 
-  # Collect generated proto files as dependencies
   set(_gen_proto_origin "${GENERATED_PROTOS_PATH}/zlet_${ARG_ORIGIN}/zlet_${ARG_ORIGIN}.proto")
   set(_gen_proto_dest "${GENERATED_PROTOS_PATH}/zlet_${ARG_DEST}/zlet_${ARG_DEST}.proto")
 
-  # Bootstrap: generate _impl.c if missing
   if(NOT EXISTS ${IMPL_FILE})
     message(STATUS "Bootstrapping ${ADAPTER_NAME}_impl.c (one-time generation)")
     execute_process(
@@ -158,7 +153,6 @@ function(zephlet_adapter_generate)
     endif()
   endif()
 
-  # Build-time: always re-gen adapter.c to build dir + smart-update impl
   add_custom_command(
     OUTPUT ${BUILD_OUTPUT}
     COMMAND ${PYTHON_EXECUTABLE} ${CODEGEN_SCRIPT}
@@ -178,7 +172,6 @@ function(zephlet_adapter_generate)
 
   add_custom_target(${ADAPTER_NAME}_codegen DEPENDS ${BUILD_OUTPUT})
 
-  # Ensure adapter codegen runs after proto generation
   if(TARGET zlet_${ARG_ORIGIN}_proto_gen)
     add_dependencies(${ADAPTER_NAME}_codegen zlet_${ARG_ORIGIN}_proto_gen)
   endif()
@@ -189,55 +182,3 @@ function(zephlet_adapter_generate)
   zephyr_library_sources(${BUILD_OUTPUT} "src/${ADAPTER_NAME}_impl.c")
   add_dependencies(${ZEPHYR_CURRENT_LIBRARY} ${ADAPTER_NAME}_codegen)
 endfunction()
-
-# Defines a complete zephlet: proto gen, codegen, interface library, and zephyr library.
-# Wraps the entire if(CONFIG_ZEPHLET_<NAME>) guard.
-#
-# Usage:
-#   zephyr_zephlet_define(tick)
-#   zephyr_zephlet_define(ui INCLUDE_DIRS ${EXTRA_INC} SRCS extra.c)
-macro(zephyr_zephlet_define _zephlet_name)
-  cmake_parse_arguments(_zdef "" "" "INCLUDE_DIRS;SRCS" ${ARGN})
-
-  string(TOUPPER "${_zephlet_name}" _zdef_NAME_UPPER)
-  set(_zdef_PREFIX "zlet_${_zephlet_name}")
-  set(_zdef_MODULE_DIR "${ZEPHYR_ZLET_${_zdef_NAME_UPPER}_MODULE_DIR}")
-
-  if(CONFIG_ZEPHLET_${_zdef_NAME_UPPER})
-    # Generate full proto from schema + base proto
-    zephyr_zephlet_generate_proto(${_zdef_PREFIX}
-        "${ZEPHYR_SHARED_ZEPHLET_MODULE_DIR}/zephlet.proto"
-        "${_zdef_MODULE_DIR}/${_zdef_PREFIX}.proto")
-
-    # Register generated proto for nanopb
-    set_property(GLOBAL APPEND PROPERTY PROTO_FILES_LIST
-        "${${_zdef_PREFIX}_GENERATED_PROTO}")
-
-    # Auto-generate zephlet infrastructure from generated proto
-    zephyr_zephlet_generate(${_zdef_PREFIX} "${${_zdef_PREFIX}_GENERATED_PROTO}")
-    add_dependencies(${_zdef_PREFIX}_codegen ${_zdef_PREFIX}_proto_gen)
-
-    # Expose build directory globally for zephlet headers
-    zephyr_include_directories("${CMAKE_CURRENT_BINARY_DIR}")
-
-    # Interface library with include paths
-    zephyr_interface_library_named(${_zdef_PREFIX})
-    target_include_directories(${_zdef_PREFIX} INTERFACE
-        ${_zdef_MODULE_DIR}
-        "${CMAKE_CURRENT_BINARY_DIR}"
-        "${CMAKE_BINARY_DIR}/zephlets"
-        ${_zdef_INCLUDE_DIRS}
-    )
-
-    # Zephyr library with generated + implementation sources
-    zephyr_library()
-    zephyr_library_sources(
-        ${${_zdef_PREFIX}_GENERATED_C}
-        ${_zdef_MODULE_DIR}/${_zdef_PREFIX}.c
-        ${_zdef_SRCS}
-    )
-
-    add_dependencies(${ZEPHYR_CURRENT_LIBRARY} ${_zdef_PREFIX}_codegen)
-    zephyr_library_link_libraries(${_zdef_PREFIX})
-  endif()
-endmacro()

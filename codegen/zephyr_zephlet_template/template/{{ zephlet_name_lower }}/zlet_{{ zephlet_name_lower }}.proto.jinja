@@ -7,21 +7,38 @@ option (nanopb_fileopt).anonymous_oneof = true;
 option (nanopb_fileopt).long_names = false;
 
 message {{ zephlet_name_pascal }} {
-  /* RPC-mutable runtime settings. Every field MUST be `optional` so the
-   * generated update_settings merge can use nanopb has_<field> flags. */
-  message Settings {
-    /* TODO: Add settings fields specific to {{ zephlet_name }}. Example:
-     *   optional uint32 some_param = 1;
+  /* Runtime config, mutated via the `config` RPC. Fields you want to
+   * keep immutable once set should instead live on the compile-time
+   * instance config (the `_cfg` arg of ZEPHLET_DEFINE). */
+  message Config {
+    /* TODO: Add config fields. Examples:
+     *   uint32 period_ms = 1;
+     *   uint32 threshold = 2;
      */
   }
 
+  /* Values published on the async events channel. Consumers receive a
+   * full copy of this struct per emit. */
   message Events {
     int32 timestamp = 1;
-    /* TODO: Add event fields specific to {{ zephlet_name }} */
+    /* TODO: Add event fields. */
   }
 }
 
-service {{ zephlet_name_pascal }} {
-  option (zephlet.extends_base) = true; /* Extends base zlet */
-  /* Custom RPCs below (base lifecycle RPCs are auto-generated) */
+/*
+ * Service is informational to nanopb (no code is generated from it);
+ * the zephlet v0.3 codegen parses this block to allocate method ids in
+ * declaration order starting at 1 (0 is reserved). Service name must
+ * not collide with the message name above.
+ */
+service {{ zephlet_name_pascal }}Api {
+  rpc start      (Empty)                             returns (Zephlet.Status);
+  rpc stop       (Empty)                             returns (Zephlet.Status);
+  rpc get_status (Empty)                             returns (Zephlet.Status);
+  rpc config     ({{ zephlet_name_pascal }}.Config)  returns ({{ zephlet_name_pascal }}.Config);
+  rpc get_config (Empty)                             returns ({{ zephlet_name_pascal }}.Config);
+
+  /* TODO: Add custom RPCs below. Each gets a distinct method_id allocated
+   *       in declaration order. Keep inputs/outputs to Empty or one of the
+   *       nested messages; streaming RPCs are not supported in v0.3. */
 }
