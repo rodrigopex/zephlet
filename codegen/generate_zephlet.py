@@ -24,8 +24,7 @@ and emits:
     <output-dir>/<prefix>_interface.c
 
 The envelope shape, method-table layout, weak-handler contract, and
-four-shape wrappers are fixed by the v0.3 architecture decisions (see
-`docs/REFACTOR_V3_PLAN.md`).
+four-shape wrappers are fixed by the v0.3 architecture.
 
 Usage:
     python3 generate_zephlet.py \
