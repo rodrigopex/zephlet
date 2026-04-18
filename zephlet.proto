@@ -2,65 +2,15 @@ syntax = "proto3";
 
 import "nanopb.proto";
 
-option (nanopb_fileopt).anonymous_oneof = true;
 option (nanopb_fileopt).long_names = false;
 
-message _ {}
-
+/* Empty — sentinel for RPCs that take or return no payload. */
 message Empty {}
 
-/* Status message for zephlet lifecycle */
-message ZephletStatus {
-  bool is_running = 1;
-  bool is_ready = 2; /* True if zephlet initialized successfully (init returned 0) */
-}
-
-/* API call result for invoke-report correlation */
-message ZephletResult {
-  uint32 correlation_id = 1; /* Request correlation ID (0 = no correlation) */
-  int32 return_code = 2;     /* 0=success, <0=error (POSIX errno codes) */
-  int32 invoke_tag = 3;      /* Which invoke RPC produced this response */
-}
-
-message Invoke {
-  optional ZephletResult result = 999; /* For correlation tracking */
-  oneof base_invoke_tag {
-    Empty start = 1;
-    Empty stop = 2;
-    Empty get_status = 3;
-    Settings update_settings = 4;
-    Empty get_settings = 5;
-    Empty get_events = 6;
+/* Lifecycle.Status — returned by the standard start/stop/get_status RPCs. */
+message Lifecycle {
+  message Status {
+    bool is_running = 1;
+    bool is_ready = 2;
   }
-}
-
-/*
- * Each zephlet must define its own Settings message with proto3 `optional`
- * fields so that update_settings can apply partial merges (nanopb emits
- * `has_<field>` companions that drive the codegen-emitted merge helper).
- */
-message Settings {}
-
-/* Each zephlet must have its specific events list. Must contain at least the timestamp */
-message Events {
-  int32 timestamp = 1;
-}
-
-message Report {
-  optional ZephletResult result = 999; /* Present only for invoke responses */
-  oneof base_report_tag {
-    Empty empty = 1;
-    ZephletStatus status = 2;
-    Settings settings = 3;
-    Events events = 4;
-  }
-}
-
-service ZephletBase {
-  rpc start(Empty) returns (ZephletStatus);
-  rpc stop(Empty) returns (ZephletStatus);
-  rpc get_status(Empty) returns (ZephletStatus);
-  rpc update_settings(Settings) returns (Settings);
-  rpc get_settings(Empty) returns (Settings);
-  rpc get_events(Empty) returns (Events);
 }
