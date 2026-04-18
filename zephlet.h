@@ -141,6 +141,7 @@ const struct zephlet *zephlet_get_by_name(const char *name);
  * walker runs `init_fn`s in ascending priority.
  */
 #define ZEPHLET_DEFINE_PRIO(_type, _name, _cfg, _data, _init, _prio)                               \
+	extern const struct zephlet _name;                                                         \
 	ZBUS_CHAN_DEFINE(chan_##_name##_rpc, struct zephlet_call *, NULL, (void *)&_name,          \
 			 ZBUS_OBSERVERS(lis_##_type), NULL);                                       \
 	ZBUS_CHAN_DEFINE(chan_##_name##_events, struct _type##_events, NULL, (void *)&_name,       \
