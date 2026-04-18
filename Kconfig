@@ -1,3 +1,19 @@
 config ZEPHLETS
     bool "Isolated zephlet system"
     default y
+
+if ZEPHLETS
+
+config ZEPHLET_MAX_INSTANCES
+    int "Maximum number of zephlet instances"
+    default 16
+    help
+      Upper bound on the number of zephlet instances resolved by
+      `STRUCT_SECTION_FOREACH(zephlet, ...)` at runtime. Used to size
+      the SYS_INIT init-priority ordering buffer.
+
+module = ZEPHLET
+module-str = zephlet
+source "subsys/logging/Kconfig.template.log_config"
+
+endif # ZEPHLETS

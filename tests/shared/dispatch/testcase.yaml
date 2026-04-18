@@ -1,0 +1,7 @@
+tests:
+  zephlet.shared.dispatch:
+    tags: zephlet shared dispatch
+    harness: ztest
+    platform_allow:
+      - native_sim
+    timeout: 30

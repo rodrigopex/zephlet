@@ -1,143 +1,162 @@
 #ifndef MODULES_ZEPHLETS_SHARED_ZEPHLET_H
 #define MODULES_ZEPHLETS_SHARED_ZEPHLET_H
 
-#include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
+
 #include <zephyr/kernel.h>
 #include <zephyr/zbus/zbus.h>
 
-#include "zephlet.pb.h"
-
-/*
- * Concurrency model
- * =================
- *
- * Every zephlet owns a `struct k_spinlock` embedded in its
- * `struct zephlet_data` (`base_data->lock`) that serializes access to
- * all three storage bags: `status`, `settings`, `events`. Read and
- * write paths — from thread context or ISR context — use the same
- * primitive via `K_SPINLOCK(&<z>_data_storage.base.lock) { ... }`.
- *
- *   1. Critical sections are memcpy-scope only.
- *      Take the spinlock, copy data in or out, release. Never hold it
- *      across a `zbus_chan_pub`, a user hook, or any call that might
- *      sleep.
- *
- *   2. Hooks always run unlocked.
- *      The generated shims call weak hooks (`pre_start`, `post_start`,
- *      `validate_settings`, ...) outside the spinlock so hook code can
- *      do anything — including calling internal helpers that also take
- *      the lock.
- *
- *   3. Correlation slot.
- *      The per-zephlet blocking-helper `k_sem` serializes
- *      `self.expected_cid` / `self.sync_report` / `self.deadline` across
- *      blocking callers. It is independent of the storage spinlock.
- *      Direct `chan_<z>_invoke` publishers that do not hold the sem must
- *      set `ivk->has_result = false` so they never claim a correlation
- *      slot.
- *
- * These invariants assume a single-CPU / sync-listener Zephyr build
- * (the current target). SMP support is future work and will need to
- * re-evaluate the sync-listener assumption and the spinlock's
- * cross-CPU semantics.
- */
+#include <pb.h>
 
 /**
- * @brief Base runtime state of a zephlet (mutable, lives in RAM).
+ * @file
+ * @brief Zephlet v0.3 shared contract.
  *
- * Every generated `struct <z>_data` places this as its first member
- * (`base`), so a pointer to `struct zephlet_data` can be converted to
- * the enclosing per-zephlet struct via CONTAINER_OF.
+ * Each zephlet instance owns two zbus channels:
+ *   - `chan_<name>_rpc`    — pointer channel of `struct zephlet_call *`.
+ *     Exactly one listener observer (`lis_<type>`). Synchronous RPC via
+ *     zbus sync-listener semantics: the dispatcher runs in the caller's
+ *     thread, mutates the envelope in place, and by the time
+ *     `zbus_chan_pub()` returns `call->return_code` and `*call->resp`
+ *     are populated.
+ *   - `chan_<name>_events` — zbus value-type channel of
+ *     `struct <type>_events`. Asynchronous fan-out; zbus copies the
+ *     value into each consumer's queue.
  *
- * `settings` and `events` are void pointers wired by
- * `<z>_set_implementation()` to typed siblings within the same
- * `struct <z>_data` at runtime.
+ * `ZEPHLET_DEFINE` is the only supported creator of the channel pair.
+ * Do not add observers to `chan_<name>_rpc` by any other means; the
+ * SYS_INIT walker asserts exactly one listener on the rpc channel
+ * under `CONFIG_ASSERT`.
  */
-struct zephlet_data {
-	struct k_spinlock lock;
-	struct zephlet_status status;
-	void *settings;
-	size_t settings_size;
-	void *events;
-	size_t events_size;
-};
 
-/* Forward declaration for init_fn signature in zephlet_config. */
+/* Forward decl so the handler function-pointer can reference it. */
 struct zephlet;
 
 /**
- * @brief Immutable per-type configuration (lives in flash with the zephlet).
+ * @brief RPC envelope carried on a zephlet's rpc channel.
+ *
+ * Callers place a stack-local `struct zephlet_call`, publish its
+ * address. The sync-listener dispatcher mutates the envelope in place.
  */
-struct zephlet_config {
-	const char *name;
-	struct {
-		const struct zbus_channel *invoke;
-		const struct zbus_channel *report;
-	} channel;
-	int (*init_fn)(const struct zephlet *self);
+struct zephlet_call {
+	/** RPC method id. Allocated in declaration order starting at 1.
+	 *  0 is reserved for future in-band control signalling. */
+	uint16_t method_id;
+	/** Dispatcher-populated return code (POSIX errno; 0 on success). */
+	int32_t return_code;
+	/** nanopb descriptor for the request message, or NULL for Empty. */
+	const pb_msgdesc_t *req_desc;
+	/** Request payload; must be non-NULL when req_desc != NULL. */
+	const void *req;
+	/** nanopb descriptor for the response message, or NULL for Empty. */
+	const pb_msgdesc_t *resp_desc;
+	/** Response storage. NULL signals "caller discards the response". */
+	void *resp;
 };
 
 /**
- * @brief Zephlet descriptor — const, stored in flash.
+ * @brief One row of a zephlet's method table.
  *
- * All members are either constant values or constant pointers.
- * Mutable state is reached indirectly through `base_data` (framework
- * storage in RAM) and `instance_data` (user-defined private data in RAM).
+ * Indexed by `method_id`. Entry 0 is reserved (handler stays NULL);
+ * real RPCs start at index 1.
+ */
+struct zephlet_method {
+	const pb_msgdesc_t *req_desc;
+	const pb_msgdesc_t *resp_desc;
+	int (*handler)(const struct zephlet *z, struct zephlet_call *call);
+};
+
+/**
+ * @brief Per-type method dispatch table.
+ */
+struct zephlet_api {
+	const struct zephlet_method *methods;
+	size_t num_methods;
+};
+
+/**
+ * @brief Zephlet instance descriptor (const, flash-resident).
+ *
+ * Multiple instances of the same type coexist. Each has its own channel
+ * pair, its own config, and its own data pointer. The framework treats
+ * both `config` and `data` as opaque.
  */
 struct zephlet {
-	struct zephlet_config config;
-	struct zephlet_data *base_data;
-	void *instance_data;
-	void *api;
+	const char *name;
+	const struct zephlet_api *api;
+	struct {
+		/** Pointer channel, listener-only (sync RPC). */
+		const struct zbus_channel *rpc;
+		/** Value-type channel (async fan-out). */
+		const struct zbus_channel *events;
+	} channel;
+	const void *config;
+	void *data;
+	int (*init_fn)(const struct zephlet *self);
+	/** SYS_INIT walker runs `init_fn`s in ascending order. Default 0. */
+	int init_priority;
 };
 
-/*
- * ZEPHLET_IMPL_REGISTER(name, init_fn, api, inst_ptr)
+/**
+ * @brief Dispatch an RPC call on a zephlet instance.
  *
- * Registers the zephlet implementation. The developer passes a clean
- * name (e.g. `tick`); the macro prepends `zlet_` internally for
- * channel and data-storage symbol resolution.
+ * Bounds-checks `call->method_id`, looks up the handler, sets
+ * `call->return_code` to either `-ENOSYS` (OOB or NULL handler) or the
+ * handler's return value.
  *
- * `inst_ptr` is a pointer to user-defined instance data (or NULL).
+ * @return 0 on normal dispatch (including handler errors reported via
+ *         `call->return_code`); `-EINVAL` only if `z` or `call` is NULL.
  */
-#define ZEPHLET_IMPL_REGISTER(_name, _init_fn, _api, _inst_ptr)                                    \
-	const STRUCT_SECTION_ITERABLE(zephlet, _name) = {                                          \
-		.config =                                                                          \
-			{                                                                          \
-				.name = #_name,                                                    \
-				.channel =                                                         \
-					{                                                          \
-						.invoke = &CONCAT(chan_zlet_, _name, _invoke),     \
-						.report = &CONCAT(chan_zlet_, _name, _report),     \
-					},                                                         \
-				.init_fn = (_init_fn),                                             \
-			},                                                                         \
-		.api = (_api),                                                                     \
-		.instance_data = (_inst_ptr),                                                      \
-		.base_data = &CONCAT(zlet_, _name, _data_storage).base,                            \
-	}
-
-#define ZEPHLET_CALL_OK(report) ((report).has_result && (report).result.return_code == 0)
+int zephlet_dispatch(const struct zephlet *z, struct zephlet_call *call);
 
 /**
- * @name Generic lifecycle core helpers
- *
- * Pure state-machine primitives. They take `struct zephlet_data *data`
- * and operate on the storage bags reachable through it. They do NOT
- * touch the per-zephlet spinlock — the per-zephlet generated shim wraps
- * calls with `K_SPINLOCK(...)`.
- *
- * @{
+ * @brief Find a zephlet instance by name.
  */
+const struct zephlet *zephlet_get_by_name(const char *name);
 
-int zephlet_start_core(struct zephlet_data *data, struct zephlet_status *out_status);
-int zephlet_stop_core(struct zephlet_data *data, struct zephlet_status *out_status);
-int zephlet_get_status_core(const struct zephlet_data *data, struct zephlet_status *out_status);
-int zephlet_get_settings_core(const struct zephlet_data *data, void *out_settings);
-int zephlet_update_settings_core(struct zephlet_data *data, const void *in_settings);
-int zephlet_get_events_core(const struct zephlet_data *data, void *out_events);
+/**
+ * ZEPHLET_DEFINE(type, name, cfg, data, init)
+ *
+ * Declares a zephlet instance with `init_priority == 0`.
+ *
+ *  - Creates `chan_<name>_rpc`    : pointer channel, observer = `lis_<type>`.
+ *  - Creates `chan_<name>_events` : value channel of `struct <type>_events`.
+ *  - Registers `STRUCT_SECTION_ITERABLE(zephlet, <name>)`.
+ *
+ * @param _type  Zephlet type symbol (e.g. `tick`). Used to resolve
+ *               `<type>_api` and `struct <type>_events`.
+ * @param _name  Instance symbol (e.g. `tick_fast`).
+ * @param _cfg   Pointer to const per-instance config.
+ * @param _data  Pointer to per-instance mutable data.
+ * @param _init  `int (*)(const struct zephlet *)` or NULL.
+ */
+#define ZEPHLET_DEFINE(_type, _name, _cfg, _data, _init)                                           \
+	ZEPHLET_DEFINE_PRIO(_type, _name, _cfg, _data, _init, 0)
 
-/** @} */
+/**
+ * ZEPHLET_DEFINE_PRIO(type, name, cfg, data, init, prio)
+ *
+ * Same as `ZEPHLET_DEFINE`, with an explicit `init_priority`. SYS_INIT
+ * walker runs `init_fn`s in ascending priority.
+ */
+#define ZEPHLET_DEFINE_PRIO(_type, _name, _cfg, _data, _init, _prio)                               \
+	ZBUS_CHAN_DEFINE(chan_##_name##_rpc, struct zephlet_call *, NULL, (void *)&_name,          \
+			 ZBUS_OBSERVERS(lis_##_type), NULL);                                       \
+	ZBUS_CHAN_DEFINE(chan_##_name##_events, struct _type##_events, NULL, (void *)&_name,       \
+			 ZBUS_OBSERVERS_EMPTY, ZBUS_MSG_INIT(0));                                  \
+	const STRUCT_SECTION_ITERABLE(zephlet, _name) = {                                          \
+		.name = #_name,                                                                    \
+		.api = &_type##_api,                                                               \
+		.channel =                                                                         \
+			{                                                                          \
+				.rpc = &chan_##_name##_rpc,                                        \
+				.events = &chan_##_name##_events,                                  \
+			},                                                                         \
+		.config = (_cfg),                                                                  \
+		.data = (_data),                                                                   \
+		.init_fn = (_init),                                                                \
+		.init_priority = (_prio),                                                          \
+	}
 
 #endif /* MODULES_ZEPHLETS_SHARED_ZEPHLET_H */

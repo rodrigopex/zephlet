@@ -4,88 +4,93 @@
 #include <string.h>
 
 #include <zephyr/kernel.h>
+#include <zephyr/logging/log.h>
+#include <zephyr/sys/iterable_sections.h>
 
-int zephlet_start_core(struct zephlet_data *data, struct zephlet_status *out_status)
+LOG_MODULE_REGISTER(zephlet, CONFIG_ZEPHLET_LOG_LEVEL);
+
+int zephlet_dispatch(const struct zephlet *z, struct zephlet_call *call)
 {
-	int ret = 0;
-
-	if (!data->status.is_ready) {
-		ret = -ENODEV;
-	} else if (data->status.is_running) {
-		ret = -EALREADY;
-	} else {
-		data->status.is_running = true;
+	if (z == NULL || call == NULL) {
+		return -EINVAL;
 	}
 
-	*out_status = data->status;
-	return ret;
-}
-
-int zephlet_stop_core(struct zephlet_data *data, struct zephlet_status *out_status)
-{
-	int ret = 0;
-
-	if (!data->status.is_running) {
-		ret = -EALREADY;
-	} else {
-		data->status.is_running = false;
+	if (z->api == NULL || z->api->methods == NULL) {
+		call->return_code = -ENOSYS;
+		return 0;
 	}
 
-	*out_status = data->status;
-	return ret;
-}
+	if ((size_t)call->method_id >= z->api->num_methods) {
+		call->return_code = -ENOSYS;
+		return 0;
+	}
 
-int zephlet_get_status_core(const struct zephlet_data *data, struct zephlet_status *out_status)
-{
-	*out_status = data->status;
+	const struct zephlet_method *m = &z->api->methods[call->method_id];
+
+	if (m->handler == NULL) {
+		call->return_code = -ENOSYS;
+		return 0;
+	}
+
+	call->return_code = m->handler(z, call);
 	return 0;
 }
 
-int zephlet_get_settings_core(const struct zephlet_data *data, void *out_settings)
+const struct zephlet *zephlet_get_by_name(const char *name)
 {
-	if (data->settings == NULL || data->settings_size == 0) {
-		return -ENOTSUP;
+	if (name == NULL) {
+		return NULL;
 	}
 
-	memcpy(out_settings, data->settings, data->settings_size);
-	return 0;
-}
-
-int zephlet_update_settings_core(struct zephlet_data *data, const void *in_settings)
-{
-	if (data->settings == NULL || data->settings_size == 0) {
-		return -ENOTSUP;
-	}
-
-	memcpy(data->settings, in_settings, data->settings_size);
-	return 0;
-}
-
-int zephlet_get_events_core(const struct zephlet_data *data, void *out_events)
-{
-	if (data->events == NULL || data->events_size == 0) {
-		return -ENOTSUP;
-	}
-
-	memcpy(out_events, data->events, data->events_size);
-	return 0;
-}
-
-int zephlets_init_fn(void)
-{
-	printk("Init zephlets:\n");
-
-	STRUCT_SECTION_FOREACH(zephlet, instance) {
-		printk("%p: %s initialing...\n", instance, instance->config.name);
-		if (instance->config.init_fn != NULL) {
-			int err = instance->config.init_fn(instance);
-			if (err == 0) {
-				instance->base_data->status.is_ready = true;
-			}
+	STRUCT_SECTION_FOREACH(zephlet, z) {
+		if (strcmp(z->name, name) == 0) {
+			return z;
 		}
 	}
+	return NULL;
+}
 
+/* SYS_INIT walker: collect, sort by init_priority ascending, call init_fn. */
+
+static int zephlet_init_walker(void)
+{
+	static const struct zephlet *ordered[CONFIG_ZEPHLET_MAX_INSTANCES];
+	size_t count = 0;
+
+	STRUCT_SECTION_FOREACH(zephlet, z) {
+		if (count >= CONFIG_ZEPHLET_MAX_INSTANCES) {
+			LOG_ERR("zephlet count exceeds CONFIG_ZEPHLET_MAX_INSTANCES=%d; "
+				"skipping '%s' and later instances",
+				CONFIG_ZEPHLET_MAX_INSTANCES, z->name);
+			break;
+		}
+		ordered[count++] = z;
+	}
+
+	/* Stable insertion sort by init_priority. Count is small (bounded by
+	 * CONFIG_ZEPHLET_MAX_INSTANCES); O(n^2) is fine. */
+	for (size_t k = 1; k < count; k++) {
+		const struct zephlet *cur = ordered[k];
+		size_t j = k;
+		while (j > 0 && ordered[j - 1]->init_priority > cur->init_priority) {
+			ordered[j] = ordered[j - 1];
+			j--;
+		}
+		ordered[j] = cur;
+	}
+
+	for (size_t k = 0; k < count; k++) {
+		const struct zephlet *z = ordered[k];
+		LOG_DBG("init '%s' (prio=%d)", z->name, z->init_priority);
+		if (z->init_fn == NULL) {
+			continue;
+		}
+		int err = z->init_fn(z);
+		if (err != 0) {
+			LOG_ERR("zephlet '%s' init_fn returned %d", z->name, err);
+		}
+	}
 	return 0;
 }
 
-SYS_INIT(zephlets_init_fn, APPLICATION, 99);
+SYS_INIT(zephlet_init_walker, APPLICATION, 0);
