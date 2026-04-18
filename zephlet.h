@@ -113,14 +113,18 @@ int zephlet_dispatch(const struct zephlet *z, struct zephlet_call *call);
 /**
  * ZEPHLET_EVENTS_LISTENER(instance, type, callback)
  *
- * Attach a callback to an instance's events channel. Expands to a
- * zbus listener that observes `chan_<instance>_events` and invokes
- * `callback(const struct <type>_events *ev)` on every publish.
+ * Attach an **asynchronous** callback to an instance's events channel.
+ * Wraps zbus's `ZBUS_ASYNC_LISTENER_DEFINE`, which runs the callback
+ * from the system workqueue — never from ISR or the publisher's
+ * thread. The callback may freely call into other zephlets' RPCs with
+ * any timeout.
  *
  * This is the framework's event-observer primitive. Adapters (the
  * ports-and-adapters sense: an origin zephlet's events driving a
  * destination zephlet's RPC) are one use case — the framework takes
  * no position on what the callback does.
+ *
+ * Requires `CONFIG_ZBUS_ASYNC_LISTENER=y` (selected by `CONFIG_ZEPHLETS`).
  *
  * Usage:
  *     static void on_tick(const struct tick_events *ev) { ... }
@@ -134,12 +138,15 @@ int zephlet_dispatch(const struct zephlet *z, struct zephlet_call *call);
  * rather than with preprocessor conditionals inside the source.
  */
 #define ZEPHLET_EVENTS_LISTENER(_instance, _type, _callback)                                       \
-	static void _zephlet_ev_##_instance##_##_callback##_fn(const struct zbus_channel *chan)    \
+	extern const struct zbus_channel chan_##_instance##_events;                                \
+	static void _zephlet_ev_##_instance##_##_callback##_fn(const struct zbus_channel *chan,    \
+							       const void *msg)                    \
 	{                                                                                          \
-		_callback((const struct _type##_events *)zbus_chan_const_msg(chan));               \
+		ARG_UNUSED(chan);                                                                  \
+		_callback((const struct _type##_events *)msg);                                     \
 	}                                                                                          \
-	ZBUS_LISTENER_DEFINE(_zephlet_ev_##_instance##_##_callback##_lis,                          \
-			     _zephlet_ev_##_instance##_##_callback##_fn);                          \
+	ZBUS_ASYNC_LISTENER_DEFINE(_zephlet_ev_##_instance##_##_callback##_lis,                    \
+				   _zephlet_ev_##_instance##_##_callback##_fn);                    \
 	ZBUS_CHAN_ADD_OBS(chan_##_instance##_events,                                               \
 			  _zephlet_ev_##_instance##_##_callback##_lis, 3)
 
