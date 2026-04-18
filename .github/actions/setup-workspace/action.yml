@@ -1,0 +1,110 @@
+# SPDX-License-Identifier: Apache-2.0
+name: Setup Zephyr workspace
+description: >
+  Clone the example app, west-init with zephlet excluded (so the infra
+  checkout already present at modules/lib/zephlet is used as-is), install
+  Python deps and the Zephyr SDK.
+
+inputs:
+  app-repo:
+    description: "owner/repo of the example app to check out"
+    required: false
+    default: rodrigopex/ports_adapter_zbus
+  app-ref:
+    description: "ref (branch/tag/sha) to check out in the app repo"
+    required: false
+    default: main
+  sdk-version:
+    description: "Zephyr SDK version"
+    required: false
+    default: "1.0.0"
+  sdk-toolchains:
+    description: "Space-separated SDK toolchains to install"
+    required: false
+    default: "arm-zephyr-eabi"
+
+runs:
+  using: composite
+  steps:
+    - name: Checkout example app
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ inputs.app-repo }}
+        ref: ${{ inputs.app-ref }}
+        path: app
+
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install system dependencies
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          ninja-build gperf device-tree-compiler \
+          gcc-multilib g++-multilib wget xz-utils \
+          protobuf-compiler
+
+    - name: Install west
+      shell: bash
+      run: pip install --upgrade west pyyaml
+
+    - name: Exclude zephlet from west-managed projects
+      shell: bash
+      working-directory: app
+      run: |
+        python3 - <<'PY'
+        import yaml
+        with open("west.yml") as f:
+            m = yaml.safe_load(f)
+        m["manifest"]["projects"] = [
+            p for p in m["manifest"]["projects"] if p.get("name") != "zephlet"
+        ]
+        with open("west.yml", "w") as f:
+            yaml.safe_dump(m, f, sort_keys=False)
+        PY
+        echo "--- patched west.yml ---"
+        cat west.yml
+
+    - name: west init + update
+      shell: bash
+      working-directory: app
+      run: |
+        west init -l .
+        west update --narrow --fetch-opt=--depth=1
+
+    - name: Install Zephyr + codegen Python deps
+      shell: bash
+      working-directory: app
+      run: |
+        pip install -r ../zephyr/scripts/requirements-base.txt
+        pip install -r ../zephyr/scripts/requirements-build-test.txt
+        pip install -r ../modules/lib/zephlet/codegen/requirements.txt
+        # Extras not captured by requirements-base:
+        #   - protobuf: nanopb's protoc-gen-nanopb plugin imports google.protobuf.
+        #   - natsort, tabulate: twister's hardwaremap imports them.
+        # (Can't use `west packages pip --install` here: west 1.5 refuses
+        # to run outside a virtual environment.)
+        pip install protobuf natsort tabulate
+
+    - name: Cache Zephyr SDK
+      id: sdk-cache
+      uses: actions/cache@v4
+      with:
+        path: ~/zephyr-sdk-${{ inputs.sdk-version }}
+        key: zephyr-sdk-${{ inputs.sdk-version }}-${{ inputs.sdk-toolchains }}
+
+    - name: Install Zephyr SDK (minimal)
+      if: steps.sdk-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        cd ~
+        url="https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v${{ inputs.sdk-version }}/zephyr-sdk-${{ inputs.sdk-version }}_linux-x86_64_minimal.tar.xz"
+        wget -q "$url"
+        tar xf "zephyr-sdk-${{ inputs.sdk-version }}_linux-x86_64_minimal.tar.xz"
+        toolchain_flags=""
+        for t in ${{ inputs.sdk-toolchains }}; do
+          toolchain_flags="$toolchain_flags -t $t"
+        done
+        "zephyr-sdk-${{ inputs.sdk-version }}/setup.sh" $toolchain_flags -h -c
