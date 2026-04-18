@@ -242,46 +242,36 @@ build:
             log.inf(f'  4. Compile the project (west build -b <board>)')
 
     def _new_adapter(self, args):
-        """Create a new adapter between two zephlets."""
-        self._check_dependencies(['proto-schema-parser', 'jinja2'])
-
-        paths = self._get_workspace_paths()
-
-        # Check zephlets directory exists
-        if not paths['zephlets_dir'].exists():
-            log.die(f'zephlets directory not found: {paths["zephlets_dir"]}\n'
-                    f'Create zephlets first using: west zephlet new\n'
-                    f'Or configure custom path: west config zephlet.zephlets-dir <path>')
-
-        # Ensure adapters directory exists (auto-create if needed)
-        if not paths['adapters_dir'].exists():
-            self._ensure_adapters_dir(paths['adapters_dir'])
-            log.inf('')  # Blank line for readability
-
-        script_path = paths['codegen_dir'] / 'generate_adapter.py'
-
-        if not script_path.exists():
-            log.die(f'generate_adapter.py not found: {script_path}')
-
-        cmd = [sys.executable, str(script_path)]
-        cmd.extend(['--zephlets-path', str(paths['zephlets_dir'])])
-        cmd.extend(['--output-dir', str(paths['adapters_dir'])])
-
-        # Pass generated protos path so adapter generator can find Invoke/Report
-        # Try multiple build dir locations
-        for build_candidate in [
-            paths['build_dir'] / 'modules',
-            Path(paths['zephlets_dir']).parent.parent / 'build' / 'modules',
-        ]:
-            if build_candidate.exists():
-                cmd.extend(['--generated-protos-path', str(build_candidate)])
-                break
-
-        log.inf('Creating new adapter...')
-        result = subprocess.run(cmd, cwd=paths['workspace_root'])
-
-        if result.returncode != 0:
-            log.die('failed to create adapter')
+        """
+        v0.3 adapters are not generated — they are ~8 lines of C
+        written by hand, under a Kconfig+CMake guard that ties the
+        adapter's build to the participating zephlets. Print the
+        recipe and exit.
+        """
+        log.inf('v0.3 adapters are written by hand using the')
+        log.inf('ZEPHLET_ADAPTER_DEFINE macro. Recommended layout:')
+        log.inf('')
+        log.inf('  src/adapters/tick_to_ui/')
+        log.inf('    Kconfig')
+        log.inf('      config TICK_TO_UI_ADAPTER')
+        log.inf('          bool "Tick -> UI adapter"')
+        log.inf('          depends on ZEPHLET_TICK && ZEPHLET_UI')
+        log.inf('')
+        log.inf('    CMakeLists.txt')
+        log.inf('      if(CONFIG_TICK_TO_UI_ADAPTER)')
+        log.inf('          zephyr_library()')
+        log.inf('          zephyr_library_sources(tick_to_ui.c)')
+        log.inf('      endif()')
+        log.inf('')
+        log.inf('    tick_to_ui.c')
+        log.inf('      #include "zlet_tick.h"')
+        log.inf('      #include "zlet_ui.h"')
+        log.inf('      static void on_tick(const struct tick_events *ev) { /* ... */ }')
+        log.inf('      ZEPHLET_ADAPTER_DEFINE(tick_fast, tick, on_tick);')
+        log.inf('')
+        log.inf('The Kconfig guard ensures the adapter only compiles when both')
+        log.inf('zephlets are enabled. `west zephlet new-adapter` scaffolding')
+        log.inf('may be added in a later release.')
 
     def _gen_files(self, args):
         """Regenerate interface files for an existing zephlet."""

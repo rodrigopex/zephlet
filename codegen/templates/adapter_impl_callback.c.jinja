@@ -1,9 +1,0 @@
-void {{ callback_prefix }}_on_report_{{ field_name }}(
-	const struct zbus_channel *chan,
-	const struct {{ origin_pb_prefix }}_report *report)
-{
-#warning "{{ callback_prefix }}_on_report_{{ field_name }} not implemented"
-{%- if dest_api_suggestions %}
-	/* Available {{ dest_base }} commands: {{ dest_api_suggestions | join(', ') }} */
-{%- endif %}
-}

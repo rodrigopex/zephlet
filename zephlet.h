@@ -111,6 +111,39 @@ struct zephlet {
 int zephlet_dispatch(const struct zephlet *z, struct zephlet_call *call);
 
 /**
+ * ZEPHLET_EVENTS_LISTENER(instance, type, callback)
+ *
+ * Attach a callback to an instance's events channel. Expands to a
+ * zbus listener that observes `chan_<instance>_events` and invokes
+ * `callback(const struct <type>_events *ev)` on every publish.
+ *
+ * This is the framework's event-observer primitive. Adapters (the
+ * ports-and-adapters sense: an origin zephlet's events driving a
+ * destination zephlet's RPC) are one use case — the framework takes
+ * no position on what the callback does.
+ *
+ * Usage:
+ *     static void on_tick(const struct tick_events *ev) { ... }
+ *     ZEPHLET_EVENTS_LISTENER(tick_fast, tick, on_tick);
+ *
+ * Kconfig / build dependency:
+ * The channel symbol `chan_<instance>_events` only exists when the
+ * owning zephlet is enabled. If this macro is invoked from a
+ * translation unit that might be built with the zephlet disabled,
+ * guard the TU at the CMake level (`if(CONFIG_...) zephyr_library_sources(...)`)
+ * rather than with preprocessor conditionals inside the source.
+ */
+#define ZEPHLET_EVENTS_LISTENER(_instance, _type, _callback)                                       \
+	static void _zephlet_ev_##_instance##_##_callback##_fn(const struct zbus_channel *chan)    \
+	{                                                                                          \
+		_callback((const struct _type##_events *)zbus_chan_const_msg(chan));               \
+	}                                                                                          \
+	ZBUS_LISTENER_DEFINE(_zephlet_ev_##_instance##_##_callback##_lis,                          \
+			     _zephlet_ev_##_instance##_##_callback##_fn);                          \
+	ZBUS_CHAN_ADD_OBS(chan_##_instance##_events,                                               \
+			  _zephlet_ev_##_instance##_##_callback##_lis, 3)
+
+/**
  * @brief Find a zephlet instance by name.
  */
 const struct zephlet *zephlet_get_by_name(const char *name);

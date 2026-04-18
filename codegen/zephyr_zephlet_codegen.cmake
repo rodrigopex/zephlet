@@ -22,10 +22,9 @@
 #       Emitted into build dir:
 #           ${CMAKE_BINARY_DIR}/modules/<prefix>/<prefix>_interface.{h,c}
 #
-#   zephlet_adapter_generate(...)   — Phase 5. Kept as the existing
-#                                     Invoke/Report-shaped generator for
-#                                     now; will be rewritten in the
-#                                     adapters phase.
+# Adapters in v0.3 are NOT generated. They are written by hand using
+# the ZEPHLET_ADAPTER_DEFINE macro (see zephlet.h) under a Kconfig +
+# CMake guard that depends on the participating zephlets.
 
 function(zephyr_zephlet_generate)
   cmake_parse_arguments(_zg "" "TYPE;PREFIX" "SOURCES;INCLUDE_DIRS" ${ARGN})
@@ -74,111 +73,4 @@ function(zephyr_zephlet_generate)
     zephyr_library_sources("${CMAKE_CURRENT_SOURCE_DIR}/${_src}")
   endforeach()
   add_dependencies(${ZEPHYR_CURRENT_LIBRARY} ${_zg_PREFIX}_codegen)
-endfunction()
-
-# ---------------------------------------------------------------------------
-# Legacy helpers — kept until their callers migrate.
-# ---------------------------------------------------------------------------
-
-# Helper: snake_case to PascalCase (tick -> Tick, tamper_detection -> TamperDetection)
-function(_zephlet_capitalize INPUT OUTPUT_VAR)
-  set(_result "")
-  string(REPLACE "_" ";" _parts "${INPUT}")
-  foreach(_part IN LISTS _parts)
-    string(SUBSTRING "${_part}" 0 1 _first)
-    string(TOUPPER "${_first}" _first)
-    string(SUBSTRING "${_part}" 1 -1 _rest)
-    string(APPEND _result "${_first}${_rest}")
-  endforeach()
-  set(${OUTPUT_VAR} "${_result}" PARENT_SCOPE)
-endfunction()
-
-# Adapter code generation — Phase 5 rewrites this. The function currently
-# targets the pre-v0.3 Invoke/Report adapter shape and will not work
-# against v0.3 zephlets; callers should treat it as unavailable until
-# the adapter generator is rewritten.
-function(zephlet_adapter_generate)
-  cmake_parse_arguments(ARG "" "ORIGIN;DEST" "REPORTS" ${ARGN})
-
-  if(NOT ARG_ORIGIN OR NOT ARG_DEST OR NOT ARG_REPORTS)
-    message(FATAL_ERROR "zephlet_adapter_generate: ORIGIN, DEST, and REPORTS are required")
-  endif()
-
-  if(NOT ZEPHLETS_PATH)
-    message(FATAL_ERROR "zephlet_adapter_generate: ZEPHLETS_PATH must be set")
-  endif()
-
-  string(TOUPPER "${ARG_ORIGIN}" _origin_upper)
-  string(TOUPPER "${ARG_DEST}" _dest_upper)
-  set(_config_var "CONFIG_${_origin_upper}_TO_${_dest_upper}_ADAPTER")
-
-  if(NOT ${_config_var})
-    return()
-  endif()
-
-  _zephlet_capitalize(${ARG_ORIGIN} _origin_cap)
-  _zephlet_capitalize(${ARG_DEST} _dest_cap)
-  set(ADAPTER_NAME "${_origin_cap}+${_dest_cap}_zlet_adapter")
-
-  list(JOIN ARG_REPORTS "," SELECTED_FIELDS)
-
-  set(CODEGEN_SCRIPT "${ZEPHYR_ZEPHLET_MODULE_DIR}/codegen/generate_adapter.py")
-  set(BUILD_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/${ADAPTER_NAME}.c")
-  set(IMPL_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/${ADAPTER_NAME}_impl.c")
-  set(GENERATED_PROTOS_PATH "${CMAKE_BINARY_DIR}/modules")
-
-  file(GLOB TEMPLATE_FILES "${ZEPHYR_ZEPHLET_MODULE_DIR}/codegen/templates/adapter*.jinja")
-  file(GLOB PROTO_FILES "${ZEPHLETS_PATH}/*/*.proto")
-
-  set(_gen_proto_origin "${GENERATED_PROTOS_PATH}/zlet_${ARG_ORIGIN}/zlet_${ARG_ORIGIN}.proto")
-  set(_gen_proto_dest "${GENERATED_PROTOS_PATH}/zlet_${ARG_DEST}/zlet_${ARG_DEST}.proto")
-
-  if(NOT EXISTS ${IMPL_FILE})
-    message(STATUS "Bootstrapping ${ADAPTER_NAME}_impl.c (one-time generation)")
-    execute_process(
-      COMMAND ${PYTHON_EXECUTABLE} ${CODEGEN_SCRIPT}
-        --non-interactive
-        --zephlets-path ${ZEPHLETS_PATH}
-        --generated-protos-path ${GENERATED_PROTOS_PATH}
-        --origin ${ARG_ORIGIN}
-        --dest ${ARG_DEST}
-        --fields "${SELECTED_FIELDS}"
-        --output-dir ${CMAKE_CURRENT_SOURCE_DIR}
-        --impl-only
-      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-      RESULT_VARIABLE BOOTSTRAP_RESULT
-    )
-    if(NOT BOOTSTRAP_RESULT EQUAL 0)
-      message(FATAL_ERROR "Failed to bootstrap ${ADAPTER_NAME}_impl.c")
-    endif()
-  endif()
-
-  add_custom_command(
-    OUTPUT ${BUILD_OUTPUT}
-    COMMAND ${PYTHON_EXECUTABLE} ${CODEGEN_SCRIPT}
-      --non-interactive
-      --zephlets-path ${ZEPHLETS_PATH}
-      --generated-protos-path ${GENERATED_PROTOS_PATH}
-      --origin ${ARG_ORIGIN}
-      --dest ${ARG_DEST}
-      --fields "${SELECTED_FIELDS}"
-      --output-dir ${CMAKE_CURRENT_SOURCE_DIR}
-      --build-dir ${CMAKE_CURRENT_BINARY_DIR}
-    DEPENDS ${PROTO_FILES} ${TEMPLATE_FILES} ${CODEGEN_SCRIPT}
-      ${_gen_proto_origin} ${_gen_proto_dest}
-    COMMENT "Generating ${ADAPTER_NAME} adapter"
-    VERBATIM
-  )
-
-  add_custom_target(${ADAPTER_NAME}_codegen DEPENDS ${BUILD_OUTPUT})
-
-  if(TARGET zlet_${ARG_ORIGIN}_proto_gen)
-    add_dependencies(${ADAPTER_NAME}_codegen zlet_${ARG_ORIGIN}_proto_gen)
-  endif()
-  if(TARGET zlet_${ARG_DEST}_proto_gen)
-    add_dependencies(${ADAPTER_NAME}_codegen zlet_${ARG_DEST}_proto_gen)
-  endif()
-
-  zephyr_library_sources(${BUILD_OUTPUT} "src/${ADAPTER_NAME}_impl.c")
-  add_dependencies(${ZEPHYR_CURRENT_LIBRARY} ${ADAPTER_NAME}_codegen)
 endfunction()
