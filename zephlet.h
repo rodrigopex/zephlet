@@ -147,8 +147,7 @@ int zephlet_dispatch(const struct zephlet *z, struct zephlet_call *call);
 	}                                                                                          \
 	ZBUS_ASYNC_LISTENER_DEFINE(_zephlet_ev_##_instance##_##_callback##_lis,                    \
 				   _zephlet_ev_##_instance##_##_callback##_fn);                    \
-	ZBUS_CHAN_ADD_OBS(chan_##_instance##_events,                                               \
-			  _zephlet_ev_##_instance##_##_callback##_lis, 3)
+	ZBUS_CHAN_ADD_OBS(chan_##_instance##_events, _zephlet_ev_##_instance##_##_callback##_lis, 3)
 
 /**
  * @brief Find a zephlet instance by name.

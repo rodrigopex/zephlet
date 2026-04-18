@@ -1,5 +1,7 @@
 # Zephlet Infrastructure Module (v0.3)
 
+[![CI](https://github.com/rodrigopex/zephlet/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/rodrigopex/zephlet/actions/workflows/ci.yml)
+
 Reusable framework for building domain-isolated components on Zephyr RTOS, communicating exclusively over zbus. Each **zephlet** is a non-singleton, instance-per-`ZEPHLET_DEFINE` module with two channels: a synchronous pointer-based RPC channel and a value-typed events channel.
 
 See [CLAUDE.md](CLAUDE.md) for the full architecture reference.
