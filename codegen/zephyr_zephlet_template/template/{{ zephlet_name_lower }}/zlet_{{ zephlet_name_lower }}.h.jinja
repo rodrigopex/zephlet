@@ -1,0 +1,48 @@
+/*
+ * Copyright (c) {{ year }}{% if author_name %} {{ author_name }}{% endif %}
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#ifndef ZLET_{{ zephlet_name_upper }}_H_
+#define ZLET_{{ zephlet_name_upper }}_H_
+
+#include <stdbool.h>
+
+#include <zephyr/kernel.h>
+
+#include "zlet_{{ zephlet_name_lower }}_interface.h"
+
+/*
+ * User-owned types for the `{{ zephlet_name_lower }}` zephlet.
+ *
+ * The interface header (`zlet_{{ zephlet_name_lower }}_interface.h`) is
+ * codegen output; it only knows the RPC shape. Per-instance storage
+ * (`struct {{ zephlet_name_lower }}_data`) and the init callback
+ * (`{{ zephlet_name_lower }}_init_fn`) are user concerns and live here.
+ */
+
+/**
+ * @brief Mutable per-instance data for {{ zephlet_name_pascal }}.
+ *
+ * Application (or test) allocates one of these per
+ * `ZEPHLET_DEFINE({{ zephlet_name_lower }}, ...)` and passes its address
+ * as the `_data` arg.
+ */
+struct {{ zephlet_name_lower }}_data {
+	/* ----- Framework-standard fields (keep first, in this order) ----- */
+	bool is_running;
+	bool is_ready;
+	struct {{ zephlet_name_lower }}_config current_config;
+	/* ----- Custom fields below ----- */
+	/* TODO: driver state (timers, device handles, counters, ...). */
+};
+
+/**
+ * @brief Default init_fn for {{ zephlet_name_pascal }} instances.
+ *
+ * Seeds `current_config` from `z->config` and marks the instance ready.
+ * Pass as the `_init` arg of ZEPHLET_DEFINE.
+ */
+int {{ zephlet_name_lower }}_init_fn(const struct zephlet *z);
+
+#endif /* ZLET_{{ zephlet_name_upper }}_H_ */

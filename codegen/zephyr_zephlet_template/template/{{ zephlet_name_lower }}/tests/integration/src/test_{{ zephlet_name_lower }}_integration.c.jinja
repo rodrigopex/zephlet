@@ -1,98 +1,57 @@
 /*
- * Copyright (c) {{ year }}
+ * Copyright (c) {{ year }}{% if author_name %} {{ author_name }}{% endif %}
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <zephyr/ztest.h>
+#include <errno.h>
+
 #include <zephyr/kernel.h>
-#include "zlet_{{ zephlet_name_lower }}_interface.h"
+#include <zephyr/zbus/zbus.h>
+#include <zephyr/ztest.h>
 
-static int report_count = 0;
-static struct {{ zephlet_name_lower }}_report last_report;
-static struct zephlet_result last_result;
-static bool last_has_result;
+#include "zlet_{{ zephlet_name_lower }}.h"
 
-K_SEM_DEFINE(report_sem, 0, 10);
+/* ----- Test instance -------------------------------------------------- */
 
-/* Real async listener — no mocking. */
-static void {{ zephlet_name_lower }}_report_listener(const struct zbus_channel *chan)
-{
-	const struct {{ zephlet_name_lower }}_report *msg = zbus_chan_const_msg(chan);
+static struct {{ zephlet_name_lower }}_data {{ zephlet_name_lower }}_test_data;
+static const struct {{ zephlet_name_lower }}_config {{ zephlet_name_lower }}_test_cfg = {
+	/* TODO: Set compile-time config defaults for the test instance. */
+};
 
-	if (chan == &chan_zlet_{{ zephlet_name_lower }}_report) {
-		memcpy(&last_report, msg, sizeof(last_report));
-		last_has_result = msg->has_result;
-		if (msg->has_result) {
-			last_result = msg->result;
-		}
-		report_count++;
-		k_sem_give(&report_sem);
-	}
-}
+ZEPHLET_DEFINE({{ zephlet_name_lower }}, {{ zephlet_name_lower }}_test,
+	       &{{ zephlet_name_lower }}_test_cfg,
+	       &{{ zephlet_name_lower }}_test_data,
+	       {{ zephlet_name_lower }}_init_fn);
 
-ZBUS_LISTENER_DEFINE(test_lis, {{ zephlet_name_lower }}_report_listener);
-ZBUS_CHAN_ADD_OBS(chan_zlet_{{ zephlet_name_lower }}_report, test_lis, 2);
+/* ----- Test fixture --------------------------------------------------- */
 
 static void reset(void *fixture)
 {
 	ARG_UNUSED(fixture);
-
-	(void)zlet_{{ zephlet_name_lower }}_stop(K_MSEC(100));
-	k_sem_take(&report_sem, K_MSEC(100));
-
-	report_count = 0;
-	memset(&last_report, 0, sizeof(last_report));
-	memset(&last_result, 0, sizeof(last_result));
-	last_has_result = false;
-	k_sem_reset(&report_sem);
+	(void){{ zephlet_name_lower }}_stop(&{{ zephlet_name_lower }}_test, NULL, K_MSEC(100));
 }
 
 ZTEST_SUITE({{ zephlet_name_lower }}_integration, NULL, NULL, reset, NULL, NULL);
 
-ZTEST({{ zephlet_name_lower }}_integration, test_start)
-{
-	struct {{ zephlet_name_lower }}_report report = zlet_{{ zephlet_name_lower }}_start(K_SECONDS(1));
-	zassert_true(ZEPHLET_CALL_OK(report), "Start should succeed");
-	zassert_true(report.status.is_running, "{{ zephlet_name_lower }} should be running");
-}
+/* ----- Tests ---------------------------------------------------------- */
 
-ZTEST({{ zephlet_name_lower }}_integration, test_stop)
+ZTEST({{ zephlet_name_lower }}_integration, test_is_ready)
 {
-	zlet_{{ zephlet_name_lower }}_start(K_SECONDS(1));
-	struct {{ zephlet_name_lower }}_report report = zlet_{{ zephlet_name_lower }}_stop(K_SECONDS(1));
-	zassert_true(ZEPHLET_CALL_OK(report), "Stop should succeed");
-	zassert_false(report.status.is_running, "{{ zephlet_name_lower }} should be stopped");
+	zassert_true({{ zephlet_name_lower }}_is_ready(&{{ zephlet_name_lower }}_test),
+		     "{{ zephlet_name_lower }} should be ready after init");
 }
 
 ZTEST({{ zephlet_name_lower }}_integration, test_get_status)
 {
-	zlet_{{ zephlet_name_lower }}_start(K_SECONDS(1));
-	struct {{ zephlet_name_lower }}_report report = zlet_{{ zephlet_name_lower }}_get_status(K_SECONDS(1));
-	zassert_true(ZEPHLET_CALL_OK(report), "Get status should succeed");
-	zassert_true(report.status.is_running, "Should be running");
+	struct lifecycle_status st = {0};
+
+	zassert_ok({{ zephlet_name_lower }}_get_status(&{{ zephlet_name_lower }}_test, &st,
+						       K_MSEC(100)));
+	zassert_true(st.is_ready, "instance should report is_ready");
 }
 
-/* TODO: uncomment and customize once Settings has optional fields. Example:
- *
- * ZTEST({{ zephlet_name_lower }}_integration, test_update_settings)
- * {
- *     struct {{ zephlet_name_lower }}_settings delta = {
- *         .has_some_field = true,
- *         .some_field     = 42,
- *     };
- *     struct {{ zephlet_name_lower }}_report report =
- *         zlet_{{ zephlet_name_lower }}_update_settings(&delta, K_SECONDS(1));
- *     zassert_true(ZEPHLET_CALL_OK(report), "update_settings should succeed");
- *     zassert_equal(report.settings.some_field, 42, "Field mismatch");
- * }
+/*
+ * TODO: Add tests exercising your RPC surface. Each ZTEST can call the
+ *       generated wrappers with &{{ zephlet_name_lower }}_test as the
+ *       instance pointer.
  */
-
-ZTEST({{ zephlet_name_lower }}_integration, test_lifecycle_cycle)
-{
-	zlet_{{ zephlet_name_lower }}_start(K_SECONDS(1));
-	zlet_{{ zephlet_name_lower }}_stop(K_SECONDS(1));
-	struct {{ zephlet_name_lower }}_report report = zlet_{{ zephlet_name_lower }}_start(K_SECONDS(1));
-	zassert_true(ZEPHLET_CALL_OK(report), "Restart should succeed");
-}
-
-/* TODO: Add tests for zephlet-specific RPC functions */

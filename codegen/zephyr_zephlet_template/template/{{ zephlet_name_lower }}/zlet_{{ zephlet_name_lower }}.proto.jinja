@@ -3,7 +3,6 @@ syntax = "proto3";
 import "nanopb.proto";
 import "zephlet.proto";
 
-option (nanopb_fileopt).anonymous_oneof = true;
 option (nanopb_fileopt).long_names = false;
 
 message {{ zephlet_name_pascal }} {
@@ -32,9 +31,9 @@ message {{ zephlet_name_pascal }} {
  * not collide with the message name above.
  */
 service {{ zephlet_name_pascal }}Api {
-  rpc start      (Empty)                             returns (Zephlet.Status);
-  rpc stop       (Empty)                             returns (Zephlet.Status);
-  rpc get_status (Empty)                             returns (Zephlet.Status);
+  rpc start      (Empty)                             returns (Lifecycle.Status);
+  rpc stop       (Empty)                             returns (Lifecycle.Status);
+  rpc get_status (Empty)                             returns (Lifecycle.Status);
   rpc config     ({{ zephlet_name_pascal }}.Config)  returns ({{ zephlet_name_pascal }}.Config);
   rpc get_config (Empty)                             returns ({{ zephlet_name_pascal }}.Config);
 
