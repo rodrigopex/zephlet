@@ -108,7 +108,7 @@ endif()
 
 ## Example app
 
-Reference implementation: [ports_adapters_zbus](https://github.com/rodrigopex/ports_adapters_zbus).
+Reference implementation: [ports_adapter_zbus](https://github.com/rodrigopex/ports_adapter_zbus).
 
 ## License
 
