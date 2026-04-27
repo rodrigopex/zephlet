@@ -136,8 +136,8 @@ def parse_proto(proto_path: str) -> dict:
         print(f"{proto_path}: no service block found", file=sys.stderr)
         sys.exit(1)
 
-    # Walk RPCs, allocate method_id in declaration order starting at 1.
-    rpcs = []
+    # Walk service methods, allocate method_id in declaration order starting at 1.
+    commands = []
     next_id = 1
     for method in service.elements:
         if method.__class__.__name__ != "Method":
@@ -152,11 +152,11 @@ def parse_proto(proto_path: str) -> dict:
         output_type = getattr(output_type, "type",
                               getattr(output_type, "name", str(output_type)))
 
-        # Reject streaming RPCs (out of scope for v0.3).
+        # Reject streaming methods (out of scope for v0.3).
         for attr in ("input_streaming", "output_streaming"):
             if getattr(method, attr, False):
                 print(
-                    f"{proto_path}: RPC '{method.name}' uses streaming; "
+                    f"{proto_path}: rpc '{method.name}' uses streaming; "
                     f"streaming is out of scope for v0.3.",
                     file=sys.stderr)
                 sys.exit(1)
@@ -164,7 +164,7 @@ def parse_proto(proto_path: str) -> dict:
         req_c = message_c_name(input_type, owning_type)
         resp_c = message_c_name(output_type, owning_type)
 
-        rpcs.append({
+        commands.append({
             "name": method.name,
             "method_id": next_id,
             "req_c_name": req_c,
@@ -176,16 +176,16 @@ def parse_proto(proto_path: str) -> dict:
         })
         next_id += 1
 
-    if not rpcs:
-        print(f"{proto_path}: service block has no RPCs", file=sys.stderr)
+    if not commands:
+        print(f"{proto_path}: service block has no rpc methods", file=sys.stderr)
         sys.exit(1)
 
     return {
         "owning_type_camel": owning_type,
         "type_snake": camel_to_snake(owning_type),
         "type_upper": camel_to_snake(owning_type).upper(),
-        "rpcs": rpcs,
-        "num_methods_including_reserved": rpcs[-1]["method_id"] + 1,
+        "commands": commands,
+        "num_methods_including_reserved": commands[-1]["method_id"] + 1,
     }
 
 
@@ -223,7 +223,7 @@ def main() -> int:
                    help="Directory to emit <prefix>_interface.{h,c} into")
     p.add_argument("--type", required=True,
                    help="Zephlet type (e.g. 'tick'). Used for symbol names "
-                        "(tick_api, lis_tick, tick_on_*, ...).")
+                        "(tick_api, lis_tick, tick_<rpc>_impl, ...).")
     p.add_argument("--prefix", required=True,
                    help="File-name prefix (e.g. 'zlet_tick'). "
                         "Output: <prefix>_interface.{h,c}.")

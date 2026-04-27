@@ -14,14 +14,14 @@
 /* ----- Test instance -------------------------------------------------- */
 
 static struct {{ zephlet_name_lower }}_data {{ zephlet_name_lower }}_test_data;
-static const struct {{ zephlet_name_lower }}_config {{ zephlet_name_lower }}_test_cfg = {
-	/* TODO: Set compile-time config defaults for the test instance. */
+static struct {{ zephlet_name_lower }}_config {{ zephlet_name_lower }}_test_cfg = {
+	/* TODO: Set initial config values for the test instance. */
 };
 
-ZEPHLET_DEFINE({{ zephlet_name_lower }}, {{ zephlet_name_lower }}_test,
-	       &{{ zephlet_name_lower }}_test_cfg,
-	       &{{ zephlet_name_lower }}_test_data,
-	       {{ zephlet_name_lower }}_init_fn);
+ZEPHLET_NEW({{ zephlet_name_lower }}, {{ zephlet_name_lower }}_test,
+		    &{{ zephlet_name_lower }}_test_cfg,
+		    &{{ zephlet_name_lower }}_test_data,
+		    {{ zephlet_name_lower }}_init_fn);
 
 /* ----- Test fixture --------------------------------------------------- */
 
@@ -51,7 +51,7 @@ ZTEST({{ zephlet_name_lower }}_integration, test_get_status)
 }
 
 /*
- * TODO: Add tests exercising your RPC surface. Each ZTEST can call the
- *       generated wrappers with &{{ zephlet_name_lower }}_test as the
- *       instance pointer.
+ * TODO: Add tests exercising your command surface. Each ZTEST can call
+ *       the generated wrappers with &{{ zephlet_name_lower }}_test as
+ *       the instance pointer.
  */

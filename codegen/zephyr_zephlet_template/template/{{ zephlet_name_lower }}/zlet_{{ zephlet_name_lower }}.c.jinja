@@ -18,18 +18,17 @@ LOG_MODULE_DECLARE(zlet_{{ zephlet_name_lower }}, CONFIG_ZEPHLET_{{ zephlet_name
  * Default strong handlers
  * -----------------------
  *
- * The generator emits `__weak int {{ zephlet_name_lower }}_on_<rpc>(...)`
+ * The generator emits `__weak int {{ zephlet_name_lower }}_<cmd>_impl(...)`
  * stubs returning -ENOSYS. The overrides below satisfy the framework-
- * standard fields (`is_running`, `is_ready`, `current_config`) out of
- * the box so `west zephlet new` produces a scaffold that passes its
- * own tests.
+ * standard fields (`is_running`, `is_ready`) out of the box so
+ * `west zephlet new` produces a scaffold that passes its own tests.
  *
  * Replace the `TODO: side effects` comments with your zephlet's actual
  * work. Delete any override to fall back to -ENOSYS if a method should
  * not be implemented.
  */
 
-int {{ zephlet_name_lower }}_on_start(const struct zephlet *z, struct lifecycle_status *resp)
+int {{ zephlet_name_lower }}_start_impl(const struct zephlet *z, struct lifecycle_status *resp)
 {
 	struct {{ zephlet_name_lower }}_data *d = z->data;
 
@@ -50,7 +49,7 @@ int {{ zephlet_name_lower }}_on_start(const struct zephlet *z, struct lifecycle_
 	return 0;
 }
 
-int {{ zephlet_name_lower }}_on_stop(const struct zephlet *z, struct lifecycle_status *resp)
+int {{ zephlet_name_lower }}_stop_impl(const struct zephlet *z, struct lifecycle_status *resp)
 {
 	struct {{ zephlet_name_lower }}_data *d = z->data;
 
@@ -68,7 +67,7 @@ int {{ zephlet_name_lower }}_on_stop(const struct zephlet *z, struct lifecycle_s
 	return 0;
 }
 
-int {{ zephlet_name_lower }}_on_get_status(const struct zephlet *z, struct lifecycle_status *resp)
+int {{ zephlet_name_lower }}_get_status_impl(const struct zephlet *z, struct lifecycle_status *resp)
 {
 	struct {{ zephlet_name_lower }}_data *d = z->data;
 
@@ -79,31 +78,31 @@ int {{ zephlet_name_lower }}_on_get_status(const struct zephlet *z, struct lifec
 	return 0;
 }
 
-int {{ zephlet_name_lower }}_on_config(const struct zephlet *z,
-				       const struct {{ zephlet_name_lower }}_config *req,
-				       struct {{ zephlet_name_lower }}_config *resp)
+int {{ zephlet_name_lower }}_config_impl(const struct zephlet *z,
+					 const struct {{ zephlet_name_lower }}_config *req,
+					 struct {{ zephlet_name_lower }}_config *resp)
 {
-	struct {{ zephlet_name_lower }}_data *d = z->data;
+	struct {{ zephlet_name_lower }}_config *cfg = z->config;
 
 	/* TODO: validate req (reject invalid combinations with -EINVAL). */
 
-	d->current_config = *req;
+	*cfg = *req;
 
-	/* TODO: apply config changes if `d->is_running`. */
+	/* TODO: apply config changes if `((struct {{ zephlet_name_lower }}_data *)z->data)->is_running`. */
 
 	if (resp != NULL) {
-		*resp = d->current_config;
+		*resp = *cfg;
 	}
 	return 0;
 }
 
-int {{ zephlet_name_lower }}_on_get_config(const struct zephlet *z,
-					   struct {{ zephlet_name_lower }}_config *resp)
+int {{ zephlet_name_lower }}_get_config_impl(const struct zephlet *z,
+					     struct {{ zephlet_name_lower }}_config *resp)
 {
-	struct {{ zephlet_name_lower }}_data *d = z->data;
+	struct {{ zephlet_name_lower }}_config *cfg = z->config;
 
 	if (resp != NULL) {
-		*resp = d->current_config;
+		*resp = *cfg;
 	}
 	return 0;
 }
@@ -111,11 +110,6 @@ int {{ zephlet_name_lower }}_on_get_config(const struct zephlet *z,
 int {{ zephlet_name_lower }}_init_fn(const struct zephlet *z)
 {
 	struct {{ zephlet_name_lower }}_data *d = z->data;
-	const struct {{ zephlet_name_lower }}_config *cfg = z->config;
-
-	if (cfg != NULL) {
-		d->current_config = *cfg;
-	}
 
 	d->is_running = false;
 	d->is_ready = true;
@@ -128,9 +122,9 @@ int {{ zephlet_name_lower }}_init_fn(const struct zephlet *z)
  * Example instantiation (belongs in application or test code, NOT here):
  *
  *     static struct {{ zephlet_name_lower }}_data inst_data;
- *     static const struct {{ zephlet_name_lower }}_config inst_cfg = {
+ *     static struct {{ zephlet_name_lower }}_config inst_cfg = {
  *         // initial config values
  *     };
- *     ZEPHLET_DEFINE({{ zephlet_name_lower }}, inst_name, &inst_cfg,
- *                    &inst_data, {{ zephlet_name_lower }}_init_fn);
+ *     ZEPHLET_NEW({{ zephlet_name_lower }}, inst_name, &inst_cfg,
+ *                         &inst_data, {{ zephlet_name_lower }}_init_fn);
  */

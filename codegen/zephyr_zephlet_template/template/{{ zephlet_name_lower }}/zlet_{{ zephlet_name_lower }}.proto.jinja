@@ -6,9 +6,9 @@ import "zephlet.proto";
 option (nanopb_fileopt).long_names = false;
 
 message {{ zephlet_name_pascal }} {
-  /* Runtime config, mutated via the `config` RPC. Fields you want to
-   * keep immutable once set should instead live on the compile-time
-   * instance config (the `_cfg` arg of ZEPHLET_DEFINE). */
+  /* Runtime config, mutated via the `config` command. Fields you want
+   * to keep immutable once set should instead live on the compile-time
+   * instance config (the `_cfg` arg of ZEPHLET_NEW). */
   message Config {
     /* TODO: Add config fields. Examples:
      *   uint32 period_ms = 1;
@@ -37,7 +37,7 @@ service {{ zephlet_name_pascal }}Api {
   rpc config     ({{ zephlet_name_pascal }}.Config)  returns ({{ zephlet_name_pascal }}.Config);
   rpc get_config (Empty)                             returns ({{ zephlet_name_pascal }}.Config);
 
-  /* TODO: Add custom RPCs below. Each gets a distinct method_id allocated
-   *       in declaration order. Keep inputs/outputs to Empty or one of the
-   *       nested messages; streaming RPCs are not supported in v0.3. */
+  /* TODO: Add custom rpc methods below. Each gets a distinct method_id
+   *       allocated in declaration order. Keep inputs/outputs to Empty
+   *       or one of the nested messages; streaming is not supported. */
 }

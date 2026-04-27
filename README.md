@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/rodrigopex/zephlet/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/rodrigopex/zephlet/actions/workflows/ci.yml)
 
-Reusable framework for building domain-isolated components on Zephyr RTOS, communicating exclusively over zbus. Each **zephlet** is a non-singleton, instance-per-`ZEPHLET_DEFINE` module with two channels: a synchronous pointer-based RPC channel and a value-typed events channel.
+Reusable framework for building domain-isolated components on Zephyr RTOS, communicating exclusively over zbus. Each **zephlet** is a non-singleton, instance-per-`ZEPHLET_NEW` module with two channels: a synchronous pointer-based command channel and a value-typed events channel.
 
 See [CLAUDE.md](CLAUDE.md) for the full architecture reference.
 
@@ -59,8 +59,8 @@ Instantiate and use:
 #include "zlet_my_zephlet.h"
 
 static struct my_zephlet_data my_data;
-static const struct my_zephlet_config my_cfg = { /* ... */ };
-ZEPHLET_DEFINE(my_zephlet, my_instance, &my_cfg, &my_data, my_zephlet_init_fn);
+static struct my_zephlet_config my_cfg = { /* ... */ };
+ZEPHLET_NEW(my_zephlet, my_instance, &my_cfg, &my_data, my_zephlet_init_fn);
 
 /* ... in main or elsewhere ... */
 struct lifecycle_status st;
@@ -69,10 +69,10 @@ my_zephlet_start(&my_instance, &st, K_MSEC(500));
 
 ## Architecture at a glance
 
-- **`rpc` channel** (pointer, listener-only): synchronous RPC via zbus sync-listener. Wrapper returns the handler's rc directly — no correlation IDs, no semaphores, no result struct.
+- **`command` channel** (pointer, listener-only): synchronous command via zbus sync-listener. Wrapper returns the handler's rc directly — no correlation IDs, no semaphores, no result struct.
 - **`events` channel** (value-typed): async fan-out. Publishers call `<type>_emit(z, &ev, timeout)`; consumers observe with `ZEPHLET_EVENTS_LISTENER(instance, type, callback)` (wraps `ZBUS_ASYNC_LISTENER_DEFINE`).
 - **Non-singleton**: multiple instances per type coexist; each has its own channel pair and data.
-- **Weak handler overrides**: generator emits `__weak int <type>_on_<rpc>(...)` returning `-ENOSYS`; user provides strong overrides in `<prefix>.c`.
+- **Weak handler overrides**: generator emits `__weak int <type>_<cmd>_impl(...)` returning `-ENOSYS`; user provides strong overrides in `<prefix>.c`.
 
 ## Adapters
 

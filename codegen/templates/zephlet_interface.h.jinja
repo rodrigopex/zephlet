@@ -22,26 +22,26 @@
  * Slot 0 is reserved by the v0.3 contract. */
 enum {{ type_snake }}_method_id {
 	{{ type_upper }}_M_RESERVED_0 = 0,
-	{% for rpc in rpcs %}
-	{{ type_upper }}_M_{{ rpc.name|upper }} = {{ rpc.method_id }},
+	{% for cmd in commands %}
+	{{ type_upper }}_M_{{ cmd.name|upper }} = {{ cmd.method_id }},
 	{% endfor %}
 	{{ type_upper }}_M__COUNT = {{ num_methods_including_reserved }},
 };
 
-/** Method dispatch table exposed via ZEPHLET_DEFINE({{ type_snake }}, ...). */
+/** Method dispatch table exposed via ZEPHLET_NEW({{ type_snake }}, ...). */
 extern const struct zephlet_api {{ type_snake }}_api;
 
-/* ----- Synchronous RPC wrappers ---------------------------------------- */
+/* ----- Synchronous command wrappers ------------------------------------ */
 
-{% for rpc in rpcs %}
-{% if rpc.req_is_empty and rpc.resp_is_empty %}
-int {{ type_snake }}_{{ rpc.name }}(const struct zephlet *z, k_timeout_t timeout);
-{% elif rpc.req_is_empty %}
-int {{ type_snake }}_{{ rpc.name }}(const struct zephlet *z, struct {{ rpc.resp_c_name }} *resp, k_timeout_t timeout);
-{% elif rpc.resp_is_empty %}
-int {{ type_snake }}_{{ rpc.name }}(const struct zephlet *z, const struct {{ rpc.req_c_name }} *req, k_timeout_t timeout);
+{% for cmd in commands %}
+{% if cmd.req_is_empty and cmd.resp_is_empty %}
+int {{ type_snake }}_{{ cmd.name }}(const struct zephlet *z, k_timeout_t timeout);
+{% elif cmd.req_is_empty %}
+int {{ type_snake }}_{{ cmd.name }}(const struct zephlet *z, struct {{ cmd.resp_c_name }} *resp, k_timeout_t timeout);
+{% elif cmd.resp_is_empty %}
+int {{ type_snake }}_{{ cmd.name }}(const struct zephlet *z, const struct {{ cmd.req_c_name }} *req, k_timeout_t timeout);
 {% else %}
-int {{ type_snake }}_{{ rpc.name }}(const struct zephlet *z, const struct {{ rpc.req_c_name }} *req, struct {{ rpc.resp_c_name }} *resp, k_timeout_t timeout);
+int {{ type_snake }}_{{ cmd.name }}(const struct zephlet *z, const struct {{ cmd.req_c_name }} *req, struct {{ cmd.resp_c_name }} *resp, k_timeout_t timeout);
 {% endif %}
 {% endfor %}
 
@@ -69,15 +69,15 @@ bool {{ type_snake }}_is_ready(const struct zephlet *z);
  * overrides in user source. Handler signatures follow the four wrapper
  * shapes driven by (req_is_empty, resp_is_empty). */
 
-{% for rpc in rpcs %}
-{% if rpc.req_is_empty and rpc.resp_is_empty %}
-int {{ type_snake }}_on_{{ rpc.name }}(const struct zephlet *z);
-{% elif rpc.req_is_empty %}
-int {{ type_snake }}_on_{{ rpc.name }}(const struct zephlet *z, struct {{ rpc.resp_c_name }} *resp);
-{% elif rpc.resp_is_empty %}
-int {{ type_snake }}_on_{{ rpc.name }}(const struct zephlet *z, const struct {{ rpc.req_c_name }} *req);
+{% for cmd in commands %}
+{% if cmd.req_is_empty and cmd.resp_is_empty %}
+int {{ type_snake }}_{{ cmd.name }}_impl(const struct zephlet *z);
+{% elif cmd.req_is_empty %}
+int {{ type_snake }}_{{ cmd.name }}_impl(const struct zephlet *z, struct {{ cmd.resp_c_name }} *resp);
+{% elif cmd.resp_is_empty %}
+int {{ type_snake }}_{{ cmd.name }}_impl(const struct zephlet *z, const struct {{ cmd.req_c_name }} *req);
 {% else %}
-int {{ type_snake }}_on_{{ rpc.name }}(const struct zephlet *z, const struct {{ rpc.req_c_name }} *req, struct {{ rpc.resp_c_name }} *resp);
+int {{ type_snake }}_{{ cmd.name }}_impl(const struct zephlet *z, const struct {{ cmd.req_c_name }} *req, struct {{ cmd.resp_c_name }} *resp);
 {% endif %}
 {% endfor %}
 

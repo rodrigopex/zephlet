@@ -13,29 +13,29 @@ LOG_MODULE_REGISTER({{ prefix }}, CONFIG_ZEPHLET_{{ type_upper }}_LOG_LEVEL);
 
 /* ----- Weak default handlers (overridden in user source) -------------- */
 
-{% for rpc in rpcs %}
-{% if rpc.req_is_empty and rpc.resp_is_empty %}
-__weak int {{ type_snake }}_on_{{ rpc.name }}(const struct zephlet *z)
+{% for cmd in commands %}
+{% if cmd.req_is_empty and cmd.resp_is_empty %}
+__weak int {{ type_snake }}_{{ cmd.name }}_impl(const struct zephlet *z)
 {
 	ARG_UNUSED(z);
 	return -ENOSYS;
 }
-{% elif rpc.req_is_empty %}
-__weak int {{ type_snake }}_on_{{ rpc.name }}(const struct zephlet *z, struct {{ rpc.resp_c_name }} *resp)
+{% elif cmd.req_is_empty %}
+__weak int {{ type_snake }}_{{ cmd.name }}_impl(const struct zephlet *z, struct {{ cmd.resp_c_name }} *resp)
 {
 	ARG_UNUSED(z);
 	ARG_UNUSED(resp);
 	return -ENOSYS;
 }
-{% elif rpc.resp_is_empty %}
-__weak int {{ type_snake }}_on_{{ rpc.name }}(const struct zephlet *z, const struct {{ rpc.req_c_name }} *req)
+{% elif cmd.resp_is_empty %}
+__weak int {{ type_snake }}_{{ cmd.name }}_impl(const struct zephlet *z, const struct {{ cmd.req_c_name }} *req)
 {
 	ARG_UNUSED(z);
 	ARG_UNUSED(req);
 	return -ENOSYS;
 }
 {% else %}
-__weak int {{ type_snake }}_on_{{ rpc.name }}(const struct zephlet *z, const struct {{ rpc.req_c_name }} *req, struct {{ rpc.resp_c_name }} *resp)
+__weak int {{ type_snake }}_{{ cmd.name }}_impl(const struct zephlet *z, const struct {{ cmd.req_c_name }} *req, struct {{ cmd.resp_c_name }} *resp)
 {
 	ARG_UNUSED(z);
 	ARG_UNUSED(req);
@@ -47,20 +47,20 @@ __weak int {{ type_snake }}_on_{{ rpc.name }}(const struct zephlet *z, const str
 {% endfor %}
 /* ----- Trampolines: unpack zephlet_call -> handler --------------------- */
 
-{% for rpc in rpcs %}
-static int trampoline_{{ rpc.name }}(const struct zephlet *z, struct zephlet_call *c)
+{% for cmd in commands %}
+static int trampoline_{{ cmd.name }}(const struct zephlet *z, struct zephlet_call *c)
 {
-{% if rpc.req_is_empty and rpc.resp_is_empty %}
+{% if cmd.req_is_empty and cmd.resp_is_empty %}
 	ARG_UNUSED(c);
-	return {{ type_snake }}_on_{{ rpc.name }}(z);
-{% elif rpc.req_is_empty %}
-	return {{ type_snake }}_on_{{ rpc.name }}(z, (struct {{ rpc.resp_c_name }} *)c->resp);
-{% elif rpc.resp_is_empty %}
-	return {{ type_snake }}_on_{{ rpc.name }}(z, (const struct {{ rpc.req_c_name }} *)c->req);
+	return {{ type_snake }}_{{ cmd.name }}_impl(z);
+{% elif cmd.req_is_empty %}
+	return {{ type_snake }}_{{ cmd.name }}_impl(z, (struct {{ cmd.resp_c_name }} *)c->resp);
+{% elif cmd.resp_is_empty %}
+	return {{ type_snake }}_{{ cmd.name }}_impl(z, (const struct {{ cmd.req_c_name }} *)c->req);
 {% else %}
-	return {{ type_snake }}_on_{{ rpc.name }}(z,
-		(const struct {{ rpc.req_c_name }} *)c->req,
-		(struct {{ rpc.resp_c_name }} *)c->resp);
+	return {{ type_snake }}_{{ cmd.name }}_impl(z,
+		(const struct {{ cmd.req_c_name }} *)c->req,
+		(struct {{ cmd.resp_c_name }} *)c->resp);
 {% endif %}
 }
 
@@ -69,11 +69,11 @@ static int trampoline_{{ rpc.name }}(const struct zephlet *z, struct zephlet_cal
 
 static const struct zephlet_method {{ type_snake }}_methods[{{ type_upper }}_M__COUNT] = {
 	[{{ type_upper }}_M_RESERVED_0] = {0},
-	{% for rpc in rpcs %}
-	[{{ type_upper }}_M_{{ rpc.name|upper }}] = {
-		.req_desc = {% if rpc.req_desc %}&{{ rpc.req_desc }}{% else %}NULL{% endif %},
-		.resp_desc = {% if rpc.resp_desc %}&{{ rpc.resp_desc }}{% else %}NULL{% endif %},
-		.handler = trampoline_{{ rpc.name }},
+	{% for cmd in commands %}
+	[{{ type_upper }}_M_{{ cmd.name|upper }}] = {
+		.req_desc = {% if cmd.req_desc %}&{{ cmd.req_desc }}{% else %}NULL{% endif %},
+		.resp_desc = {% if cmd.resp_desc %}&{{ cmd.resp_desc }}{% else %}NULL{% endif %},
+		.handler = trampoline_{{ cmd.name }},
 	},
 	{% endfor %}
 };
@@ -100,53 +100,53 @@ static int {{ type_snake }}_sync_pub(const struct zephlet *z, struct zephlet_cal
 				     k_timeout_t timeout)
 {
 	struct zephlet_call *p = call;
-	int err = zbus_chan_pub(z->channel.rpc, &p, timeout);
+	int err = zbus_chan_pub(z->channel.command, &p, timeout);
 	if (err != 0) {
 		return err;
 	}
 	return call->return_code;
 }
 
-{% for rpc in rpcs %}
-{% if rpc.req_is_empty and rpc.resp_is_empty %}
-int {{ type_snake }}_{{ rpc.name }}(const struct zephlet *z, k_timeout_t timeout)
+{% for cmd in commands %}
+{% if cmd.req_is_empty and cmd.resp_is_empty %}
+int {{ type_snake }}_{{ cmd.name }}(const struct zephlet *z, k_timeout_t timeout)
 {
 	struct zephlet_call call = {
-		.method_id = {{ type_upper }}_M_{{ rpc.name|upper }},
+		.method_id = {{ type_upper }}_M_{{ cmd.name|upper }},
 	};
 	return {{ type_snake }}_sync_pub(z, &call, timeout);
 }
-{% elif rpc.req_is_empty %}
-int {{ type_snake }}_{{ rpc.name }}(const struct zephlet *z, struct {{ rpc.resp_c_name }} *resp,
+{% elif cmd.req_is_empty %}
+int {{ type_snake }}_{{ cmd.name }}(const struct zephlet *z, struct {{ cmd.resp_c_name }} *resp,
 			     k_timeout_t timeout)
 {
 	struct zephlet_call call = {
-		.method_id = {{ type_upper }}_M_{{ rpc.name|upper }},
-		.resp_desc = &{{ rpc.resp_desc }},
+		.method_id = {{ type_upper }}_M_{{ cmd.name|upper }},
+		.resp_desc = &{{ cmd.resp_desc }},
 		.resp = resp,
 	};
 	return {{ type_snake }}_sync_pub(z, &call, timeout);
 }
-{% elif rpc.resp_is_empty %}
-int {{ type_snake }}_{{ rpc.name }}(const struct zephlet *z, const struct {{ rpc.req_c_name }} *req,
+{% elif cmd.resp_is_empty %}
+int {{ type_snake }}_{{ cmd.name }}(const struct zephlet *z, const struct {{ cmd.req_c_name }} *req,
 			     k_timeout_t timeout)
 {
 	struct zephlet_call call = {
-		.method_id = {{ type_upper }}_M_{{ rpc.name|upper }},
-		.req_desc = &{{ rpc.req_desc }},
+		.method_id = {{ type_upper }}_M_{{ cmd.name|upper }},
+		.req_desc = &{{ cmd.req_desc }},
 		.req = req,
 	};
 	return {{ type_snake }}_sync_pub(z, &call, timeout);
 }
 {% else %}
-int {{ type_snake }}_{{ rpc.name }}(const struct zephlet *z, const struct {{ rpc.req_c_name }} *req,
-			     struct {{ rpc.resp_c_name }} *resp, k_timeout_t timeout)
+int {{ type_snake }}_{{ cmd.name }}(const struct zephlet *z, const struct {{ cmd.req_c_name }} *req,
+			     struct {{ cmd.resp_c_name }} *resp, k_timeout_t timeout)
 {
 	struct zephlet_call call = {
-		.method_id = {{ type_upper }}_M_{{ rpc.name|upper }},
-		.req_desc = &{{ rpc.req_desc }},
+		.method_id = {{ type_upper }}_M_{{ cmd.name|upper }},
+		.req_desc = &{{ cmd.req_desc }},
 		.req = req,
-		.resp_desc = &{{ rpc.resp_desc }},
+		.resp_desc = &{{ cmd.resp_desc }},
 		.resp = resp,
 	};
 	return {{ type_snake }}_sync_pub(z, &call, timeout);
