@@ -171,7 +171,7 @@ const struct zephlet *zephlet_get_by_name(const char *name);
  * @param _data  Pointer to per-instance mutable data.
  * @param _init  `int (*)(const struct zephlet *)` or NULL.
  */
-#define ZEPHLET_NEW(_type, _name, _cfg, _data, _init)                                      \
+#define ZEPHLET_NEW(_type, _name, _cfg, _data, _init)                                              \
 	ZEPHLET_NEW_PRIO(_type, _name, _cfg, _data, _init, 0)
 
 /**
@@ -180,7 +180,7 @@ const struct zephlet *zephlet_get_by_name(const char *name);
  * Same as `ZEPHLET_NEW`, with an explicit `init_priority`.
  * SYS_INIT walker runs `init_fn`s in ascending priority.
  */
-#define ZEPHLET_NEW_PRIO(_type, _name, _cfg, _data, _init, _prio)                          \
+#define ZEPHLET_NEW_PRIO(_type, _name, _cfg, _data, _init, _prio)                                  \
 	extern const struct zephlet _name;                                                         \
 	ZBUS_CHAN_DEFINE(chan_##_name##_command, struct zephlet_call *, NULL, (void *)&_name,      \
 			 ZBUS_OBSERVERS(lis_##_type), NULL);                                       \
