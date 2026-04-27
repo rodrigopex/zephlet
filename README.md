@@ -79,7 +79,10 @@ my_zephlet_start(&my_instance, &st, K_MSEC(500));
 Not a framework concept in v0.3. An "adapter" is plain user code — usually a single `.c` file composed from the `ZEPHLET_EVENTS_LISTENER` primitive:
 
 ```c
-static void on_tick(const struct tick_events *ev) {
+static void on_tick(const struct zephlet *z,
+                    const struct tick_events *ev) {
+    ARG_UNUSED(z);
+    ARG_UNUSED(ev);
     (void)ui_blink(&ui_instance, K_MSEC(100));
 }
 ZEPHLET_EVENTS_LISTENER(tick_instance, tick, on_tick);

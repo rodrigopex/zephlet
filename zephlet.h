@@ -126,8 +126,16 @@ int zephlet_dispatch(const struct zephlet *z, struct zephlet_call *call);
  *
  * Requires `CONFIG_ZBUS_ASYNC_LISTENER=y` (selected by `CONFIG_ZEPHLETS`).
  *
+ * The callback receives the owning instance pointer (sourced from
+ * `zbus_chan_user_data`) so policies that observe multiple instances
+ * of the same zephlet type can disambiguate them. The macro casts the
+ * pointer explicitly to `const struct zephlet *`: any mismatch in the
+ * user callback's signature produces a per-argument compile-time
+ * diagnostic.
+ *
  * Usage:
- *     static void on_tick(const struct tick_events *ev) { ... }
+ *     static void on_tick(const struct zephlet *z,
+ *                         const struct tick_events *ev) { ... }
  *     ZEPHLET_EVENTS_LISTENER(tick_fast, tick, on_tick);
  *
  * Kconfig / build dependency:
@@ -142,8 +150,9 @@ int zephlet_dispatch(const struct zephlet *z, struct zephlet_call *call);
 	static void _zephlet_ev_##_instance##_##_callback##_fn(const struct zbus_channel *chan,    \
 							       const void *msg)                    \
 	{                                                                                          \
-		ARG_UNUSED(chan);                                                                  \
-		_callback((const struct _type##_events *)msg);                                     \
+		const struct zephlet *z =                                                          \
+			(const struct zephlet *)zbus_chan_user_data(chan);                         \
+		_callback(z, (const struct _type##_events *)msg);                                  \
 	}                                                                                          \
 	ZBUS_ASYNC_LISTENER_DEFINE(_zephlet_ev_##_instance##_##_callback##_lis,                    \
 				   _zephlet_ev_##_instance##_##_callback##_fn);                    \

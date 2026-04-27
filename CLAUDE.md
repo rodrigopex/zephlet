@@ -74,7 +74,8 @@ Generated per-type in `<prefix>_interface.c`:
 Framework ships one macro; no codegen.
 
 ```c
-static void on_tick(const struct tick_events *ev) { /* ... */ }
+static void on_tick(const struct zephlet *z,
+                    const struct tick_events *ev) { /* ... */ }
 ZEPHLET_EVENTS_LISTENER(tick_instance, tick, on_tick);
 ```
 
