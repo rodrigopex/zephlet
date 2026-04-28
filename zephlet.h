@@ -150,8 +150,7 @@ int zephlet_dispatch(const struct zephlet *z, struct zephlet_call *call);
 	static void _zephlet_ev_##_instance##_##_callback##_fn(const struct zbus_channel *chan,    \
 							       const void *msg)                    \
 	{                                                                                          \
-		const struct zephlet *z =                                                          \
-			(const struct zephlet *)zbus_chan_user_data(chan);                         \
+		const struct zephlet *z = (const struct zephlet *)zbus_chan_user_data(chan);       \
 		_callback(z, (const struct _type##_events *)msg);                                  \
 	}                                                                                          \
 	ZBUS_ASYNC_LISTENER_DEFINE(_zephlet_ev_##_instance##_##_callback##_lis,                    \
