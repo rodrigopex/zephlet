@@ -10,7 +10,7 @@ config ZEPHLET_{{ zephlet_name_upper }}
 if(ZEPHLET_{{ zephlet_name_upper }})
 
 module = ZEPHLET_{{ zephlet_name_upper }}
-module-str = zlet_{{ zephlet_name_lower }}
+module-str = {{ prefix }}{{ zephlet_name_lower }}
 source "subsys/logging/Kconfig.template.log_config"
 
 endif

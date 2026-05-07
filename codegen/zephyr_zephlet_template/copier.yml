@@ -44,6 +44,21 @@ zephlet_description:
   default: "{{ zephlet_name }} Zephlet Module"
   placeholder: "Provides user interface functionalities for the application"
 
+prefix:
+  type: str
+  help: >-
+    File-name prefix for the zephlet sources (e.g. "zlet_" yields
+    "zlet_<name>.c"). Set to an empty string to drop the prefix entirely.
+  default: "zlet_"
+
+with_module:
+  type: bool
+  help: >-
+    Generate a full Zephyr module: include the integration tests folder and
+    zephyr/module.yml. Choose No for a minimal scaffold (CMakeLists, Kconfig,
+    and the source files only).
+  default: true
+
 author_name:
   type: str
   help: Author name (optional)

@@ -48,6 +48,18 @@ class Zephlet(WestCommand):
         new_parser.add_argument(
             '-a', '--author',
             help='author name (non-interactive mode)')
+        new_parser.add_argument(
+            '--prefix',
+            help=('file-name prefix for the generated sources '
+                  '(default: "zlet_"). Use "" to drop the prefix entirely; '
+                  'applies to file names and to identifiers derived from '
+                  'them (header guards, log module name, etc.).'))
+        new_parser.add_argument(
+            '--no-module',
+            dest='with_module', action='store_false', default=None,
+            help=('omit the integration tests folder and zephyr/module.yml '
+                  '(produces a minimal scaffold: CMakeLists, Kconfig, and '
+                  'the source files only).'))
 
         # new-adapter subcommand
         subparsers.add_parser(
@@ -133,6 +145,11 @@ class Zephlet(WestCommand):
 
         cmd = ['copier', 'copy', str(module['template_dir']), str(dest)]
 
+        if args.prefix is not None:
+            cmd.extend(['--data', f'prefix={args.prefix}'])
+        if args.with_module is False:
+            cmd.extend(['--data', 'with_module=false'])
+
         if args.name:
             cmd.extend(['--data', f'zephlet_name={args.name}'])
             if args.description:
@@ -147,10 +164,11 @@ class Zephlet(WestCommand):
             log.die('failed to create zephlet')
 
         if args.name:
+            prefix = args.prefix if args.prefix is not None else 'zlet_'
             zephlet_dir = dest / args.name.lower()
             log.inf(f'Zephlet "{args.name}" created at {zephlet_dir}')
             log.inf('Next steps:')
-            log.inf(f'  1. Edit {zephlet_dir}/zlet_{args.name.lower()}.proto')
+            log.inf(f'  1. Edit {zephlet_dir}/{prefix}{args.name.lower()}.proto')
             log.inf(f'  2. Add "{zephlet_dir}" to the app\'s EXTRA_ZEPHYR_MODULES')
             log.inf(f'  3. Enable CONFIG_ZEPHLET_{args.name.upper()}=y in prj.conf')
             log.inf(f'  4. Build (west build -b <board>)')

@@ -45,6 +45,11 @@ or non-interactively with an explicit destination:
 west zephlet new -o path/to/wherever -n <Name> -d "<description>" -a "<author>"
 ```
 
+Two further options shape the layout:
+
+- `--prefix STR` — file-name prefix for the generated sources. Default `zlet_` (so a zephlet `tick` produces `zlet_tick.{c,h,proto}`); pass `--prefix=` to drop the prefix entirely (`tick.{c,h,proto}`). The prefix also flows into the header guard, log module name, and the `PREFIX` argument of `zephyr_zephlet_generate` so the generated `<prefix>_interface.{h,c}` stays consistent.
+- `--no-module` — produce a minimal scaffold with just `CMakeLists.txt`, `Kconfig`, and the source files. Skips the `tests/integration/` folder and `zephyr/module.yml`, leaving you free to wire the directory into your app however you like (e.g. as part of a larger module rather than as a standalone Zephyr module).
+
 The scaffold has no opinion on where zephlets must live — the Copier template drops a complete module under the destination directory. Users wire it into their app by adding its path to `EXTRA_ZEPHYR_MODULES` and enabling `CONFIG_ZEPHLET_<NAME>=y`.
 
 ### 4. App wiring
@@ -100,7 +105,7 @@ endif()
 
 | Command | Purpose |
 |---|---|
-| `west zephlet new [-o <dir>] [-n -d -a]` | Copier scaffold. Destination = `$PWD` unless `-o`. |
+| `west zephlet new [-o <dir>] [-n -d -a] [--prefix STR] [--no-module]` | Copier scaffold. Destination = `$PWD` unless `-o`. `--prefix` overrides the default `zlet_` (`""` drops it); `--no-module` skips the tests folder and `zephyr/module.yml`. |
 | `west zephlet new-adapter` | Prints the v0.3 recipe. No codegen. |
 | `west zephlet gen <zephlet_dir>` | Regenerate `<prefix>_interface.{h,c}` from its proto. |
 

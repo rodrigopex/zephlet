@@ -5,14 +5,14 @@
  * {{ zephlet_description }}
  */
 
-#include "zlet_{{ zephlet_name_lower }}.h"
+#include "{{ prefix }}{{ zephlet_name_lower }}.h"
 
 #include <errno.h>
 
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
-LOG_MODULE_DECLARE(zlet_{{ zephlet_name_lower }}, CONFIG_ZEPHLET_{{ zephlet_name_upper }}_LOG_LEVEL);
+LOG_MODULE_DECLARE({{ prefix }}{{ zephlet_name_lower }}, CONFIG_ZEPHLET_{{ zephlet_name_upper }}_LOG_LEVEL);
 
 /*
  * Default strong handlers

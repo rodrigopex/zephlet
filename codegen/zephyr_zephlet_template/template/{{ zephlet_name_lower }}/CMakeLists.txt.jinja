@@ -1,6 +1,6 @@
 if(CONFIG_ZEPHLET_{{ zephlet_name_upper }})
     zephyr_zephlet_generate(
         TYPE    {{ zephlet_name_lower }}
-        PREFIX  zlet_{{ zephlet_name_lower }}
-        SOURCES zlet_{{ zephlet_name_lower }}.c)
+        PREFIX  {{ prefix }}{{ zephlet_name_lower }}
+        SOURCES {{ prefix }}{{ zephlet_name_lower }}.c)
 endif()

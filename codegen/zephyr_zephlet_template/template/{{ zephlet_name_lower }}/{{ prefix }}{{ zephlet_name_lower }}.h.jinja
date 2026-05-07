@@ -3,19 +3,19 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef ZLET_{{ zephlet_name_upper }}_H_
-#define ZLET_{{ zephlet_name_upper }}_H_
+#ifndef {{ prefix | upper }}{{ zephlet_name_upper }}_H_
+#define {{ prefix | upper }}{{ zephlet_name_upper }}_H_
 
 #include <stdbool.h>
 
 #include <zephyr/kernel.h>
 
-#include "zlet_{{ zephlet_name_lower }}_interface.h"
+#include "{{ prefix }}{{ zephlet_name_lower }}_interface.h"
 
 /*
  * User-owned types for the `{{ zephlet_name_lower }}` zephlet.
  *
- * The interface header (`zlet_{{ zephlet_name_lower }}_interface.h`) is
+ * The interface header (`{{ prefix }}{{ zephlet_name_lower }}_interface.h`) is
  * codegen output; it only knows the command shape. Per-instance storage
  * (`struct {{ zephlet_name_lower }}_data`) and the init callback
  * (`{{ zephlet_name_lower }}_init_fn`) are user concerns and live here.
@@ -45,4 +45,4 @@ struct {{ zephlet_name_lower }}_data {
  */
 int {{ zephlet_name_lower }}_init_fn(const struct zephlet *z);
 
-#endif /* ZLET_{{ zephlet_name_upper }}_H_ */
+#endif /* {{ prefix | upper }}{{ zephlet_name_upper }}_H_ */
