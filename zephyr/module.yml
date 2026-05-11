@@ -1,5 +1,4 @@
 name: zephlet
-version: 0.3.1
 
 build:
   cmake: .
