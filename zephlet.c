@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <string.h>
 
+#include <zephyr/init.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/iterable_sections.h>
