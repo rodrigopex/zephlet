@@ -31,6 +31,11 @@ enum {{ type_snake }}_method_id {
 /** Method dispatch table exposed via ZEPHLET_NEW({{ type_snake }}, ...). */
 extern const struct zephlet_api {{ type_snake }}_api;
 
+/* Per-type frontend aggregator expanded by ZEPHLET_NEW_PRIO for every
+ * instance of `{{ type_snake }}`. Frontends override this macro to chain
+ * their own per-type hooks (event listeners, observer state, …). */
+#define _ZLET_FRONTEND_HOOKS_{{ type_snake }}(_name) /* empty */
+
 /* ----- Synchronous command wrappers ------------------------------------ */
 
 {% for cmd in commands %}

@@ -1,0 +1,7 @@
+tests:
+  zephlet.coap_functional.smoke:
+    tags: zephlet coap pytest
+    harness: pytest
+    platform_allow:
+      - qemu_x86
+    timeout: 60

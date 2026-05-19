@@ -206,6 +206,7 @@ const struct zephlet *zephlet_get_by_name(const char *name);
 		.data = (_data),                                                                   \
 		.init_fn = (_init),                                                                \
 		.init_priority = (_prio),                                                          \
-	}
+	};                                                                                         \
+	_ZLET_FRONTEND_HOOKS_##_type(_name)
 
 #endif /* MODULES_ZEPHLETS_SHARED_ZEPHLET_H */

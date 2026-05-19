@@ -13,6 +13,23 @@ config ZEPHLET_MAX_INSTANCES
       `STRUCT_SECTION_FOREACH(zephlet, ...)` at runtime. Used to size
       the SYS_INIT init-priority ordering buffer.
 
+config ZEPHLETS_COAP
+    bool "CoAP frontend for zephlets"
+    select NETWORKING
+    select NET_UDP
+    select NET_SOCKETS
+    select COAP
+    select COAP_SERVER
+    select COAP_URI_WILDCARD
+    help
+      Expose opted-in zephlets over CoAP (UDP).
+
+config ZEPHLETS_COAP_DTLS
+    bool "DTLS for the CoAP frontend"
+    depends on ZEPHLETS_COAP
+    help
+      Wrap the CoAP frontend in DTLS (PSK).
+
 module = ZEPHLET
 module-str = zephlet
 source "subsys/logging/Kconfig.template.log_config"

@@ -43,3 +43,5 @@ if(CONFIG_ZEPHLETS)
     # Expose build root for zephlet.pb.h (generated at root due to RELPATH)
     zephyr_include_directories("${CMAKE_BINARY_DIR}")
 endif()
+
+add_subdirectory_ifdef(CONFIG_ZEPHLETS_COAP "${SHARED_ZEPHLET_DIR}/frontends/coap")
