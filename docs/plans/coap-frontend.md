@@ -449,18 +449,18 @@ test credentials; `=n` section hash holds at final commit.
 - Block-wise transfer unless a measured payload requires it.
 - DTLS certificate-based auth (PSK only in v1 DTLS path).
 
-## Issue map (to be filled when issues are filed)
+## Issue map
 
 | Phase | Infra issue |
 |---|---|
-| Umbrella | `#TBD` |
-| 0 — skeleton + gate | `#TBD` |
-| 1 — codegen | `#TBD` |
-| 2 — translator | `#TBD` |
-| 3 — RPC dispatch | `#TBD` |
-| 4 — discovery | `#TBD` |
-| 5 — events bridge | `#TBD` |
-| 6 — hardening + DTLS | `#TBD` |
+| Umbrella | [#27](https://github.com/rodrigopex/zephlet/issues/27) |
+| 0 — skeleton + gate | [#28](https://github.com/rodrigopex/zephlet/issues/28) |
+| 1 — codegen | [#29](https://github.com/rodrigopex/zephlet/issues/29) |
+| 2 — translator | [#30](https://github.com/rodrigopex/zephlet/issues/30) |
+| 3 — RPC dispatch | [#31](https://github.com/rodrigopex/zephlet/issues/31) |
+| 4 — discovery | [#32](https://github.com/rodrigopex/zephlet/issues/32) |
+| 5 — events bridge | [#33](https://github.com/rodrigopex/zephlet/issues/33) |
+| 6 — hardening + DTLS | [#34](https://github.com/rodrigopex/zephlet/issues/34) |
 
 ## Adoption log
 
