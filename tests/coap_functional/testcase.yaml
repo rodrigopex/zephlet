@@ -3,5 +3,5 @@ tests:
     tags: zephlet coap pytest
     harness: pytest
     platform_allow:
-      - qemu_x86
+      - native_sim
     timeout: 60

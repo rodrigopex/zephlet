@@ -1,9 +1,9 @@
 """Pytest fixtures for the zephlet CoAP functional harness.
 
-Twister starts the Zephyr binary on `qemu_x86` with SLIRP user-mode
-networking; QEMU forwards host UDP/5683 to the guest's CoAP server. This
-fixture provides an `aiocoap` client that talks to `127.0.0.1:5683`,
-with a startup wait so the guest has time to DHCP and bind the port.
+Twister runs the Zephyr binary on `native_sim` with `eth_native_tap`;
+the host-side TAP endpoint reaches the guest at `192.0.2.1:5683`. This
+fixture provides an `aiocoap` client targeting that endpoint, with a
+startup wait so the guest has time to bind the port.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ import pytest_asyncio
 from aiocoap import GET, Context, Message
 from aiocoap.error import NetworkError
 
-COAP_HOST = os.environ.get("ZEPHLET_COAP_HOST", "127.0.0.1")
+COAP_HOST = os.environ.get("ZEPHLET_COAP_HOST", "192.0.2.1")
 COAP_PORT = int(os.environ.get("ZEPHLET_COAP_PORT", "5683"))
 READY_TIMEOUT_S = float(os.environ.get("ZEPHLET_COAP_READY_TIMEOUT_S", "20"))
 READY_POLL_INTERVAL_S = 0.5
