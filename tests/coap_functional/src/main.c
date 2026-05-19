@@ -22,13 +22,10 @@ LOG_MODULE_REGISTER(zlet_coap_functional, LOG_LEVEL_INF);
 
 static uint16_t coap_port = 5683;
 
-COAP_SERVICE_DEFINE(zlet_coap_test_service, "0.0.0.0", &coap_port,
-		    COAP_SERVICE_AUTOSTART);
+COAP_SERVICE_DEFINE(zlet_coap_test_service, "0.0.0.0", &coap_port, COAP_SERVICE_AUTOSTART);
 
-static int placeholder_get(struct coap_resource *resource,
-			   struct coap_packet *request,
-			   struct sockaddr *addr,
-			   socklen_t addr_len)
+static int placeholder_get(struct coap_resource *resource, struct coap_packet *request,
+			   struct sockaddr *addr, socklen_t addr_len)
 {
 	ARG_UNUSED(resource);
 	ARG_UNUSED(request);
@@ -37,12 +34,13 @@ static int placeholder_get(struct coap_resource *resource,
 	return -ENOENT;
 }
 
-static const char *const placeholder_path[] = { "phase0_placeholder", NULL };
+static const char *const placeholder_path[] = {"phase0_placeholder", NULL};
 
-COAP_RESOURCE_DEFINE(zlet_coap_placeholder, zlet_coap_test_service, {
-	.path = placeholder_path,
-	.get = placeholder_get,
-});
+COAP_RESOURCE_DEFINE(zlet_coap_placeholder, zlet_coap_test_service,
+		     {
+			     .path = placeholder_path,
+			     .get = placeholder_get,
+		     });
 
 int main(void)
 {
