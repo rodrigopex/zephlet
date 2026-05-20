@@ -40,7 +40,7 @@ These are settled. Do not relitigate during execution.
   `-EINVAL` → `4.00`, `-ENODEV` → `4.04`, `-EALREADY` → `4.09`,
   `-ENOSYS` → `4.05`, `-EBUSY`/`-EAGAIN` → `5.03`, `-ETIMEDOUT` → `5.04`,
   `-ENOMEM` → `5.00`. The **raw POSIX errno is always carried verbatim** in
-  a custom CoAP option (number `65003`, see Q3-resolved note below), so the
+  a custom CoAP option (number `65052`, see Q3-resolved note below), so the
   exact value survives the lossy class mapping.
 - **Events:** CoAP Observe (RFC 7641) on `GET /zlet/{type}/{instance}/events`.
   v1 emits **NON** notifications only — CON support (per-event or service-level
@@ -86,8 +86,17 @@ These are settled. Do not relitigate during execution.
   criterion, tested in CI as a standing gate.
 - **Codegen gate:** a zephlet is exposed over CoAP only when its proto opts
   in via `option (zephlet.coap) = true;` at service level. Default is
-  not-exposed. The opt-in is detected by a regex pre-scan in
-  `generate_zephlet.py`; `protoc` never sees the custom option.
+  not-exposed. The custom option is declared as a
+  `google.protobuf.ServiceOptions` extension in
+  `modules/lib/zephlet/zephlet_options.proto` (`bool coap = 50001;` in
+  `package zephlet;`); per-zephlet protos pick it up via
+  `import "zephlet_options.proto";`. Protoc accepts the option as a
+  well-formed extension; `generate_zephlet.py` detects the opt-in by
+  walking the `proto_schema_parser` AST for an `Option` named
+  `(zephlet.coap)` with value `true` inside a `Service`. (Pre-Phase-1
+  drafts of this plan said "regex pre-scan; protoc never sees the
+  custom option" — that was wrong on both counts: protoc must accept
+  it, and AST walking is strictly safer than regex.)
 - **Discovery:** `/.well-known/core` (RFC 6690) advertises opted-in
   resources with `rt=` attributes:
   `rt="zlet.rpc"` for each RPC resource,
@@ -112,30 +121,37 @@ These are settled. Do not relitigate during execution.
      aware line in core infra; it never changes when frontends are added.
   2. Codegen's `<prefix>_interface.h` (always emitted, per-type) defines
      a frontend-aggregator macro listing every known frontend's per-type
-     hook, plus a default-empty for each:
+     hook. Frontend override headers are `#include`d BEFORE the
+     `#ifndef`-guarded default-empty, so a bare `#define` from an
+     override wins — no `#undef` round-trip required:
      ```c
      /* Aggregator: chains all known frontends' per-type hooks. */
      #define _ZLET_FRONTEND_HOOKS_tick(_name)  \
          _ZLET_COAP_HOOK_tick(_name)           \
          /* future frontends chain here */
 
-     /* Default: each frontend's hook is empty unless overridden. */
+     /* Override headers come first (opted-in types only). */
+     #include "zlet_tick_coap_interface.h"  /* if opted in */
+
+     /* Default: each frontend's hook is empty unless an override
+      * defined it above. */
      #ifndef _ZLET_COAP_HOOK_tick
      #define _ZLET_COAP_HOOK_tick(_name) /* nothing */
      #endif
      ```
   3. When the type has CoAP opt-in, codegen also emits
-     `<prefix>_coap_interface.h` (included by `<prefix>_interface.h`)
-     which overrides the default:
+     `<prefix>_coap_interface.h` (included by `<prefix>_interface.h`
+     before the default-empty) which defines the override:
      ```c
      #ifdef CONFIG_ZEPHLETS_COAP
-     #undef  _ZLET_COAP_HOOK_tick
      #define _ZLET_COAP_HOOK_tick(_name) \
          ZEPHLET_EVENTS_LISTENER(_name, tick, _tick_coap_event_cb)
      #endif
      ```
      Macro expansion is lazy, so the aggregator at the user's `ZEPHLET_NEW`
-     call site picks up the overridden definition.
+     call site picks up whichever `#define` is in force at that point —
+     the override under `=y`, or the default-empty under `=n` (and for
+     non-opted-in types).
   4. Per-opted-in-type codegen also emits `<prefix>_coap_interface.c`
      containing the type record
      (`STRUCT_SECTION_ITERABLE(zephlet_coap_type, ...)`) and the event
@@ -194,10 +210,16 @@ These are settled. Do not relitigate during execution.
   Incrementing only on successful send keeps the per-observer sequence
   monotonic and gap-free from the observer's perspective. *(Closed.)*
 - **Q3 — Content-Format / option numbers:** Content-Format **65001** for
-  nanopb-encoded zephlet payloads; custom CoAP option **65003** (Critical=0,
-  Unsafe=0, NoCacheKey=1, Repeatable=0; numeric, 4 bytes) carrying the raw
-  errno as a signed 32-bit value. Both pinned in `frontends/coap/include/
-  zephlet_coap_consts.h`. *(Closed.)*
+  nanopb-encoded zephlet payloads; custom CoAP option **65052**
+  (Elective, Safe-to-Forward, NoCacheKey, Repeatable=0; numeric, 4 bytes)
+  carrying the raw errno as a signed 32-bit value. Property bits are
+  encoded in the option number itself per RFC 7252 §5.4.6 — `65052 =
+  0xFE1C`, low 5 bits `11100`, gives Elective + Safe + NoCacheKey.
+  (An earlier draft proposed `65003`; that number actually encodes
+  Critical + Unsafe, which would force recipients to reject the whole
+  message on unknown-option — the opposite of best-effort debug carry.)
+  Both pinned in `frontends/coap/include/zephlet_coap_consts.h`.
+  *(Closed.)*
 
 ## Phases
 
@@ -246,10 +268,12 @@ the section-hash gate itself).
 - For opted-in types only, emit `<prefix>_coap_interface.{h,c}` into
   `${CMAKE_BINARY_DIR}/modules/<prefix>/`:
   - `<prefix>_coap_interface.h`: under `#ifdef CONFIG_ZEPHLETS_COAP`,
-    `#undef` + redefine `_ZLET_COAP_HOOK_<type>(_name)` to expand to
+    `#define _ZLET_COAP_HOOK_<type>(_name)` to expand to
     `ZEPHLET_EVENTS_LISTENER(_name, <type>, _<type>_coap_event_cb);`.
-    Declares `_<type>_coap_event_cb` and the type's CoAP method table
-    type.
+    The header is included by `<prefix>_interface.h` before that
+    file's `#ifndef`-guarded default-empty, so the bare `#define` wins
+    without an `#undef`. Declares `_<type>_coap_event_cb` and the
+    type's CoAP method table type.
   - `<prefix>_coap_interface.c`: defines the per-method descriptor table,
     the `STRUCT_SECTION_ITERABLE(zephlet_coap_type, <type>_coap_type)`
     record `{ type_name, &<type>_api, methods[], num_methods }`, and the

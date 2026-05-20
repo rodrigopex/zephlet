@@ -59,6 +59,30 @@ def camel_to_snake(name: str) -> str:
     return re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s).lower()
 
 
+def detect_coap_opt_in(tree) -> bool:
+    """
+    Return True iff a service in the parsed proto AST declares
+    `option (zephlet.coap) = true;`.
+
+    `tree` is a `proto_schema_parser.ast.File` (the result of
+    `Parser().parse(text)`). Walking the AST keeps the parser as the
+    single source of truth for proto structure — comments, string
+    literals, and option-shaped text outside a service body are
+    naturally ignored without a second tokenization pass. Multiple
+    services in one file are tolerated; any service-level opt-in
+    flips the whole zephlet on.
+    """
+    for elem in tree.file_elements:
+        if elem.__class__.__name__ != "Service":
+            continue
+        for inner in elem.elements:
+            if (inner.__class__.__name__ == "Option"
+                    and inner.name == "(zephlet.coap)"
+                    and inner.value is True):
+                return True
+    return False
+
+
 def strip_parent_qualifier(type_ref: str) -> str:
     """
     Turn 'Tick.Config' into 'Config'. Leaves bare names untouched.
@@ -103,6 +127,7 @@ def parse_proto(proto_path: str) -> dict:
     with open(proto_path, "r") as f:
         content = f.read()
     tree = Parser().parse(content)
+    coap_opt_in = detect_coap_opt_in(tree)
 
     # Locate the outer zephlet message (the one containing Config / Events).
     owning_msg = None
@@ -186,11 +211,22 @@ def parse_proto(proto_path: str) -> dict:
         "type_upper": camel_to_snake(owning_type).upper(),
         "commands": commands,
         "num_methods_including_reserved": commands[-1]["method_id"] + 1,
+        "coap_opt_in": coap_opt_in,
     }
 
 
 def render_templates(ctx: dict, prefix: str, template_dir: str,
-                     output_dir: str) -> tuple[str, str]:
+                     output_dir: str) -> tuple[str, str, str, str]:
+    """
+    Render the four per-zephlet artifacts:
+      <prefix>_interface.{h,c}      — always populated (core dispatch).
+      <prefix>_coap_interface.{h,c} — populated only when the proto opts in;
+                                      empty stubs otherwise. CMake compiles
+                                      the .c unconditionally under
+                                      `CONFIG_ZEPHLETS_COAP=y`, so the empty
+                                      stub is a 0-symbol TU for non-opted
+                                      types.
+    """
     env = Environment(
         loader=FileSystemLoader(template_dir),
         trim_blocks=True,
@@ -199,21 +235,31 @@ def render_templates(ctx: dict, prefix: str, template_dir: str,
     )
     header_tpl = env.get_template("zephlet_interface.h.jinja")
     source_tpl = env.get_template("zephlet_interface.c.jinja")
+    coap_header_tpl = env.get_template("zephlet_coap_interface.h.jinja")
+    coap_source_tpl = env.get_template("zephlet_coap_interface.c.jinja")
 
     ctx = {**ctx, "prefix": prefix}
     header = header_tpl.render(**ctx)
     source = source_tpl.render(**ctx)
+    coap_header = coap_header_tpl.render(**ctx)
+    coap_source = coap_source_tpl.render(**ctx)
 
     os.makedirs(output_dir, exist_ok=True)
     header_path = os.path.join(output_dir, f"{prefix}_interface.h")
     source_path = os.path.join(output_dir, f"{prefix}_interface.c")
+    coap_header_path = os.path.join(output_dir, f"{prefix}_coap_interface.h")
+    coap_source_path = os.path.join(output_dir, f"{prefix}_coap_interface.c")
 
     with open(header_path, "w") as f:
         f.write(header)
     with open(source_path, "w") as f:
         f.write(source)
+    with open(coap_header_path, "w") as f:
+        f.write(coap_header)
+    with open(coap_source_path, "w") as f:
+        f.write(coap_source)
 
-    return header_path, source_path
+    return header_path, source_path, coap_header_path, coap_source_path
 
 
 def main() -> int:
@@ -247,11 +293,13 @@ def main() -> int:
     script_dir = os.path.dirname(os.path.abspath(__file__))
     template_dir = os.path.join(script_dir, "templates")
 
-    header_path, source_path = render_templates(
-        ctx, args.prefix, template_dir, args.output_dir)
+    header_path, source_path, coap_header_path, coap_source_path = \
+        render_templates(ctx, args.prefix, template_dir, args.output_dir)
 
     print(f"generated: {header_path}")
     print(f"generated: {source_path}")
+    print(f"generated: {coap_header_path}")
+    print(f"generated: {coap_source_path}")
     return 0
 
 

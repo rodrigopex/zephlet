@@ -1,0 +1,53 @@
+/* GENERATED FILE — DO NOT EDIT. Source: {{ prefix }}.proto. */
+
+#ifndef GENERATED_{{ prefix|upper }}_COAP_INTERFACE_H_
+#define GENERATED_{{ prefix|upper }}_COAP_INTERFACE_H_
+
+{% if coap_opt_in %}
+#include <zephyr/kernel.h>
+
+#include "zephlet.h"
+#include "{{ type_snake }}/{{ prefix }}.pb.h"
+
+/**
+ * @file
+ * @brief CoAP frontend hook for the `{{ type_snake }}` zephlet type.
+ *
+ * Emitted because `{{ prefix }}.proto` declares
+ * `option (zephlet.coap) = true;` at service level. Under
+ * `CONFIG_ZEPHLETS_COAP`, this header redefines `_ZLET_COAP_HOOK_{{ type_snake }}`
+ * so the aggregator in `{{ prefix }}_interface.h` chains a per-instance
+ * `ZEPHLET_EVENTS_LISTENER` for every `ZEPHLET_NEW({{ type_snake }}, ...)` call
+ * site. With `CONFIG_ZEPHLETS_COAP=n`, the default empty hook stays in
+ * force and this header contributes nothing.
+ */
+
+#ifdef CONFIG_ZEPHLETS_COAP
+
+/**
+ * @brief Event-channel observer callback for `{{ type_snake }}` instances.
+ *
+ * Defined in `{{ prefix }}_coap_interface.c`. Phase 1 emits a stub body;
+ * Phase 5 fills in the per-observer CoAP Observe send logic.
+ */
+void _{{ type_snake }}_coap_event_cb(const struct zephlet *z,
+				     const struct {{ type_snake }}_events *ev);
+
+/* This header is included by `{{ prefix }}_interface.h` BEFORE the
+ * `#ifndef`-guarded default-empty hook, so a bare `#define` wins
+ * without an `#undef` round-trip. */
+#define _ZLET_COAP_HOOK_{{ type_snake }}(_name) \
+	ZEPHLET_EVENTS_LISTENER(_name, {{ type_snake }}, _{{ type_snake }}_coap_event_cb);
+
+#endif /* CONFIG_ZEPHLETS_COAP */
+{% else %}
+/*
+ * `{{ prefix }}.proto` does not opt in to the CoAP frontend
+ * (`option (zephlet.coap) = true;` is not present in the service block),
+ * so this header is intentionally empty. The aggregator in
+ * `{{ prefix }}_interface.h` keeps the default empty
+ * `_ZLET_COAP_HOOK_{{ type_snake }}` from the `#ifndef` guard.
+ */
+{% endif %}
+
+#endif /* GENERATED_{{ prefix|upper }}_COAP_INTERFACE_H_ */

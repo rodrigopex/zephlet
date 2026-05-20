@@ -15,8 +15,21 @@
 #define ZEPHLET_COAP_CT_NANOPB 65001
 
 /** Custom CoAP option number carrying the raw POSIX errno verbatim
- *  (signed 32-bit). Critical=0, Unsafe=0, NoCacheKey=1, Repeatable=0. */
-#define ZEPHLET_COAP_OPT_ERRNO 65003
+ *  (signed 32-bit).
+ *
+ *  Properties (per RFC 7252 §5.4.6 — encoded in the option number's
+ *  low bits, NOT free parameters):
+ *    - bit 0 = 0 → Elective (recipients that don't recognize it MUST
+ *      silently ignore the option, not reject the message).
+ *    - bit 1 = 0 → Safe-to-Forward (proxies may forward).
+ *    - bits 2-4 = `111` → NoCacheKey (option excluded from the
+ *      proxy cache key).
+ *
+ *  `65052 = 0xFE1C`, low 5 bits = `11100`, matches the spec above.
+ *  Errno carry is best-effort debug info; Critical/Unsafe would force
+ *  the recipient to reject the whole response on unknown-option, which
+ *  defeats the purpose. */
+#define ZEPHLET_COAP_OPT_ERRNO 65052
 
 /** Base URI segment for all zephlet resources: `/zlet/...`. */
 #define ZEPHLET_COAP_BASE_PATH "zlet"

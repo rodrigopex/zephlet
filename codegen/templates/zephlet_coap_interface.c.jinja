@@ -1,0 +1,58 @@
+/* GENERATED FILE — DO NOT EDIT. Source: {{ prefix }}.proto. */
+
+{% if coap_opt_in %}
+#include <stddef.h>
+
+#include <zephyr/kernel.h>
+#include <zephyr/sys/iterable_sections.h>
+
+#include "zephlet.h"
+#include "zephlet_coap_types.h"
+#include "{{ prefix }}_interface.h"
+#include "{{ type_snake }}/{{ prefix }}.pb.h"
+
+/**
+ * @file
+ * @brief CoAP frontend descriptor for the `{{ type_snake }}` zephlet type.
+ *
+ * Compiled only when `CONFIG_ZEPHLETS_COAP=y` (CMake gate). Emits one
+ * per-method descriptor table and a single section-iterable
+ * `zephlet_coap_type` record that the Phase 3 catch-all dispatcher
+ * walks. The `_{{ type_snake }}_coap_event_cb` body is a stub here;
+ * Phase 5 fills in the per-observer CoAP Observe send loop.
+ */
+
+static const struct zephlet_coap_method {{ type_snake }}_coap_methods[] = {
+	{% for cmd in commands %}
+	{
+		.path_segment = "{{ cmd.name }}",
+		.method_id = {{ cmd.method_id }},
+		.req_desc = {% if cmd.req_desc %}&{{ cmd.req_desc }}{% else %}NULL{% endif %},
+		.resp_desc = {% if cmd.resp_desc %}&{{ cmd.resp_desc }}{% else %}NULL{% endif %},
+	},
+	{% endfor %}
+};
+
+const STRUCT_SECTION_ITERABLE(zephlet_coap_type, {{ type_snake }}_coap_type) = {
+	.type_name = "{{ type_snake }}",
+	.api = &{{ type_snake }}_api,
+	.methods = {{ type_snake }}_coap_methods,
+	.num_methods = ARRAY_SIZE({{ type_snake }}_coap_methods),
+};
+
+void _{{ type_snake }}_coap_event_cb(const struct zephlet *z,
+				     const struct {{ type_snake }}_events *ev)
+{
+	ARG_UNUSED(z);
+	ARG_UNUSED(ev);
+	/* Phase 5: walk Zephyr's global observer list filtered by
+	 * `observer->user_data == z` and send one NON per match. */
+}
+{% else %}
+/*
+ * `{{ prefix }}.proto` does not opt in to the CoAP frontend, so this
+ * translation unit emits no symbols. The CMake gate compiles this file
+ * unconditionally under `CONFIG_ZEPHLETS_COAP=y`; an empty TU contributes
+ * zero to the section-hash gate.
+ */
+{% endif %}
