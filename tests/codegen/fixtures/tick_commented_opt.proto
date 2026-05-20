@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+import "nanopb.proto";
+import "zephlet.proto";
+
+option (nanopb_fileopt).long_names = false;
+
+message Tick {
+  message Config {
+    uint32 duration_ms = 1;
+  }
+
+  message Events {
+    int32 timestamp = 1;
+  }
+}
+
+service TickApi {
+  // option (zephlet.coap) = true;   ← line comment, must NOT count.
+  /* option (zephlet.coap) = true; */ /* block comment, must NOT count. */
+
+  rpc start(Empty) returns (Lifecycle.Status);
+}

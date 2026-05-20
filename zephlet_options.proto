@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package zephlet;
+
+import "google/protobuf/descriptor.proto";
+
+/*
+ * Custom proto options consumed by the zephlet codegen.
+ *
+ * Field numbers are in the user-options range (>= 50000). The codegen
+ * detects `option (zephlet.coap) = true;` via a regex pre-scan on the
+ * raw proto text; `protoc` itself only needs to accept the option as
+ * well-formed when it parses the .proto.
+ */
+
+extend google.protobuf.ServiceOptions {
+  /*
+   * Expose this service's zephlet over the CoAP frontend.
+   * See modules/lib/zephlet/docs/plans/coap-frontend.md.
+   */
+  bool coap = 50001;
+}

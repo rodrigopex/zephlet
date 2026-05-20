@@ -43,13 +43,15 @@ function(zephyr_zephlet_generate)
   set(_zg_GEN_DIR "${CMAKE_BINARY_DIR}/modules/${_zg_PREFIX}")
   set(_zg_GEN_H "${_zg_GEN_DIR}/${_zg_PREFIX}_interface.h")
   set(_zg_GEN_C "${_zg_GEN_DIR}/${_zg_PREFIX}_interface.c")
+  set(_zg_GEN_COAP_H "${_zg_GEN_DIR}/${_zg_PREFIX}_coap_interface.h")
+  set(_zg_GEN_COAP_C "${_zg_GEN_DIR}/${_zg_PREFIX}_coap_interface.c")
 
   # Register proto for nanopb (top-level CMakeLists consumes the list).
   set_property(GLOBAL APPEND PROPERTY PROTO_FILES_LIST "${_zg_PROTO}")
 
   file(MAKE_DIRECTORY "${_zg_GEN_DIR}")
   add_custom_command(
-    OUTPUT ${_zg_GEN_H} ${_zg_GEN_C}
+    OUTPUT ${_zg_GEN_H} ${_zg_GEN_C} ${_zg_GEN_COAP_H} ${_zg_GEN_COAP_C}
     COMMAND ${PYTHON_EXECUTABLE} ${CODEGEN_SCRIPT}
         --proto ${_zg_PROTO}
         --output-dir ${_zg_GEN_DIR}
@@ -59,7 +61,8 @@ function(zephyr_zephlet_generate)
     COMMENT "zephlet v0.3: generating ${_zg_PREFIX}_interface"
     VERBATIM)
 
-  add_custom_target(${_zg_PREFIX}_codegen DEPENDS ${_zg_GEN_H} ${_zg_GEN_C})
+  add_custom_target(${_zg_PREFIX}_codegen
+    DEPENDS ${_zg_GEN_H} ${_zg_GEN_C} ${_zg_GEN_COAP_H} ${_zg_GEN_COAP_C})
 
   zephyr_include_directories(
       ${CMAKE_CURRENT_SOURCE_DIR}
@@ -69,6 +72,12 @@ function(zephyr_zephlet_generate)
 
   zephyr_library()
   zephyr_library_sources(${_zg_GEN_C})
+  # The CoAP interface TU is compiled only when the CoAP frontend is on.
+  # When opt-in is absent from the .proto, the generated file is an
+  # empty stub (zero symbols) — see codegen/generate_zephlet.py. The
+  # opt-in decision lives entirely in Python; CMake just gates on
+  # Kconfig.
+  zephyr_library_sources_ifdef(CONFIG_ZEPHLETS_COAP ${_zg_GEN_COAP_C})
   foreach(_src IN LISTS _zg_SOURCES)
     zephyr_library_sources("${CMAKE_CURRENT_SOURCE_DIR}/${_src}")
   endforeach()

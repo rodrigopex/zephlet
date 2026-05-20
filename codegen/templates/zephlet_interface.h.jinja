@@ -32,9 +32,26 @@ enum {{ type_snake }}_method_id {
 extern const struct zephlet_api {{ type_snake }}_api;
 
 /* Per-type frontend aggregator expanded by ZEPHLET_NEW_PRIO for every
- * instance of `{{ type_snake }}`. Frontends override this macro to chain
- * their own per-type hooks (event listeners, observer state, …). */
-#define _ZLET_FRONTEND_HOOKS_{{ type_snake }}(_name) /* empty */
+ * instance of `{{ type_snake }}`. Chains every known frontend's per-type
+ * hook macro. Macro expansion is lazy, so a frontend override (defined
+ * below by `<prefix>_<frontend>_interface.h`) wins at the `ZEPHLET_NEW`
+ * call site. */
+#define _ZLET_FRONTEND_HOOKS_{{ type_snake }}(_name) \
+	_ZLET_COAP_HOOK_{{ type_snake }}(_name)
+
+{% if coap_opt_in %}
+/* Frontend overrides are included first so their `#define` of the
+ * per-type hook (under the matching Kconfig) preempts the
+ * `#ifndef`-guarded default-empty fallback below. No `#undef` needed. */
+#include "{{ prefix }}_coap_interface.h"
+
+{% endif %}
+/* Default-empty per-frontend hooks. The `#ifndef` guard means any
+ * earlier `#define` from a frontend override wins; otherwise the
+ * aggregator expands to nothing. */
+#ifndef _ZLET_COAP_HOOK_{{ type_snake }}
+#define _ZLET_COAP_HOOK_{{ type_snake }}(_name) /* empty */
+#endif
 
 /* ----- Synchronous command wrappers ------------------------------------ */
 
