@@ -39,6 +39,8 @@ set_property(
 if(CONFIG_ZEPHLETS)
     zephyr_library()
     zephyr_library_sources("${SHARED_ZEPHLET_DIR}/zephlet.c")
+    zephyr_library_sources_ifdef(CONFIG_ZEPHLETS_COORD
+        "${SHARED_ZEPHLET_DIR}/zephlet_coord.c")
     zephyr_include_directories(.)
     zephyr_linker_sources(DATA_SECTIONS zephlet_iterables.ld)
 

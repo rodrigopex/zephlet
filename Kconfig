@@ -14,6 +14,42 @@ config ZEPHLET_MAX_INSTANCES
       `STRUCT_SECTION_FOREACH(zephlet, ...)` at runtime. Used to size
       the SYS_INIT init-priority ordering buffer.
 
+config ZEPHLETS_COORD
+    bool "Coordinator framework"
+    help
+      Step-based workflow primitive for orchestrating multi-zephlet
+      flows on a dedicated workqueue, with optional zbus-event await
+      and bounded timeout. See zephlet_coord.h for the public surface.
+
+if ZEPHLETS_COORD
+
+config ZEPHLETS_COORD_STACK_SIZE
+    int "Stack size for the shared coordinator workqueue"
+    default 2048
+    help
+      Stack size in bytes for the zephlet_coord_workq thread shared by
+      all coordinators in the application.
+
+config ZEPHLETS_COORD_PRIORITY
+    int "Priority for the shared coordinator workqueue"
+    default 10
+    help
+      Thread priority for the zephlet_coord_workq thread. Coordinator
+      steps tend to be longer-running than typical k_work, so they get
+      their own thread rather than the system workqueue.
+
+config ZEPHLETS_COORD_ASYNC_ZBUS_TIMEOUT
+    int "Timeout for the async API of zephlet_coord when claiming channels"
+    default 25
+    help
+      Timeout in milliseconds for the async API of zephlet_coord when
+      claiming channels. This is the timeout for the underlying
+      zbus_chan_add_obs and zbus_chan_rm_obs calls to complete, 
+      both of which can fail if the channel is already claimed by a 
+      third party.
+
+endif # ZEPHLETS_COORD
+
 config ZEPHLETS_COAP
     bool "CoAP frontend for zephlets"
     select NETWORKING
