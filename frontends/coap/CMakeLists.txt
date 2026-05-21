@@ -1,5 +1,8 @@
 if(CONFIG_ZEPHLETS_COAP)
     zephyr_library_named(zephlet_coap_frontend)
-    zephyr_library_sources(zephlet_coap_frontend.c)
+    zephyr_library_sources(
+        zephlet_coap_frontend.c
+        zephlet_coap_translate.c
+    )
     zephyr_include_directories(include)
 endif()

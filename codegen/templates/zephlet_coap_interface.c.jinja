@@ -29,6 +29,8 @@ static const struct zephlet_coap_method {{ type_snake }}_coap_methods[] = {
 		.method_id = {{ cmd.method_id }},
 		.req_desc = {% if cmd.req_desc %}&{{ cmd.req_desc }}{% else %}NULL{% endif %},
 		.resp_desc = {% if cmd.resp_desc %}&{{ cmd.resp_desc }}{% else %}NULL{% endif %},
+		.req_max_size = {% if cmd.req_is_empty %}0{% else %}{{ cmd.req_c_name|upper }}_SIZE{% endif %},
+		.resp_max_size = {% if cmd.resp_is_empty %}0{% else %}{{ cmd.resp_c_name|upper }}_SIZE{% endif %},
 	},
 	{% endfor %}
 };
