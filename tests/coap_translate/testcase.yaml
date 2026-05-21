@@ -1,0 +1,8 @@
+tests:
+  zephlet.coap.translate:
+    tags: zephlet coap translate
+    harness: ztest
+    platform_allow:
+      - native_sim
+      - mps2/an385
+    timeout: 30

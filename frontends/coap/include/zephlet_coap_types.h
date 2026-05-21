@@ -28,13 +28,19 @@
  * in the .proto service block). `method_id` indexes into
  * `zephlet_api.methods` for the dispatch trampoline. `req_desc` /
  * `resp_desc` are the nanopb descriptors used by the Phase 2 envelope
- * decode/encode.
+ * decode/encode. `req_max_size` / `resp_max_size` are the nanopb-
+ * computed maximum encoded sizes (from `<MSG>_SIZE` in `<prefix>.pb.h`)
+ * — zero for `Empty` messages. Phase 2 decoder rejects request bodies
+ * larger than `req_max_size` with `-EMSGSIZE`; Phase 3 dispatcher uses
+ * `resp_max_size` to size per-type response scratch.
  */
 struct zephlet_coap_method {
 	const char *path_segment;
 	uint16_t method_id;
 	const pb_msgdesc_t *req_desc;
 	const pb_msgdesc_t *resp_desc;
+	size_t req_max_size;
+	size_t resp_max_size;
 };
 
 /**

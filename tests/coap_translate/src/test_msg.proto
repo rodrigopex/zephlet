@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+import "nanopb.proto";
+
+option (nanopb_fileopt).long_names = false;
+
+/* Tiny fixed-size request/response pair used by the coap_translate unit
+ * tests. uint32 fields keep the encoded sizes statically known, so
+ * nanopb emits TEST_REQ_SIZE / TEST_RESP_SIZE macros that the translator
+ * uses to bound the decode wire length. */
+
+message TestReq {
+  uint32 v = 1;
+}
+
+message TestResp {
+  uint32 v = 1;
+}
