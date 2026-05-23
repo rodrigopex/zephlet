@@ -1,0 +1,17 @@
+config ZEPHLET_TICK
+    bool "Tick zephlet (CoAP functional test fixture)"
+    select NANOPB
+    select ZBUS
+    select ZBUS_ASYNC_LISTENER
+    help
+      Enable the `tick` zephlet copy that the CoAP functional test
+      instantiates as `tick_fast`. Mirrors the app's `tick` semantics so
+      the dispatch tests exercise a realistic handler.
+
+if ZEPHLET_TICK
+
+module = ZEPHLET_TICK
+module-str = zlet_tick
+source "subsys/logging/Kconfig.template.log_config"
+
+endif

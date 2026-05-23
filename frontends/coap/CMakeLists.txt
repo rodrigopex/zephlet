@@ -3,6 +3,8 @@ if(CONFIG_ZEPHLETS_COAP)
     zephyr_library_sources(
         zephlet_coap_frontend.c
         zephlet_coap_translate.c
+        zephlet_coap_send.c
+        zephlet_coap_uri.c
     )
     zephyr_include_directories(include)
 endif()

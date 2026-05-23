@@ -1,29 +1,51 @@
 /* GENERATED FILE — DO NOT EDIT. Source: {{ prefix }}.proto. */
 
 {% if coap_opt_in %}
+#include <errno.h>
 #include <stddef.h>
+#include <stdint.h>
+#include <string.h>
 
 #include <zephyr/kernel.h>
+#include <zephyr/logging/log.h>
+#include <zephyr/net/coap.h>
+#include <zephyr/net/coap_service.h>
 #include <zephyr/sys/iterable_sections.h>
+#include <zephyr/zbus/zbus.h>
+
+#include <pb_decode.h>
+#include <pb_encode.h>
 
 #include "zephlet.h"
+#include "zephlet_coap_consts.h"
+#include "zephlet_coap_send.h"
 #include "zephlet_coap_types.h"
+#include "zephlet_coap_uri.h"
 #include "{{ prefix }}_interface.h"
 #include "{{ type_snake }}/{{ prefix }}.pb.h"
 
 /**
  * @file
- * @brief CoAP frontend descriptor for the `{{ type_snake }}` zephlet type.
+ * @brief CoAP frontend for the `{{ type_snake }}` zephlet type.
  *
- * Compiled only when `CONFIG_ZEPHLETS_COAP=y` (CMake gate). Emits one
- * per-method descriptor table and a single section-iterable
- * `zephlet_coap_type` record that the Phase 3 catch-all dispatcher
- * walks. The `_{{ type_snake }}_coap_event_cb` body is a stub here;
- * Phase 5 fills in the per-observer CoAP Observe send loop.
+ * Compiled only when `CONFIG_ZEPHLETS_COAP=y`. Owns:
+ *   - the per-method descriptor table walked by discovery code,
+ *   - the `zephlet_coap_type` section-iterable record,
+ *   - the type's `COAP_RESOURCE_DEFINE` registered against
+ *     `zlet_coap_service` at path `/zlet/{{ type_snake }}/#`,
+ *   - the POST handler that proto-decodes the request, runs the
+ *     `{{ type_snake }}` dispatch trampoline via zbus, and proto-encodes
+ *     the response.
+ *
+ * The handler's stack frame is sized by the compiler from the typed
+ * per-method locals in each `if (strcmp(...))` branch — there is no
+ * cross-method scratch and no opaque buffer.
  */
 
+LOG_MODULE_DECLARE(zlet_coap);
+
 static const struct zephlet_coap_method {{ type_snake }}_coap_methods[] = {
-	{% for cmd in commands %}
+{% for cmd in commands %}
 	{
 		.path_segment = "{{ cmd.name }}",
 		.method_id = {{ cmd.method_id }},
@@ -32,7 +54,7 @@ static const struct zephlet_coap_method {{ type_snake }}_coap_methods[] = {
 		.req_max_size = {% if cmd.req_is_empty %}0{% else %}{{ cmd.req_c_name|upper }}_SIZE{% endif %},
 		.resp_max_size = {% if cmd.resp_is_empty %}0{% else %}{{ cmd.resp_c_name|upper }}_SIZE{% endif %},
 	},
-	{% endfor %}
+{% endfor %}
 };
 
 const STRUCT_SECTION_ITERABLE(zephlet_coap_type, {{ type_snake }}_coap_type) = {
@@ -47,14 +69,117 @@ void _{{ type_snake }}_coap_event_cb(const struct zephlet *z,
 {
 	ARG_UNUSED(z);
 	ARG_UNUSED(ev);
-	/* Phase 5: walk Zephyr's global observer list filtered by
-	 * `observer->user_data == z` and send one NON per match. */
 }
+
+static int {{ type_snake }}_resolve(struct coap_packet *req, const struct zephlet **z_out,
+				    char *method_buf, size_t method_buf_size)
+{
+	struct coap_option opts[CONFIG_ZEPHLETS_COAP_MAX_URI_SEGMENTS];
+	size_t n;
+	int err = zephlet_coap_parse_uri_path(req, opts, ARRAY_SIZE(opts), &n);
+	if (err != 0 || n != 4) {
+		return -ENODEV;
+	}
+
+	/* opts[0] == "zlet" and opts[1] == "{{ type_snake }}" are guaranteed
+	 * by the resource path match. Instance and method are the variables. */
+	char instance[CONFIG_ZEPHLETS_COAP_MAX_SEGMENT_LEN + 1];
+	if (zephlet_coap_option_to_cstr(&opts[2], instance, sizeof(instance)) != 0) {
+		return -ENODEV;
+	}
+	if (zephlet_coap_option_to_cstr(&opts[3], method_buf, method_buf_size) != 0) {
+		return -ENODEV;
+	}
+
+	const struct zephlet *z = zephlet_get_by_name(instance);
+	if (z == NULL || z->api != &{{ type_snake }}_api) {
+		return -ENODEV;
+	}
+	*z_out = z;
+	return 0;
+}
+
+static int {{ type_snake }}_coap_rpc_post(struct coap_resource *res, struct coap_packet *req,
+					  struct sockaddr *addr, socklen_t addr_len)
+{
+	const struct zephlet *z;
+	char method[CONFIG_ZEPHLETS_COAP_MAX_SEGMENT_LEN + 1];
+
+	int err = {{ type_snake }}_resolve(req, &z, method, sizeof(method));
+	if (err != 0) {
+		return zephlet_coap_send_error(res, req, addr, addr_len, err);
+	}
+
+{% for cmd in commands %}
+	if (strcmp(method, "{{ cmd.name }}") == 0) {
+{% if not cmd.req_is_empty %}
+		uint16_t body_len;
+		const uint8_t *body = coap_packet_get_payload(req, &body_len);
+		struct {{ cmd.req_c_name }} req_struct;
+		pb_istream_t in = pb_istream_from_buffer(body, body_len);
+		if (!pb_decode(&in, &{{ cmd.req_desc }}, &req_struct)) {
+			return zephlet_coap_send_error(res, req, addr, addr_len, -EINVAL);
+		}
+{% endif %}
+{% if not cmd.resp_is_empty %}
+		struct {{ cmd.resp_c_name }} resp = {0};
+		uint8_t payload[{{ cmd.resp_c_name|upper }}_SIZE];
+{% endif %}
+		struct zephlet_call call = {
+			.method_id = {{ cmd.method_id }},
+{% if not cmd.req_is_empty %}
+			.req_desc = &{{ cmd.req_desc }},
+			.req = &req_struct,
+{% endif %}
+{% if not cmd.resp_is_empty %}
+			.resp_desc = &{{ cmd.resp_desc }},
+			.resp = &resp,
+{% endif %}
+		};
+		struct zephlet_call *cp = &call;
+		int pub = zbus_chan_pub(z->channel.command, &cp,
+					K_MSEC(CONFIG_ZEPHLETS_COAP_CMD_TIMEOUT_MS));
+		if (pub != 0) {
+			return zephlet_coap_send_error(res, req, addr, addr_len, -EBUSY);
+		}
+		if (call.return_code != 0) {
+			return zephlet_coap_send_error(res, req, addr, addr_len,
+						       call.return_code);
+		}
+{% if cmd.resp_is_empty %}
+		return zephlet_coap_send_response(res, req, addr, addr_len, 0, NULL, 0);
+{% else %}
+		pb_ostream_t out = pb_ostream_from_buffer(payload, sizeof(payload));
+		if (!pb_encode(&out, &{{ cmd.resp_desc }}, &resp)) {
+			return zephlet_coap_send_error(res, req, addr, addr_len, -ENOMEM);
+		}
+		return zephlet_coap_send_response(res, req, addr, addr_len, 0, payload,
+						  out.bytes_written);
+{% endif %}
+	}
+{% endfor %}
+
+	return zephlet_coap_send_error(res, req, addr, addr_len, -ENOSYS);
+}
+
+static int {{ type_snake }}_coap_get(struct coap_resource *res, struct coap_packet *req,
+				     struct sockaddr *addr, socklen_t addr_len)
+{
+	return zephlet_coap_send_error(res, req, addr, addr_len, -ENOSYS);
+}
+
+static const char *const {{ type_snake }}_coap_resource_path[] = {
+	"zlet", "{{ type_snake }}", "#", NULL,
+};
+
+COAP_RESOURCE_DEFINE({{ type_snake }}_coap_resource, zlet_coap_service, {
+	.path = {{ type_snake }}_coap_resource_path,
+	.post = {{ type_snake }}_coap_rpc_post,
+	.get = {{ type_snake }}_coap_get,
+});
 {% else %}
 /*
  * `{{ prefix }}.proto` does not opt in to the CoAP frontend, so this
- * translation unit emits no symbols. The CMake gate compiles this file
- * unconditionally under `CONFIG_ZEPHLETS_COAP=y`; an empty TU contributes
- * zero to the section-hash gate.
+ * translation unit emits no symbols.
  */
 {% endif %}

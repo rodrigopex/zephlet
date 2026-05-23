@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+import "nanopb.proto";
+import "zephlet.proto";
+import "zephlet_options.proto";
+
+option (nanopb_fileopt).long_names = false;
+
+message Ui {
+  message Config {
+    uint32 blink_period_ms = 1;
+  }
+
+  message Events {
+    int32 timestamp = 1;
+  }
+}
+
+service UiApi {
+  option (zephlet.coap) = true;
+
+  rpc start(Empty) returns (Lifecycle.Status);
+  rpc get_status(Empty) returns (Lifecycle.Status);
+}
