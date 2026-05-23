@@ -4,6 +4,7 @@ common:
   timeout: 60
   platform_allow:
     - native_sim
+    - native_sim/native/64
 tests:
   zephlet.coap_functional.smoke:
     harness_config:

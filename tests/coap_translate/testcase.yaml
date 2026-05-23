@@ -4,5 +4,6 @@ tests:
     harness: ztest
     platform_allow:
       - native_sim
+      - native_sim/native/64
       - mps2/an385
     timeout: 30
