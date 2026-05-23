@@ -1,7 +1,15 @@
+common:
+  tags: zephlet coap pytest
+  harness: pytest
+  timeout: 60
+  platform_allow:
+    - native_sim
 tests:
   zephlet.coap_functional.smoke:
-    tags: zephlet coap pytest
-    harness: pytest
-    platform_allow:
-      - native_sim
-    timeout: 60
+    harness_config:
+      pytest_root:
+        - "pytest/test_smoke.py"
+  zephlet.coap_functional.rpc:
+    harness_config:
+      pytest_root:
+        - "pytest/test_rpc.py"

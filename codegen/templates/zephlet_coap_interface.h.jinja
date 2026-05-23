@@ -27,8 +27,9 @@
 /**
  * @brief Event-channel observer callback for `{{ type_snake }}` instances.
  *
- * Defined in `{{ prefix }}_coap_interface.c`. Phase 1 emits a stub body;
- * Phase 5 fills in the per-observer CoAP Observe send logic.
+ * Defined in `{{ prefix }}_coap_interface.c`. The body is a stub today;
+ * the events-bridge implementation will fill in the per-observer CoAP
+ * Observe send logic.
  */
 void _{{ type_snake }}_coap_event_cb(const struct zephlet *z,
 				     const struct {{ type_snake }}_events *ev);

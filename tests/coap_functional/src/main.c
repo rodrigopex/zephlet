@@ -2,48 +2,38 @@
 
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
-#include <zephyr/net/coap.h>
-#include <zephyr/net/coap_service.h>
+
+#include "zlet_tick.h"
+#include "zlet_ui.h"
 
 LOG_MODULE_REGISTER(zlet_coap_functional, LOG_LEVEL_INF);
 
 /**
  * @file
- * @brief Minimal CoAP server host for the pytest functional harness.
+ * @brief Host app for the CoAP functional twister target.
  *
- * Registers a `COAP_SERVICE_DEFINE` on UDP/5683 with a single placeholder
- * resource so Zephyr's per-service iterable section is non-empty (without
- * at least one resource the linker does not emit
- * `_coap_resource_<svc>_list_{start,end}` and the service descriptor fails
- * to link). The pytest smoke test queries an unrelated path and asserts
- * `4.04 Not Found`, proving the aiocoap fixture reaches the Zephyr CoAP
- * stack end-to-end.
+ * Instantiates one `tick` and one `ui` zephlet so the codegen-emitted
+ * per-type CoAP resources have live targets. The CoAP service +
+ * resources are registered automatically via the frontend's
+ * `COAP_SERVICE_DEFINE` and each opted-in zephlet's
+ * `COAP_RESOURCE_DEFINE` — there is no inline CoAP setup here.
  */
 
-static uint16_t coap_port = 5683;
+static struct tick_config tick_fast_cfg = {
+	.duration_ms = 100,
+	.period_ms = 100,
+};
+static struct tick_data tick_fast_data;
+ZEPHLET_NEW(tick, tick_fast, &tick_fast_cfg, &tick_fast_data, tick_init_fn);
 
-COAP_SERVICE_DEFINE(zlet_coap_test_service, "0.0.0.0", &coap_port, COAP_SERVICE_AUTOSTART);
-
-static int placeholder_get(struct coap_resource *resource, struct coap_packet *request,
-			   struct sockaddr *addr, socklen_t addr_len)
-{
-	ARG_UNUSED(resource);
-	ARG_UNUSED(request);
-	ARG_UNUSED(addr);
-	ARG_UNUSED(addr_len);
-	return -ENOENT;
-}
-
-static const char *const placeholder_path[] = {"phase0_placeholder", NULL};
-
-COAP_RESOURCE_DEFINE(zlet_coap_placeholder, zlet_coap_test_service,
-		     {
-			     .path = placeholder_path,
-			     .get = placeholder_get,
-		     });
+static struct ui_config ui_main_cfg = {
+	.blink_period_ms = 250,
+};
+static struct ui_data ui_main_data;
+ZEPHLET_NEW(ui, ui_main, &ui_main_cfg, &ui_main_data, ui_init_fn);
 
 int main(void)
 {
-	LOG_INF("zephlet coap functional smoke harness up on UDP/%u", coap_port);
+	LOG_INF("zephlet coap functional host up on UDP/5683");
 	return 0;
 }

@@ -1,0 +1,18 @@
+config ZEPHLET_UI
+    bool "UI zephlet (CoAP functional test fixture)"
+    select NANOPB
+    select ZBUS
+    select ZBUS_ASYNC_LISTENER
+    help
+      Enable the `ui` zephlet copy used by the CoAP functional test to
+      register a second opted-in type at `/zlet/ui/#`. Lets the test
+      exercise the api-mismatch defensive check (`/zlet/ui/tick_fast/...`
+      → 4.04).
+
+if ZEPHLET_UI
+
+module = ZEPHLET_UI
+module-str = zlet_ui
+source "subsys/logging/Kconfig.template.log_config"
+
+endif

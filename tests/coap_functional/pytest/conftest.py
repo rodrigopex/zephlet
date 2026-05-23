@@ -1,9 +1,10 @@
 """Pytest fixtures for the zephlet CoAP functional harness.
 
-Twister runs the Zephyr binary on `native_sim` with `eth_native_tap`;
-the host-side TAP endpoint reaches the guest at `192.0.2.1:5683`. This
-fixture provides an `aiocoap` client targeting that endpoint, with a
-startup wait so the guest has time to bind the port.
+The Zephyr binary runs on `native_sim` (Linux only — twister's standard
+networking-capable host emulation target). `eth_native_tap` bridges to
+the host's TAP at `192.0.2.2`, so the pytest fixture reaches the guest
+at `192.0.2.1:5683`. Env-var escape hatches let an operator point the
+suite elsewhere without editing the fixture.
 """
 
 from __future__ import annotations

@@ -21,14 +21,57 @@ config ZEPHLETS_COAP
     select COAP
     select COAP_SERVER
     select COAP_URI_WILDCARD
+    select COAP_EXTENDED_OPTIONS_LEN
     help
-      Expose opted-in zephlets over CoAP (UDP).
+      Expose opted-in zephlets over CoAP (UDP). Extended option length
+      is required so URI-Path segments up to
+      `CONFIG_ZEPHLETS_COAP_MAX_SEGMENT_LEN` bytes survive
+      `coap_find_options` without truncation.
+
+config COAP_EXTENDED_OPTIONS_LEN_VALUE
+    default 32 if ZEPHLETS_COAP
 
 config ZEPHLETS_COAP_DTLS
     bool "DTLS for the CoAP frontend"
     depends on ZEPHLETS_COAP
     help
       Wrap the CoAP frontend in DTLS (PSK).
+
+config ZEPHLETS_COAP_MAX_SEGMENT_LEN
+    int "Maximum length of a CoAP URI segment under /zlet/"
+    depends on ZEPHLETS_COAP
+    default 32
+    help
+      Stack-buffer size (excluding the null terminator) for each URI
+      segment that a zephlet's CoAP handler copies out of the request's
+      `COAP_OPTION_URI_PATH` options. Inbound segments longer than this
+      are rejected with 4.04. The reasonable floor is the longest
+      `name` used in `ZEPHLET_NEW(...)`; the floor for method segments
+      is the longest rpc name declared in any opted-in `.proto`.
+
+config ZEPHLETS_COAP_MAX_URI_SEGMENTS
+    int "Maximum number of CoAP URI path segments per request"
+    depends on ZEPHLETS_COAP
+    default 8
+    help
+      Stack-array size handed to `coap_find_options` when a zephlet's
+      CoAP handler decodes a request's URI path. RPC dispatch needs
+      4 segments (`zlet/<type>/<instance>/<method>`); the
+      `events/stats` form needs 5. The default leaves headroom for
+      future path shapes; requests with more segments than this are
+      rejected with 4.04.
+
+config ZEPHLETS_COAP_CMD_TIMEOUT_MS
+    int "Timeout for publishing a CoAP-originated call onto the command channel (ms)"
+    depends on ZEPHLETS_COAP
+    default 100
+    help
+      Upper bound the CoAP handler is willing to wait for
+      `zbus_chan_pub()` on a zephlet's `command` channel before
+      surfacing 5.03 to the caller. Only the channel mutex
+      contention is relevant — the sync listener runs in the
+      publisher's own thread, so this never times out a handler
+      that is making forward progress.
 
 module = ZEPHLET
 module-str = zephlet
