@@ -95,10 +95,22 @@ jobs:
         working-directory: app
         run: west twister --testsuite-root src -p native_sim --inline-logs -O /tmp/twister-out
 
+      - name: Install infra-test Python deps
+        run: pip install aiocoap pytest-asyncio
+
+      - name: Run infra tests on native_sim
+        run: |
+          west twister \
+            --testsuite-root modules/lib/zephlet/tests \
+            -p native_sim --inline-logs \
+            -O /tmp/twister-out-infra
+
       - name: Upload twister artefacts on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: twister-out
-          path: /tmp/twister-out
+          path: |
+            /tmp/twister-out
+            /tmp/twister-out-infra
           if-no-files-found: ignore
