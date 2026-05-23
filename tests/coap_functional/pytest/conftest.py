@@ -1,10 +1,12 @@
 """Pytest fixtures for the zephlet CoAP functional harness.
 
-The Zephyr binary runs on `native_sim` (Linux only — twister's standard
-networking-capable host emulation target). `eth_native_tap` bridges to
-the host's TAP at `192.0.2.2`, so the pytest fixture reaches the guest
-at `192.0.2.1:5683`. Env-var escape hatches let an operator point the
-suite elsewhere without editing the fixture.
+The Zephyr binary runs on `native_sim` with the native-simulator
+offloaded sockets driver (`CONFIG_NET_NATIVE_OFFLOADED_SOCKETS=y`),
+so its `socket()`/`bind()` calls forward into the host BSD stack and
+the CoAP server listens on a real host socket. The pytest fixture
+reaches the guest at `127.0.0.1:5683` with no TAP setup, no root,
+and no host-side networking config — works identically on bare
+Linux, Docker, and Colima.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ import pytest_asyncio
 from aiocoap import GET, Context, Message
 from aiocoap.error import NetworkError
 
-COAP_HOST = os.environ.get("ZEPHLET_COAP_HOST", "192.0.2.1")
+COAP_HOST = os.environ.get("ZEPHLET_COAP_HOST", "127.0.0.1")
 COAP_PORT = int(os.environ.get("ZEPHLET_COAP_PORT", "5683"))
 READY_TIMEOUT_S = float(os.environ.get("ZEPHLET_COAP_READY_TIMEOUT_S", "20"))
 READY_POLL_INTERVAL_S = 0.5

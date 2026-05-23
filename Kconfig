@@ -29,7 +29,12 @@ config ZEPHLETS_COAP
       `coap_find_options` without truncation.
 
 config COAP_EXTENDED_OPTIONS_LEN_VALUE
-    default 32 if ZEPHLETS_COAP
+    # Leave headroom above CONFIG_ZEPHLETS_COAP_MAX_SEGMENT_LEN so the
+    # CoAP parser accepts segments slightly longer than what zephlet
+    # handlers will copy out; the handler then surfaces 4.04 for the
+    # overflow case. A flat 32 here would make the parser reject the
+    # frame before the handler ever runs.
+    default 64 if ZEPHLETS_COAP
 
 config ZEPHLETS_COAP_DTLS
     bool "DTLS for the CoAP frontend"
