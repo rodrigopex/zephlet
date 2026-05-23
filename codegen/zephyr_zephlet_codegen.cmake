@@ -82,4 +82,18 @@ function(zephyr_zephlet_generate)
     zephyr_library_sources("${CMAKE_CURRENT_SOURCE_DIR}/${_src}")
   endforeach()
   add_dependencies(${ZEPHYR_CURRENT_LIBRARY} ${_zg_PREFIX}_codegen)
+
+  # The user's `app` library also #includes the generated <prefix>_interface.h
+  # transitively (via the user's <prefix>.h). Without an explicit dependency,
+  # ninja may try to compile `main.c` before the codegen finishes, which
+  # surfaces on slower hosts as a missing-header build error. Defer the
+  # `add_dependencies` call so it runs after the user's CMakeLists has
+  # declared the `app` target.
+  #
+  # `DEFER CALL` evaluates variable references at the time the deferred call
+  # runs, when `_zg_PREFIX` is already out of scope. Use `EVAL CODE` to
+  # substitute the prefix into the deferred command at registration time.
+  cmake_language(EVAL CODE
+    "cmake_language(DEFER DIRECTORY \${CMAKE_SOURCE_DIR} \
+       CALL add_dependencies app ${_zg_PREFIX}_codegen)")
 endfunction()
