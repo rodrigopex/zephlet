@@ -78,6 +78,7 @@ my_zephlet_start(&my_instance, &st, K_MSEC(500));
 - **`events` channel** (value-typed): async fan-out. Publishers call `<type>_emit(z, &ev, timeout)`; consumers observe with `ZEPHLET_EVENTS_LISTENER(instance, type, callback)` (wraps `ZBUS_ASYNC_LISTENER_DEFINE`).
 - **Non-singleton**: multiple instances per type coexist; each has its own channel pair and data.
 - **Weak handler overrides**: generator emits `__weak int <type>_<cmd>_impl(...)` returning `-ENOSYS`; user provides strong overrides in `<prefix>.c`.
+- **Coordinators** (optional, `CONFIG_ZEPHLETS_COORD=y`): multi-step flows with workqueue dispatch + bounded zbus-event awaits. Sits above the per-zephlet command/events surface — see [Coordinators](#coordinators) below.
 
 ## Adapters
 
@@ -100,6 +101,43 @@ if(CONFIG_ZEPHLET_TICK AND CONFIG_ZEPHLET_UI)
     target_sources(app PRIVATE adapters.c)
 endif()
 ```
+
+## Coordinators
+
+Optional framework for multi-step flows that span several zephlets. A coordinator is a singleton state object whose flow is expressed as a chain of step callbacks dispatched on a shared workqueue (`zephlet_coord_workq`), with optional bounded zbus-event awaits. Enable with `CONFIG_ZEPHLETS_COORD=y`.
+
+Reach for it when an application flow needs state across multiple events (provisioning, OTA, multi-stage tamper response). Stateless event routing stays as plain `ZEPHLET_EVENTS_LISTENER` adapters.
+
+```c
+static struct provisioning_ctx ctx;
+ZEPHLET_COORD_ASYNC_DEFINE(provisioning, ctx, s_handshake);
+
+static void s_handshake(struct zephlet_coord *c)
+{
+    struct provisioning_ctx *st = c->ctx;
+    (void)zlet_radio_connect(&radio_instance, &st->cred, K_SECONDS(2));
+    zephlet_coord_await(c, &chan_zlet_radio_events,
+                        &st->reply, match_connected,
+                        s_complete, K_SECONDS(5));
+}
+
+/* trigger source — typically a zbus listener on a flow-local channel */
+if(!zephlet_coord_is_running(provisioning)) {
+    int err = zephlet_coord_kick(provisioning);
+    /* err == -EBUSY: author's policy (drop / queue / reject) */
+}
+```
+
+Public surface (see [`zephlet_coord.h`](zephlet_coord.h)):
+
+| Operation | Role |
+|---|---|
+| `ZEPHLET_COORD_DEFINE` / `_ASYNC_DEFINE` | Allocate a sync or async coordinator at file scope. |
+| `zephlet_coord_kick(c)` | Start the flow; returns `-EBUSY` if already running. |
+| `zephlet_coord_next(c, fn)` | Queue the next step within an in-flight flow. |
+| `zephlet_coord_await(c, chan, dst, match, next, timeout)` | Suspend until a matching publish arrives or the timeout fires. The framework-generated listener handles the memcpy. |
+| `zephlet_coord_resolve(c)` | Finalise an await; idempotent against the timeout path. |
+| `zephlet_coord_done(c)` | Mark the flow idle. |
 
 ## West commands
 
