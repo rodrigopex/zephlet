@@ -29,12 +29,3 @@ zephyr_nanopb_sources(app ${LOCAL_PROTO_FILES_LIST})
 set(CMAKE_CURRENT_SOURCE_DIR ${_saved_csd})
 
 target_sources(app PRIVATE src/main.c)
-
-# `COAP_SERVICE_DEFINE(zlet_coap_service, ...)` declares an iterable
-# section named `coap_resource_zlet_coap_service`. The test app owns
-# the linker-side registration: sections-ram.ld covers the pre-link
-# pass, zephyr_iterable_section covers the CMake linker generator path.
-zephyr_linker_sources(DATA_SECTIONS sections-ram.ld)
-zephyr_iterable_section(
-    NAME coap_resource_zlet_coap_service
-    GROUP DATA_REGION ${XIP_ALIGN_WITH_INPUT})
