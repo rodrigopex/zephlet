@@ -2,6 +2,7 @@ config ZEPHLETS
     bool "Isolated zephlet system"
     select ZBUS
     select ZBUS_ASYNC_LISTENER
+    select NANOPB
 
 if ZEPHLETS
 
