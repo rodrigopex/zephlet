@@ -59,6 +59,24 @@ def camel_to_snake(name: str) -> str:
     return re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s).lower()
 
 
+def _detect_service_bool_option(tree, option_name: str) -> bool:
+    """
+    Return True iff any service in @p tree declares
+    `option (<option_name>) = true;`. Shared backend for the two
+    service-level booleans the codegen consumes.
+    """
+    qualified = f"({option_name})"
+    for elem in tree.file_elements:
+        if elem.__class__.__name__ != "Service":
+            continue
+        for inner in elem.elements:
+            if (inner.__class__.__name__ == "Option"
+                    and inner.name == qualified
+                    and inner.value is True):
+                return True
+    return False
+
+
 def detect_coap_opt_in(tree) -> bool:
     """
     Return True iff a service in the parsed proto AST declares
@@ -72,15 +90,63 @@ def detect_coap_opt_in(tree) -> bool:
     services in one file are tolerated; any service-level opt-in
     flips the whole zephlet on.
     """
+    return _detect_service_bool_option(tree, "zephlet.coap")
+
+
+def detect_coap_discoverable_opt_in(tree) -> bool:
+    """
+    Return True iff a service in @p tree declares
+    `option (zephlet.coap_discoverable) = true;`. The codegen separately
+    asserts that a discoverable service also opts into CoAP and declares
+    every base lifecycle method.
+    """
+    return _detect_service_bool_option(tree, "zephlet.coap_discoverable")
+
+
+_BASE_METHODS_CACHE: list[str] | None = None
+
+
+def load_base_method_names() -> list[str]:
+    """
+    Parse the shared `zephlet.proto` once per invocation and return the
+    list of method names declared in its `LifecycleApi` service block.
+    The list is the single source of truth for which RPCs are "base"
+    (and therefore stripped from CoAP discovery link blocks).
+    """
+    global _BASE_METHODS_CACHE
+    if _BASE_METHODS_CACHE is not None:
+        return _BASE_METHODS_CACHE
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    zephlet_proto = os.path.join(script_dir, os.pardir, "zephlet.proto")
+    zephlet_proto = os.path.normpath(zephlet_proto)
+    if not os.path.exists(zephlet_proto):
+        print(f"codegen: cannot locate shared zephlet.proto at "
+              f"{zephlet_proto}", file=sys.stderr)
+        sys.exit(1)
+
+    with open(zephlet_proto, "r") as f:
+        tree = Parser().parse(f.read())
+
+    base = []
     for elem in tree.file_elements:
         if elem.__class__.__name__ != "Service":
             continue
-        for inner in elem.elements:
-            if (inner.__class__.__name__ == "Option"
-                    and inner.name == "(zephlet.coap)"
-                    and inner.value is True):
-                return True
-    return False
+        if elem.name != "LifecycleApi":
+            continue
+        for m in elem.elements:
+            if m.__class__.__name__ == "Method":
+                base.append(m.name)
+        break
+
+    if not base:
+        print(f"{zephlet_proto}: LifecycleApi service block is missing or "
+              "has no methods; codegen cannot derive the base method set.",
+              file=sys.stderr)
+        sys.exit(1)
+
+    _BASE_METHODS_CACHE = base
+    return base
 
 
 def strip_parent_qualifier(type_ref: str) -> str:
@@ -128,6 +194,13 @@ def parse_proto(proto_path: str) -> dict:
         content = f.read()
     tree = Parser().parse(content)
     coap_opt_in = detect_coap_opt_in(tree)
+    coap_discoverable = detect_coap_discoverable_opt_in(tree)
+
+    if coap_discoverable and not coap_opt_in:
+        print(f"{proto_path}: `option (zephlet.coap_discoverable) = true;` "
+              "requires `option (zephlet.coap) = true;` on the same service.",
+              file=sys.stderr)
+        sys.exit(1)
 
     # Locate the outer zephlet message (the one containing Config / Events).
     owning_msg = None
@@ -205,13 +278,33 @@ def parse_proto(proto_path: str) -> dict:
         print(f"{proto_path}: service block has no rpc methods", file=sys.stderr)
         sys.exit(1)
 
+    base_method_names = load_base_method_names()
+    declared = {c["name"] for c in commands}
+
+    if coap_discoverable:
+        missing = [n for n in base_method_names if n not in declared]
+        if missing:
+            print(
+                f"{proto_path}: `option (zephlet.coap_discoverable) = true;` "
+                f"requires the service to declare every base lifecycle "
+                f"method. Missing: {', '.join(missing)}.",
+                file=sys.stderr)
+            sys.exit(1)
+
+    base_set = set(base_method_names)
+    commands_base = [c for c in commands if c["name"] in base_set]
+    commands_custom = [c for c in commands if c["name"] not in base_set]
+
     return {
         "owning_type_camel": owning_type,
         "type_snake": camel_to_snake(owning_type),
         "type_upper": camel_to_snake(owning_type).upper(),
         "commands": commands,
+        "commands_base": commands_base,
+        "commands_custom": commands_custom,
         "num_methods_including_reserved": commands[-1]["method_id"] + 1,
         "coap_opt_in": coap_opt_in,
+        "coap_discoverable": coap_discoverable,
     }
 
 

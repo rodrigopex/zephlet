@@ -19,4 +19,13 @@ extend google.protobuf.ServiceOptions {
    * See modules/lib/zephlet/docs/plans/coap-frontend.md.
    */
   bool coap = 50001;
+
+  /*
+   * Additionally list this zephlet's instances in `/.well-known/core`.
+   * Default false; has no effect when `coap` is false. Codegen asserts
+   * that any service with this option declares every name in
+   * `LifecycleApi` (see zephlet.proto) so the anchor link can stand in
+   * for the standard lifecycle sub-paths.
+   */
+  bool coap_discoverable = 50002;
 }

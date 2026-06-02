@@ -6,10 +6,9 @@ import "zephlet_options.proto";
 
 option (nanopb_fileopt).long_names = false;
 
-message Tick {
+message Silent {
   message Config {
-    uint32 duration_ms = 1;
-    uint32 period_ms = 2;
+    uint32 nothing = 1;
   }
 
   message Events {
@@ -17,20 +16,19 @@ message Tick {
   }
 }
 
-service TickApi {
+service SilentApi {
+  /* Exposes RPCs over CoAP but is intentionally NOT discoverable:
+   * `option (zephlet.coap_discoverable)` is absent, so /.well-known/core
+   * never surfaces a `silent_inst` anchor. The functional test relies on
+   * this asymmetry to prove the discoverable opt-in actually gates
+   * emission. */
   option (zephlet.coap) = true;
-  option (zephlet.coap_discoverable) = true;
 
   rpc start(Empty) returns (Lifecycle.Status);
   rpc stop(Empty) returns (Lifecycle.Status);
   rpc get_status(Empty) returns (Lifecycle.Status);
   /* Names are normative (base lifecycle in zephlet.proto); types are
    * per-zephlet overrides. */
-  rpc config(Tick.Config) returns (Tick.Config);
-  rpc get_config(Empty) returns (Tick.Config);
-  /* Custom rpcs — exercise the multi-entry `/zlet/tick/apis` blob.
-   * Only customs surface there; base methods are served once by
-   * `/zlet/apis`. */
-  rpc dump_state(Empty) returns (Lifecycle.Status);
-  rpc kick(Empty) returns (Lifecycle.Status);
+  rpc config(Silent.Config) returns (Silent.Config);
+  rpc get_config(Empty) returns (Silent.Config);
 }

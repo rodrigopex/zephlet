@@ -14,3 +14,15 @@ tests:
     harness_config:
       pytest_root:
         - "pytest/test_rpc.py"
+  zephlet.coap_functional.discovery:
+    harness_config:
+      pytest_root:
+        - "pytest/test_discovery.py"
+  zephlet.coap_functional.discovery_truncate:
+    # Tiny discovery buffer forces the `/instances` handler over the
+    # limit so the truncation case asserts 4.13.
+    extra_configs:
+      - CONFIG_ZEPHLETS_COAP_DISCOVERY_BUF_SIZE=16
+    harness_config:
+      pytest_root:
+        - "pytest/test_discovery_truncate.py"

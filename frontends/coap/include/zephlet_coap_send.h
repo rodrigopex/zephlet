@@ -70,4 +70,25 @@ int zephlet_coap_send_response(struct coap_resource *res, struct coap_packet *re
 			       struct sockaddr *addr, socklen_t addr_len, int rc,
 			       const uint8_t *payload, size_t payload_len);
 
+/**
+ * @brief Build and send a CoAP response with a caller-supplied
+ *        Content-Format ID.
+ *
+ * Mirrors `zephlet_coap_send_response` but takes the Content-Format as a
+ * parameter instead of hardcoding `ZEPHLET_COAP_CT_NANOPB`. Intended for
+ * resources whose payload is not nanopb-encoded — currently the
+ * `/.well-known/core` discovery handler, which returns
+ * `application/link-format` (`ZEPHLET_COAP_CT_LINK_FORMAT`).
+ *
+ * @param ct_id  Content-Format ID written into the Content-Format option.
+ *               Only consulted when @p rc == 0 and @p payload_len > 0;
+ *               for non-success or empty replies, the call collapses to
+ *               `zephlet_coap_send_error`.
+ *
+ * Other parameters and the return contract match `zephlet_coap_send_response`.
+ */
+int zephlet_coap_send_payload_ct(struct coap_resource *res, struct coap_packet *req,
+				 struct sockaddr *addr, socklen_t addr_len, int rc,
+				 uint32_t ct_id, const uint8_t *payload, size_t payload_len);
+
 #endif /* ZEPHLET_FRONTENDS_COAP_SEND_H */

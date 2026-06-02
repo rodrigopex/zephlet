@@ -58,4 +58,18 @@ struct zephlet_coap_type {
 	size_t num_methods;
 };
 
+/**
+ * @brief Sentinel cookie used as `coap_resource.user_data` to mark a
+ *        resource as hidden from `/.well-known/core` enumeration.
+ *
+ * The custom discovery handler in `zephlet_coap_discovery.c` walks the
+ * registered resource section and skips any record whose `user_data`
+ * matches `ZEPHLET_COAP_HIDDEN`. The codegen tags the per-type RPC
+ * wildcard with this cookie when the service has not opted into CoAP
+ * discovery — the resource is still callable (RPC dispatch works) but
+ * stays out of the enumerated link list.
+ */
+extern const char zephlet_coap_hidden_marker;
+#define ZEPHLET_COAP_HIDDEN ((void *)&zephlet_coap_hidden_marker)
+
 #endif /* ZEPHLET_FRONTENDS_COAP_TYPES_H */

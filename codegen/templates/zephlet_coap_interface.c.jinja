@@ -2,8 +2,10 @@
 
 {% if coap_opt_in %}
 #include <errno.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #include <zephyr/kernel.h>
@@ -176,7 +178,100 @@ COAP_RESOURCE_DEFINE({{ type_snake }}_coap_resource, zlet_coap_service, {
 	.path = {{ type_snake }}_coap_resource_path,
 	.post = {{ type_snake }}_coap_rpc_post,
 	.get = {{ type_snake }}_coap_get,
+{% if not coap_discoverable %}
+	/* Service has `option (zephlet.coap)` but not
+	 * `option (zephlet.coap_discoverable)`, so the wildcard is hidden
+	 * from `/.well-known/core` enumeration. RPC dispatch still works:
+	 * clients that already know the URI keep calling it. */
+	.user_data = ZEPHLET_COAP_HIDDEN,
+{% endif %}
 });
+
+{% if coap_discoverable %}
+/* ----- Discovery: /zlet/{{ type_snake }}/{instances,apis} ----------------
+ *
+ * These exact-path resources sit next to the wildcard above. Because the
+ * iterable section sorts by symbol name (`SORT_BY_NAME`), naming them
+ * `{{ type_snake }}_coap_apis_resource` and
+ * `{{ type_snake }}_coap_instances_resource` places them BEFORE the
+ * `{{ type_snake }}_coap_resource` wildcard in the resource walk, so the
+ * exact match wins for `/zlet/{{ type_snake }}/{apis,instances}` GETs.
+ */
+
+{% if commands_custom %}
+/* /apis: codegen-baked link-format blob containing CUSTOM rpc methods
+ * only. Base lifecycle methods are served once by the shared
+ * `/zlet/apis` resource and are not repeated here. Resources are
+ * registered only when the type declares at least one custom rpc — a
+ * fully-base type stays absent from `/.well-known/core` under `/apis`. */
+static const char {{ type_snake }}_coap_apis_link_format[] =
+{% set ns = namespace(prefix="") %}
+{% for cmd in commands_custom %}
+	"{{ ns.prefix }}</zlet/{{ type_snake }}/{{ cmd.name }}>;rt=\"" ZEPHLET_COAP_RT_RPC "\";ct=65001"
+{% set ns.prefix = "," %}
+{% endfor %}
+	;
+
+static int {{ type_snake }}_coap_apis_get(struct coap_resource *res, struct coap_packet *req,
+					  struct sockaddr *addr, socklen_t addr_len)
+{
+	return zephlet_coap_send_payload_ct(
+		res, req, addr, addr_len, 0, ZEPHLET_COAP_CT_LINK_FORMAT,
+		(const uint8_t *){{ type_snake }}_coap_apis_link_format,
+		sizeof({{ type_snake }}_coap_apis_link_format) - 1);
+}
+
+static const char *const {{ type_snake }}_coap_apis_resource_path[] = {
+	"zlet", "{{ type_snake }}", "apis", NULL,
+};
+
+COAP_RESOURCE_DEFINE({{ type_snake }}_coap_apis_resource, zlet_coap_service, {
+	.path = {{ type_snake }}_coap_apis_resource_path,
+	.get = {{ type_snake }}_coap_apis_get,
+});
+{% endif %}
+
+/* /instances: runtime-built `text/plain` list — one instance name per
+ * line, no trailing newline. Filtered by `z->api == &{{ type_snake }}_api`.
+ * Symmetric with the shared `/zlet/apis` (also newline-separated names);
+ * roughly three times smaller on the wire than the equivalent
+ * link-format. Output overflowing
+ * `CONFIG_ZEPHLETS_COAP_DISCOVERY_BUF_SIZE` returns 4.13. */
+static int {{ type_snake }}_coap_instances_get(struct coap_resource *res, struct coap_packet *req,
+					       struct sockaddr *addr, socklen_t addr_len)
+{
+	char buf[CONFIG_ZEPHLETS_COAP_DISCOVERY_BUF_SIZE];
+	size_t off = 0;
+	bool first = true;
+
+	STRUCT_SECTION_FOREACH(zephlet, z) {
+		if (z->api != &{{ type_snake }}_api) {
+			continue;
+		}
+		int n = snprintf(buf + off, sizeof(buf) - off,
+				 "%s%s", first ? "" : "\n", z->name);
+		if (n < 0 || (size_t)n >= sizeof(buf) - off) {
+			LOG_WRN("/zlet/{{ type_snake }}/instances overflow: buf=%zu", sizeof(buf));
+			return zephlet_coap_send_error(res, req, addr, addr_len, -E2BIG);
+		}
+		off += (size_t)n;
+		first = false;
+	}
+
+	return zephlet_coap_send_payload_ct(res, req, addr, addr_len, 0,
+					    ZEPHLET_COAP_CT_TEXT_PLAIN,
+					    (const uint8_t *)buf, off);
+}
+
+static const char *const {{ type_snake }}_coap_instances_resource_path[] = {
+	"zlet", "{{ type_snake }}", "instances", NULL,
+};
+
+COAP_RESOURCE_DEFINE({{ type_snake }}_coap_instances_resource, zlet_coap_service, {
+	.path = {{ type_snake }}_coap_instances_resource_path,
+	.get = {{ type_snake }}_coap_instances_get,
+});
+{% endif %}
 {% else %}
 /*
  * `{{ prefix }}.proto` does not opt in to the CoAP frontend, so this

@@ -18,7 +18,13 @@ message Ui {
 
 service UiApi {
   option (zephlet.coap) = true;
+  option (zephlet.coap_discoverable) = true;
 
   rpc start(Empty) returns (Lifecycle.Status);
+  rpc stop(Empty) returns (Lifecycle.Status);
   rpc get_status(Empty) returns (Lifecycle.Status);
+  /* Names are normative (base lifecycle in zephlet.proto); types are
+   * per-zephlet overrides. */
+  rpc config(Ui.Config) returns (Ui.Config);
+  rpc get_config(Empty) returns (Ui.Config);
 }
