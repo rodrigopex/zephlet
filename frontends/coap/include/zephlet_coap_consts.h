@@ -14,6 +14,15 @@
  *  experimental range, 65000-65535). */
 #define ZEPHLET_COAP_CT_NANOPB 65001
 
+/** Content-Format ID for `application/link-format` (RFC 6690 §7.2).
+ *  Carried on responses from the `/.well-known/core` discovery resource. */
+#define ZEPHLET_COAP_CT_LINK_FORMAT 40
+
+/** Content-Format ID for `text/plain;charset=utf-8` (RFC 7252 §12.3).
+ *  Carried on the shared `/zlet/apis` resource whose body is a
+ *  newline-separated list of base lifecycle method names. */
+#define ZEPHLET_COAP_CT_TEXT_PLAIN 0
+
 /** Custom CoAP option number carrying the raw POSIX errno verbatim
  *  (signed 32-bit).
  *
@@ -42,7 +51,10 @@
  *  `/zlet/{type}/{instance}/events/stats`. */
 #define ZEPHLET_COAP_STATS_SUFFIX "events/stats"
 
-/** `rt=` link attribute for an RPC resource (per opted-in method). */
+/** `rt=` link attribute for an RPC resource exposed by a discoverable
+ *  type (per custom method, emitted by `/zlet/{type}/apis`). Base
+ *  lifecycle methods are advertised separately via the shared
+ *  `/zlet/apis` resource and do not appear in per-type `/apis`. */
 #define ZEPHLET_COAP_RT_RPC "zlet.rpc"
 
 /** `rt=` link attribute for an events resource (per instance). */

@@ -45,6 +45,7 @@ uint8_t zephlet_coap_map_return_code(int32_t rc, bool has_payload)
 	case -EALREADY:
 		return COAP_RESPONSE_CODE_CONFLICT;
 	case -EMSGSIZE:
+	case -E2BIG:
 		return COAP_RESPONSE_CODE_REQUEST_TOO_LARGE;
 	case -EBUSY:
 	case -EAGAIN:

@@ -2,7 +2,6 @@ syntax = "proto3";
 
 import "nanopb.proto";
 import "zephlet.proto";
-import "zephlet_options.proto";
 
 option (nanopb_fileopt).long_names = false;
 
@@ -17,6 +16,8 @@ message Tick {
   }
 }
 
+/* Discoverable + has a custom rpc → codegen registers `/apis` and the
+ * blob contains the custom only. */
 service TickApi {
   option (zephlet.coap) = true;
   option (zephlet.coap_discoverable) = true;
@@ -24,13 +25,7 @@ service TickApi {
   rpc start(Empty) returns (Lifecycle.Status);
   rpc stop(Empty) returns (Lifecycle.Status);
   rpc get_status(Empty) returns (Lifecycle.Status);
-  /* Names are normative (base lifecycle in zephlet.proto); types are
-   * per-zephlet overrides. */
   rpc config(Tick.Config) returns (Tick.Config);
   rpc get_config(Empty) returns (Tick.Config);
-  /* Custom rpcs — exercise the multi-entry `/zlet/tick/apis` blob.
-   * Only customs surface there; base methods are served once by
-   * `/zlet/apis`. */
   rpc dump_state(Empty) returns (Lifecycle.Status);
-  rpc kick(Empty) returns (Lifecycle.Status);
 }

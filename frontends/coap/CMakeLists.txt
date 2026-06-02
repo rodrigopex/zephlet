@@ -5,6 +5,7 @@ if(CONFIG_ZEPHLETS_COAP)
         zephlet_coap_translate.c
         zephlet_coap_send.c
         zephlet_coap_uri.c
+        zephlet_coap_discovery.c
     )
     zephyr_include_directories(include)
 

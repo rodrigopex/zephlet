@@ -138,6 +138,10 @@ def test_opt_in_emits_full_coap_interface(tmp_path):
 	assert ".req_desc = &tick_config_t_msg" in coap_c
 	assert "void _tick_coap_event_cb(" in coap_c
 
+	# Opted into CoAP but NOT discoverable → the wildcard resource is
+	# tagged `ZEPHLET_COAP_HIDDEN` so `/.well-known/core` skips it.
+	assert "ZEPHLET_COAP_HIDDEN" in coap_c
+
 
 def test_interface_c_invariant_across_opt_in(tmp_path):
 	"""The core `_interface.c` must be byte-identical with vs. without the
@@ -152,3 +156,73 @@ def test_interface_c_invariant_across_opt_in(tmp_path):
 
 	assert ((dir_no / "zlet_tick_interface.c").read_bytes()
 		== (dir_yes / "zlet_tick_interface.c").read_bytes())
+
+
+def test_detect_discoverable_positive(codegen_module):
+	assert codegen_module.detect_coap_discoverable_opt_in(
+		_tree(_FIXTURES / "tick_discoverable_full.proto")) is True
+
+
+def test_detect_discoverable_negative(codegen_module):
+	assert codegen_module.detect_coap_discoverable_opt_in(
+		_tree(_FIXTURES / "tick_opted.proto")) is False
+
+
+def test_load_base_method_names(codegen_module):
+	"""`zephlet.proto`'s LifecycleApi service is the single source of
+	truth for the base method set."""
+	base = codegen_module.load_base_method_names()
+	assert set(base) == {"start", "stop", "get_status", "config",
+			     "get_config"}
+
+
+def test_discoverable_with_custom_emits_apis_listing_customs_only(tmp_path):
+	"""A discoverable service with at least one custom rpc emits both
+	`/instances` and `/apis`. The apis blob contains only the custom —
+	base names are intentionally absent (the shared `/zlet/apis`
+	resource serves them once)."""
+	_run_codegen(_FIXTURES / "tick_discoverable_custom.proto", tmp_path)
+	coap_c = (tmp_path / "zlet_tick_coap_interface.c").read_text()
+	assert "tick_coap_instances_resource" in coap_c
+	assert "tick_coap_apis_resource" in coap_c
+	assert "dump_state" in coap_c
+	# The base names must not appear inside the per-type apis blob.
+	# (They will appear elsewhere in the file — the existing RPC
+	# dispatcher still handles every method — so scope the check to
+	# the blob literal only.)
+	blob_start = coap_c.index("tick_coap_apis_link_format[] =")
+	blob_end = coap_c.index("\n\t;", blob_start)
+	blob = coap_c[blob_start:blob_end]
+	for base in ("start", "stop", "get_status", "config", "get_config"):
+		assert f"/{base}>" not in blob, (
+			f"base method {base} leaked into apis blob: {blob}"
+		)
+
+
+def test_discoverable_base_only_emits_instances_no_apis(tmp_path):
+	"""A discoverable service declaring ONLY base methods generates the
+	`/instances` resource but NOT `/apis` — base names are served once
+	by the framework's shared `/zlet/apis`, so per-type `/apis` is only
+	emitted for types that have custom rpcs. The wildcard stays
+	discoverable (no HIDDEN tag)."""
+	_run_codegen(_FIXTURES / "tick_discoverable_full.proto", tmp_path)
+	coap_c = (tmp_path / "zlet_tick_coap_interface.c").read_text()
+	assert "COAP_RESOURCE_DEFINE(tick_coap_instances_resource" in coap_c
+	assert "COAP_RESOURCE_DEFINE(tick_coap_apis_resource" not in coap_c
+	assert "tick_coap_apis_link_format[]" not in coap_c
+	assert "ZEPHLET_COAP_HIDDEN" not in coap_c
+
+
+def test_discoverable_missing_method_is_rejected(tmp_path):
+	"""Codegen must surface a diagnostic naming the missing base methods
+	and exit non-zero rather than emit a half-broken interface."""
+	result = subprocess.run(
+		[sys.executable, str(_CODEGEN),
+		 "--proto", str(_FIXTURES / "tick_discoverable_missing.proto"),
+		 "--output-dir", str(tmp_path),
+		 "--type", "tick",
+		 "--prefix", "zlet_tick"],
+		check=False, capture_output=True, text=True)
+	assert result.returncode != 0, result.stdout
+	for missing in ("stop", "get_status", "config", "get_config"):
+		assert missing in result.stderr, result.stderr

@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+import "nanopb.proto";
+import "zephlet.proto";
+
+option (nanopb_fileopt).long_names = false;
+
+message Tick {
+  message Config {
+    uint32 duration_ms = 1;
+  }
+
+  message Events {
+    int32 timestamp = 1;
+  }
+}
+
+/* Opts into discovery but declares only `start` — the codegen must
+ * reject this with a diagnostic naming `stop`, `get_status`, `config`,
+ * `get_config`. */
+service TickApi {
+  option (zephlet.coap) = true;
+  option (zephlet.coap_discoverable) = true;
+
+  rpc start(Empty) returns (Lifecycle.Status);
+}

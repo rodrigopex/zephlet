@@ -14,3 +14,20 @@ message Lifecycle {
     bool is_ready = 2;
   }
 }
+
+/*
+ * LifecycleApi — the standard method contract every zephlet must
+ * implement. Codegen reads this service block to derive the base method
+ * set. A zephlet that opts into CoAP discovery
+ * (`option (zephlet.coap_discoverable) = true;`) must declare every name
+ * below or the build fails. Discovery emits one anchor link per
+ * discoverable instance plus one link per non-base RPC; base names are
+ * implicit and never appear in `/.well-known/core`.
+ */
+service LifecycleApi {
+  rpc start      (Empty) returns (Lifecycle.Status);
+  rpc stop       (Empty) returns (Lifecycle.Status);
+  rpc get_status (Empty) returns (Lifecycle.Status);
+  rpc config     (Empty) returns (Empty);
+  rpc get_config (Empty) returns (Empty);
+}

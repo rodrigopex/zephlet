@@ -70,9 +70,9 @@ int zephlet_coap_send_error(struct coap_resource *res, struct coap_packet *req,
 	return coap_resource_send(res, &response, addr, addr_len, NULL);
 }
 
-int zephlet_coap_send_response(struct coap_resource *res, struct coap_packet *req,
-			       struct sockaddr *addr, socklen_t addr_len, int rc,
-			       const uint8_t *payload, size_t payload_len)
+int zephlet_coap_send_payload_ct(struct coap_resource *res, struct coap_packet *req,
+				 struct sockaddr *addr, socklen_t addr_len, int rc,
+				 uint32_t ct_id, const uint8_t *payload, size_t payload_len)
 {
 	if (rc != 0 || payload_len == 0) {
 		return zephlet_coap_send_error(res, req, addr, addr_len, rc);
@@ -94,7 +94,7 @@ int zephlet_coap_send_response(struct coap_resource *res, struct coap_packet *re
 		return err;
 	}
 
-	err = coap_append_option_int(&response, COAP_OPTION_CONTENT_FORMAT, ZEPHLET_COAP_CT_NANOPB);
+	err = coap_append_option_int(&response, COAP_OPTION_CONTENT_FORMAT, ct_id);
 	if (err < 0) {
 		LOG_WRN("append content-format option failed: %d", err);
 		return err;
@@ -113,4 +113,12 @@ int zephlet_coap_send_response(struct coap_resource *res, struct coap_packet *re
 	}
 
 	return coap_resource_send(res, &response, addr, addr_len, NULL);
+}
+
+int zephlet_coap_send_response(struct coap_resource *res, struct coap_packet *req,
+			       struct sockaddr *addr, socklen_t addr_len, int rc,
+			       const uint8_t *payload, size_t payload_len)
+{
+	return zephlet_coap_send_payload_ct(res, req, addr, addr_len, rc,
+					    ZEPHLET_COAP_CT_NANOPB, payload, payload_len);
 }

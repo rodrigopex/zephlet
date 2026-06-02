@@ -37,6 +37,23 @@ config COAP_EXTENDED_OPTIONS_LEN_VALUE
     # frame before the handler ever runs.
     default 64 if ZEPHLETS_COAP
 
+config COAP_SERVER_WELL_KNOWN_CORE
+    # The zephlet frontend ships its own `/.well-known/core` handler in
+    # `zephlet_coap_discovery.c` that filters out resources tagged
+    # `ZEPHLET_COAP_HIDDEN` (the wildcards of non-discoverable services)
+    # before delegating to Zephyr's `coap_well_known_core_get_len`.
+    # Zephyr's stock intercept would otherwise short-circuit before our
+    # resource fires and leak the hidden wildcards into the enumeration.
+    default n if ZEPHLETS_COAP
+
+config COAP_SERVER_MESSAGE_SIZE
+    # The discovery handlers (`/.well-known/core`, `/zlet/<type>/instances`,
+    # `/zlet/<type>/apis`) all build RFC 6690 link-format payloads whose
+    # total length scales with the registered resource set. Default 256
+    # truncates once a handful of discoverable types accumulate; bump to
+    # 1024 so the response packet builder has headroom.
+    default 1024 if ZEPHLETS_COAP
+
 config ZEPHLETS_COAP_DTLS
     bool "DTLS for the CoAP frontend"
     depends on ZEPHLETS_COAP
@@ -66,6 +83,21 @@ config ZEPHLETS_COAP_MAX_URI_SEGMENTS
       `events/stats` form needs 5. The default leaves headroom for
       future path shapes; requests with more segments than this are
       rejected with 4.04.
+
+config ZEPHLETS_COAP_DISCOVERY_BUF_SIZE
+    int "Output buffer for the per-type discovery handlers (bytes)"
+    depends on ZEPHLETS_COAP
+    default 512
+    help
+      Stack-buffer size each codegen-emitted `/zlet/<type>/instances`
+      handler uses to assemble its RFC 6690 link-format response. The
+      handler walks `STRUCT_SECTION_FOREACH(zephlet, z)` filtered by
+      `z->api == &<type>_api` and snprintfs one link per match. If the
+      cumulative output exceeds this buffer, the handler responds 4.13
+      Request Entity Too Large and logs a warning naming the configured
+      size; operators raise this Kconfig until the per-type instance
+      list fits. The `/apis` handler does not consume this buffer — its
+      response is a fully codegen-baked static const string blob.
 
 config ZEPHLETS_COAP_CMD_TIMEOUT_MS
     int "Timeout for publishing a CoAP-originated call onto the command channel (ms)"
