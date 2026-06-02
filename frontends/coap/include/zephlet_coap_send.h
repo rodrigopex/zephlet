@@ -88,7 +88,7 @@ int zephlet_coap_send_response(struct coap_resource *res, struct coap_packet *re
  * Other parameters and the return contract match `zephlet_coap_send_response`.
  */
 int zephlet_coap_send_payload_ct(struct coap_resource *res, struct coap_packet *req,
-				 struct sockaddr *addr, socklen_t addr_len, int rc,
-				 uint32_t ct_id, const uint8_t *payload, size_t payload_len);
+				 struct sockaddr *addr, socklen_t addr_len, int rc, uint32_t ct_id,
+				 const uint8_t *payload, size_t payload_len);
 
 #endif /* ZEPHLET_FRONTENDS_COAP_SEND_H */

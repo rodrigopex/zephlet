@@ -78,13 +78,16 @@ static int zlet_wellknown_core_get(struct coap_resource *res, struct coap_packet
 }
 
 static const char *const zlet_wellknown_core_path[] = {
-	".well-known", "core", NULL,
+	".well-known",
+	"core",
+	NULL,
 };
 
-COAP_RESOURCE_DEFINE(zlet_wellknown_core_resource, zlet_coap_service, {
-	.path = zlet_wellknown_core_path,
-	.get = zlet_wellknown_core_get,
-});
+COAP_RESOURCE_DEFINE(zlet_wellknown_core_resource, zlet_coap_service,
+		     {
+			     .path = zlet_wellknown_core_path,
+			     .get = zlet_wellknown_core_get,
+		     });
 
 /* /zlet/apis: shared base lifecycle method names, served as
  * `text/plain;charset=utf-8`. One method per line, no trailing newline.
@@ -96,27 +99,28 @@ COAP_RESOURCE_DEFINE(zlet_wellknown_core_resource, zlet_coap_service, {
  * caller's responsibility to detect; keep this in mind when extending
  * the base contract.
  */
-static const char zlet_base_apis_body[] =
-	"start\n"
-	"stop\n"
-	"get_status\n"
-	"config\n"
-	"get_config";
+static const char zlet_base_apis_body[] = "start\n"
+					  "stop\n"
+					  "get_status\n"
+					  "config\n"
+					  "get_config";
 
 static int zlet_base_apis_get(struct coap_resource *res, struct coap_packet *req,
 			      struct sockaddr *addr, socklen_t addr_len)
 {
-	return zephlet_coap_send_payload_ct(res, req, addr, addr_len, 0,
-					    ZEPHLET_COAP_CT_TEXT_PLAIN,
+	return zephlet_coap_send_payload_ct(res, req, addr, addr_len, 0, ZEPHLET_COAP_CT_TEXT_PLAIN,
 					    (const uint8_t *)zlet_base_apis_body,
 					    sizeof(zlet_base_apis_body) - 1);
 }
 
 static const char *const zlet_base_apis_path[] = {
-	"zlet", "apis", NULL,
+	"zlet",
+	"apis",
+	NULL,
 };
 
-COAP_RESOURCE_DEFINE(zlet_base_apis_resource, zlet_coap_service, {
-	.path = zlet_base_apis_path,
-	.get = zlet_base_apis_get,
-});
+COAP_RESOURCE_DEFINE(zlet_base_apis_resource, zlet_coap_service,
+		     {
+			     .path = zlet_base_apis_path,
+			     .get = zlet_base_apis_get,
+		     });
