@@ -209,4 +209,58 @@ const struct zephlet *zephlet_get_by_name(const char *name);
 	};                                                                                         \
 	_ZLET_FRONTEND_HOOKS_##_type(_name)
 
+/**
+ * ZEPHLET_INST_DECLARE(type, id)
+ *
+ * Forward-declares an instance defined elsewhere with
+ * `ZEPHLET_INST_DEFINE` / `ZEPHLET_PRIO_INST_DEFINE`, for consumers
+ * (policies, adapters) that pass `&<type><id>` to its RPC wrappers.
+ *
+ * @param _zephlet_name  Zephlet type symbol.
+ * @param _instance_id   Instance id token used at the definition site.
+ */
+#define ZEPHLET_INST_DECLARE(_zephlet_name, _instance_id)                                          \
+	extern const struct zephlet _zephlet_name##_instance_id
+
+/**
+ * ZEPHLET_PRIO_INST_DEFINE(type, id, init, prio)
+ *
+ * Defines a zephlet instance with auto-allocated config and data,
+ * sparing the caller the per-instance storage boilerplate of
+ * `ZEPHLET_NEW_PRIO`.
+ *
+ *  - Defines `static struct <type>_config <type><id>_cfg` (zeroed).
+ *  - Defines `static struct <type>_data   <type><id>_data` (zeroed).
+ *  - Expands `ZEPHLET_NEW_PRIO(<type>, <type><id>, &<type><id>_cfg,
+ *    &<type><id>_data, <init>, <prio>)`.
+ *
+ * Reach for `ZEPHLET_NEW` / `ZEPHLET_NEW_PRIO` directly when an
+ * instance needs externally-owned or shared storage, or config primed
+ * with non-zero literals.
+ *
+ * @param _zephlet_name  Zephlet type symbol (e.g. `aws_mqtt`). Used to
+ *                       resolve `<type>_api`, `struct <type>_config`,
+ *                       `struct <type>_data`, `struct <type>_events`.
+ * @param _instance_id   Token appended to the type to form the instance
+ *                       and storage symbols; unique per type per TU.
+ * @param _init_fn       `int (*)(const struct zephlet *)` or NULL.
+ * @param _prio          `init_priority`; the SYS_INIT walker runs
+ *                       `init_fn`s in ascending priority.
+ */
+#define ZEPHLET_PRIO_INST_DEFINE(_zephlet_name, _instance_id, _init_fn, _prio)                     \
+	static struct _zephlet_name##_config _zephlet_name##_instance_id##_cfg;                    \
+	static struct _zephlet_name##_data _zephlet_name##_instance_id##_data;                     \
+                                                                                                   \
+	ZEPHLET_NEW_PRIO(_zephlet_name, _zephlet_name##_instance_id,                               \
+			 &_zephlet_name##_instance_id##_cfg, &_zephlet_name##_instance_id##_data,  \
+			 _init_fn, _prio)
+
+/**
+ * ZEPHLET_INST_DEFINE(type, id, init)
+ *
+ * Same as `ZEPHLET_PRIO_INST_DEFINE`, with `init_priority == 0`.
+ */
+#define ZEPHLET_INST_DEFINE(_zephlet_name, _instance_id, _init_fn)                                 \
+	ZEPHLET_PRIO_INST_DEFINE(_zephlet_name, _instance_id, _init_fn, 0)
+
 #endif /* MODULES_ZEPHLETS_SHARED_ZEPHLET_H */
