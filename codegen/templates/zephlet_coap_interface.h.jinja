@@ -24,21 +24,27 @@
 
 #ifdef CONFIG_ZEPHLETS_COAP
 
+#include "zephlet_coap_observe.h"
+
 /**
  * @brief Event-channel observer callback for `{{ type_snake }}` instances.
  *
- * Defined in `{{ prefix }}_coap_interface.c`. The body is a stub today;
- * the events-bridge implementation will fill in the per-observer CoAP
- * Observe send logic.
+ * Defined in `{{ prefix }}_coap_interface.c`. Encodes the event and fans
+ * it out to the instance's CoAP Observe subscribers.
  */
 void _{{ type_snake }}_coap_event_cb(const struct zephlet *z,
 				     const struct {{ type_snake }}_events *ev);
 
 /* This header is included by `{{ prefix }}_interface.h` BEFORE the
  * `#ifndef`-guarded default-empty hook, so a bare `#define` wins
- * without an `#undef` round-trip. */
+ * without an `#undef` round-trip. The hook chains the events listener and
+ * emits the per-instance Observe state record, binding `.z` to the
+ * instance the listener feeds. */
 #define _ZLET_COAP_HOOK_{{ type_snake }}(_name) \
-	ZEPHLET_EVENTS_LISTENER(_name, {{ type_snake }}, _{{ type_snake }}_coap_event_cb);
+	ZEPHLET_EVENTS_LISTENER(_name, {{ type_snake }}, _{{ type_snake }}_coap_event_cb); \
+	STRUCT_SECTION_ITERABLE(zephlet_coap_instance_state, _name##_coap_state) = { \
+		.z = &_name, \
+	};
 
 #endif /* CONFIG_ZEPHLETS_COAP */
 {% else %}

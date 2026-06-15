@@ -20,6 +20,7 @@
 
 #include "zephlet.h"
 #include "zephlet_coap_consts.h"
+#include "zephlet_coap_observe.h"
 #include "zephlet_coap_send.h"
 #include "zephlet_coap_types.h"
 #include "zephlet_coap_uri.h"
@@ -65,13 +66,6 @@ const STRUCT_SECTION_ITERABLE(zephlet_coap_type, {{ type_snake }}_coap_type) = {
 	.methods = {{ type_snake }}_coap_methods,
 	.num_methods = ARRAY_SIZE({{ type_snake }}_coap_methods),
 };
-
-void _{{ type_snake }}_coap_event_cb(const struct zephlet *z,
-				     const struct {{ type_snake }}_events *ev)
-{
-	ARG_UNUSED(z);
-	ARG_UNUSED(ev);
-}
 
 static int {{ type_snake }}_resolve(struct coap_packet *req, const struct zephlet **z_out,
 				    char *method_buf, size_t method_buf_size)
@@ -167,6 +161,23 @@ static int {{ type_snake }}_coap_rpc_post(struct coap_resource *res, struct coap
 static int {{ type_snake }}_coap_get(struct coap_resource *res, struct coap_packet *req,
 				     struct sockaddr *addr, socklen_t addr_len)
 {
+	const struct zephlet *z;
+	char method[CONFIG_ZEPHLETS_COAP_MAX_SEGMENT_LEN + 1];
+
+	int err = {{ type_snake }}_resolve(req, &z, method, sizeof(method));
+	if (err != 0) {
+		return zephlet_coap_send_error(res, req, addr, addr_len, err);
+	}
+
+	if (strcmp(method, ZEPHLET_COAP_EVENTS_SUFFIX) == 0) {
+		err = zephlet_coap_observe_handle_get(res, req, addr, addr_len, z);
+		if (err == -ENOENT) {
+			/* Plain GET on /events with no Observe option. */
+			return zephlet_coap_send_error(res, req, addr, addr_len, -ENOSYS);
+		}
+		return err;
+	}
+
 	return zephlet_coap_send_error(res, req, addr, addr_len, -ENOSYS);
 }
 
@@ -186,6 +197,20 @@ COAP_RESOURCE_DEFINE({{ type_snake }}_coap_resource, zlet_coap_service, {
 	.user_data = ZEPHLET_COAP_HIDDEN,
 {% endif %}
 });
+
+void _{{ type_snake }}_coap_event_cb(const struct zephlet *z,
+				     const struct {{ type_snake }}_events *ev)
+{
+	uint8_t buf[{{ type_snake|upper }}_EVENTS_SIZE];
+	pb_ostream_t stream = pb_ostream_from_buffer(buf, sizeof(buf));
+
+	if (!pb_encode(&stream, &{{ type_snake }}_events_t_msg, ev)) {
+		LOG_WRN("{{ type_snake }}: events encode failed");
+		return;
+	}
+
+	zephlet_coap_observe_notify(&{{ type_snake }}_coap_resource, z, buf, stream.bytes_written);
+}
 
 {% if coap_discoverable %}
 /* ----- Discovery: /zlet/{{ type_snake }}/{instances,apis} ----------------

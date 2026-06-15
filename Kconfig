@@ -147,6 +147,21 @@ config ZEPHLETS_COAP_CMD_TIMEOUT_MS
       publisher's own thread, so this never times out a handler
       that is making forward progress.
 
+config ZEPHLETS_COAP_MAX_OBSERVERS
+    int "Maximum number of concurrent CoAP Observe subscribers"
+    depends on ZEPHLETS_COAP
+    default ZEPHLET_MAX_INSTANCES
+    help
+      Size of the global pool of CoAP Observe subscriber records shared
+      across every opted-in zephlet instance. Each record is allocated
+      from a k_mem_slab when a client subscribes (GET carrying the Observe
+      option) and freed on deregister; it holds the subscriber's endpoint
+      address and token. A subscribe that finds no free record is answered
+      5.03 Service Unavailable. The default tracks
+      CONFIG_ZEPHLET_MAX_INSTANCES (roughly one subscriber per instance);
+      raise it when clients fan out with several observers per instance,
+      lower it to bound RAM.
+
 module = ZEPHLET
 module-str = zephlet
 source "subsys/logging/Kconfig.template.log_config"

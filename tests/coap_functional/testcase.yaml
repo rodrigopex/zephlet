@@ -26,3 +26,7 @@ tests:
     harness_config:
       pytest_root:
         - "pytest/test_discovery_truncate.py"
+  zephlet.coap_functional.observe:
+    harness_config:
+      pytest_root:
+        - "pytest/test_observe.py"

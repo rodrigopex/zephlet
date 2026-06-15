@@ -6,6 +6,7 @@ if(CONFIG_ZEPHLETS_COAP)
         zephlet_coap_send.c
         zephlet_coap_uri.c
         zephlet_coap_discovery.c
+        zephlet_coap_observe.c
     )
     zephyr_include_directories(include)
 
@@ -17,5 +18,13 @@ if(CONFIG_ZEPHLETS_COAP)
     zephyr_linker_sources(DATA_SECTIONS sections-ram.ld)
     zephyr_iterable_section(
         NAME coap_resource_zlet_coap_service
+        GROUP DATA_REGION ${XIP_ALIGN_WITH_INPUT})
+
+    # Per-instance Observe state. The codegen hook emits one
+    # `STRUCT_SECTION_ITERABLE(zephlet_coap_instance_state, ...)` record per
+    # CoAP-opted-in `ZEPHLET_NEW(...)` instance; the event bridge walks the
+    # section to find the record owning a given instance.
+    zephyr_iterable_section(
+        NAME zephlet_coap_instance_state
         GROUP DATA_REGION ${XIP_ALIGN_WITH_INPUT})
 endif()

@@ -1,3 +1,4 @@
 #include <zephyr/linker/iterable_sections.h>
 
 ITERABLE_SECTION_RAM(coap_resource_zlet_coap_service, Z_LINK_ITERABLE_SUBALIGN)
+ITERABLE_SECTION_RAM(zephlet_coap_instance_state, Z_LINK_ITERABLE_SUBALIGN)
