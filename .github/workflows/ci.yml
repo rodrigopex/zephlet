@@ -8,7 +8,7 @@ on:
     branches: [main]
 
 env:
-  ZEPHYR_SDK_VERSION: "1.0.0"
+  ZEPHYR_SDK_VERSION: "1.0.1"
 
 jobs:
   lint:
@@ -46,7 +46,7 @@ jobs:
       matrix:
         board: [mps2/an385, native_sim]
     env:
-      ZEPHYR_SDK_INSTALL_DIR: /home/runner/zephyr-sdk-1.0.0
+      ZEPHYR_SDK_INSTALL_DIR: /home/runner/zephyr-sdk-1.0.1
       ZEPHYR_EXTRA_MODULES: ${{ github.workspace }}/modules/lib/zephlet
     steps:
       - name: Checkout infra at this commit
@@ -78,7 +78,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-matrix
     env:
-      ZEPHYR_SDK_INSTALL_DIR: /home/runner/zephyr-sdk-1.0.0
+      ZEPHYR_SDK_INSTALL_DIR: /home/runner/zephyr-sdk-1.0.1
       ZEPHYR_EXTRA_MODULES: ${{ github.workspace }}/modules/lib/zephlet
     steps:
       - name: Checkout infra at this commit
