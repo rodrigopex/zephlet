@@ -120,3 +120,30 @@ jobs:
             /tmp/twister-out
             /tmp/twister-out-infra
           if-no-files-found: ignore
+
+  buildhash:
+    name: footprint gate (CoAP =n section hash)
+    runs-on: ubuntu-latest
+    env:
+      ZEPHYR_SDK_INSTALL_DIR: /home/runner/zephyr-sdk-1.0.1
+      ZEPHYR_EXTRA_MODULES: ${{ github.workspace }}/modules/lib/zephlet
+    steps:
+      - name: Checkout infra at this commit
+        uses: actions/checkout@v4
+        with:
+          path: modules/lib/zephlet
+
+      - name: Setup workspace
+        uses: ./modules/lib/zephlet/.github/actions/setup-workspace
+        with:
+          sdk-version: ${{ env.ZEPHYR_SDK_VERSION }}
+
+      - name: Build example app with CONFIG_ZEPHLETS_COAP=n
+        working-directory: app
+        run: >
+          west build -b mps2/an385 . -d build_n --
+          -DZEPHYR_EXTRA_MODULES=$ZEPHYR_EXTRA_MODULES
+          -DCONFIG_ZEPHLETS_COAP=n
+
+      - name: Assert CoAP frontend adds zero footprint when disabled
+        run: modules/lib/zephlet/tests/coap_buildhash/footprint_gate.sh check app/build_n
