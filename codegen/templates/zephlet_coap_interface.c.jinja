@@ -111,10 +111,26 @@ static int {{ type_snake }}_coap_rpc_post(struct coap_resource *res, struct coap
 {% if not cmd.req_is_empty %}
 		uint16_t body_len;
 		const uint8_t *body = coap_packet_get_payload(req, &body_len);
+		/* A body larger than the method's own nanopb message envelope is
+		 * a malformed wire frame, not a valid-but-rejected message —
+		 * surface 4.13 before decode. Mirrors zephlet_coap_decode_request,
+		 * which the generated handler does not call. */
+		if (body_len > {{ cmd.req_c_name|upper }}_SIZE) {
+			return zephlet_coap_send_error(res, req, addr, addr_len, -EMSGSIZE);
+		}
 		struct {{ cmd.req_c_name }} req_struct;
 		pb_istream_t in = pb_istream_from_buffer(body, body_len);
 		if (!pb_decode(&in, &{{ cmd.req_desc }}, &req_struct)) {
 			return zephlet_coap_send_error(res, req, addr, addr_len, -EINVAL);
+		}
+{% else %}
+		/* Empty-request method (req_max_size == 0): any inbound body is a
+		 * malformed frame. Reject with 4.13 before dispatch so the wire
+		 * contract matches the empty request descriptor. */
+		uint16_t body_len;
+		(void)coap_packet_get_payload(req, &body_len);
+		if (body_len > 0) {
+			return zephlet_coap_send_error(res, req, addr, addr_len, -EMSGSIZE);
 		}
 {% endif %}
 {% if not cmd.resp_is_empty %}
