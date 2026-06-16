@@ -17,7 +17,7 @@ inputs:
   sdk-version:
     description: "Zephyr SDK version"
     required: false
-    default: "1.0.0"
+    default: "1.0.1"
   sdk-toolchains:
     description: "Space-separated SDK toolchains to install"
     required: false
