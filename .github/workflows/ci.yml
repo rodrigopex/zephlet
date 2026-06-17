@@ -98,6 +98,11 @@ jobs:
       - name: Install infra-test Python deps
         run: pip install aiocoap pytest-asyncio
 
+      - name: Install libcoap client (CoAPS/DTLS tests)
+        # The coap_functional.dtls sub-target drives libcoap's coap-client
+        # as a subprocess; aiocoap has no PSK-DTLS binding.
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libcoap3-bin
+
       - name: Run infra tests on native_sim
         # `--jobs 1` serializes sub-targets so the coap_functional fixtures
         # don't race over UDP/5683 (every sub-target's DUT binds the same
