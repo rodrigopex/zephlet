@@ -91,10 +91,66 @@ config COAP_SERVER_MESSAGE_SIZE
     default 1024 if ZEPHLETS_COAP
 
 config ZEPHLETS_COAP_DTLS
-    bool "DTLS for the CoAP frontend"
+    bool "DTLS (PSK) for the CoAP frontend"
     depends on ZEPHLETS_COAP
+    select NET_SOCKETS_SOCKOPT_TLS
+    select NET_SOCKETS_ENABLE_DTLS
+    select TLS_CREDENTIALS
+    select MBEDTLS
+    select MBEDTLS_ENABLE_HEAP
+    select MBEDTLS_CIPHERSUITE_TLS_PSK_WITH_AES_128_GCM_SHA256
     help
-      Wrap the CoAP frontend in DTLS (PSK).
+      Serve the CoAP frontend over DTLS (CoAPS) on
+      ZEPHLETS_COAP_SECURE_PORT instead of plain UDP 5683, authenticated
+      with a pre-shared key. The integrator supplies the PSK identity and
+      key via ZEPHLETS_COAP_DTLS_PSK_IDENTITY / _KEY and the security tag
+      via ZEPHLETS_COAP_DTLS_SEC_TAG; no key material ships in the
+      framework.
+
+if ZEPHLETS_COAP_DTLS
+
+config ZEPHLETS_COAP_SECURE_PORT
+    int "CoAPS (DTLS) UDP port"
+    default 5684
+    help
+      UDP port the DTLS-wrapped CoAP service binds. RFC 7252 registers
+      5684 for the "coaps" scheme.
+
+config ZEPHLETS_COAP_DTLS_SEC_TAG
+    int "TLS credential security tag for the CoAPS PSK"
+    default 1
+    help
+      Security tag the frontend registers the PSK under and passes to
+      COAPS_SERVICE_DEFINE. Must not collide with other tls_credential
+      security tags the application registers.
+
+config ZEPHLETS_COAP_DTLS_PSK_IDENTITY
+    string "CoAPS DTLS PSK identity"
+    default ""
+    help
+      PSK identity presented during the DTLS handshake. Integrator-
+      supplied; empty by default so a misconfigured build is caught at
+      credential registration rather than shipping a guessable identity.
+
+config ZEPHLETS_COAP_DTLS_PSK_KEY
+    string "CoAPS DTLS PSK key bytes"
+    default ""
+    help
+      Pre-shared key bytes used for the DTLS handshake. Integrator-
+      supplied through an overlay or secret; key material is never
+      committed in the framework tree.
+
+endif # ZEPHLETS_COAP_DTLS
+
+config MBEDTLS_HEAP_SIZE
+    # The stock mbedTLS heap is too small for a DTLS-PSK handshake. Size it
+    # for the CoAPS server out of the box (still integrator-overridable).
+    default 60000 if ZEPHLETS_COAP_DTLS
+
+config NET_SOCKETS_TLS_MAX_CONTEXTS
+    # One context for the listening DTLS socket plus headroom for a few
+    # concurrent client sessions; the stock default of 1 is too few.
+    default 4 if ZEPHLETS_COAP_DTLS
 
 config ZEPHLETS_COAP_MAX_SEGMENT_LEN
     int "Maximum length of a CoAP URI segment under /zlet/"
