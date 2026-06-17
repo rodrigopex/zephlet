@@ -30,6 +30,12 @@ LOG_MODULE_DECLARE(zlet_coap);
  * as samples and other server resources. */
 #define ZEPHLET_COAP_SEND_BUF_SIZE CONFIG_COAP_SERVER_MESSAGE_SIZE
 
+/* TODO: block-wise transfer (RFC 7959). Not implemented: every zephlet
+ * response is a single nanopb message bounded by its `<MSG>_SIZE`, and no
+ * measured payload has exceeded the single-datagram budget
+ * (ZEPHLET_COAP_SEND_BUF_SIZE). Add Block2 only when a real response is
+ * shown to overflow it — pre-building it now would be dead complexity. */
+
 static int build_response_header(const struct coap_packet *req, uint8_t *buf, size_t buf_size,
 				 uint8_t code, struct coap_packet *out)
 {
