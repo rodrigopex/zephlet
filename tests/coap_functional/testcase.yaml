@@ -37,8 +37,16 @@ tests:
   zephlet.coap_functional.dtls:
     # CoAPS (DTLS-PSK) on 5684. The pytest drives libcoap's coap-client
     # (aiocoap has no PSK-DTLS binding here); CI installs libcoap3-bin.
-    # Each case restarts the DUT (function-scoped) and does a DTLS
-    # handshake, so it needs more than the default 60s on slow runners.
+    # Run only on the 64-bit native sim: the 32-bit native_sim does not
+    # bring up the DTLS socket under offloaded sockets. native_sim is only a
+    # host test platform — real DTLS targets are the ARM boards in
+    # build-matrix. (platform_exclude, not platform_allow: the latter merges
+    # with the common list rather than replacing it.)
+    platform_exclude:
+      - native_sim
+      - native_sim/native
+    # The DUT is function-scoped, so the single case reboots and does a DTLS
+    # handshake; allow more than the default 60s on slow runners.
     timeout: 180
     extra_configs:
       - CONFIG_ZEPHLETS_COAP_DTLS=y

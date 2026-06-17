@@ -116,6 +116,17 @@ jobs:
             --jobs 1 \
             -O /tmp/twister-out-infra
 
+      - name: Run CoAPS/DTLS test on native_sim/native/64
+        # The DTLS socket comes up on the 64-bit native sim but not the
+        # 32-bit one used above, so the dtls sub-target is platform-pinned
+        # to native_sim/native/64 and filtered out of the run above.
+        run: |
+          west twister \
+            --testsuite-root modules/lib/zephlet/tests/coap_functional \
+            -p native_sim/native/64 -s zephlet.coap_functional.dtls \
+            --inline-logs --jobs 1 \
+            -O /tmp/twister-out-dtls
+
       - name: Upload twister artefacts on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -124,6 +135,7 @@ jobs:
           path: |
             /tmp/twister-out
             /tmp/twister-out-infra
+            /tmp/twister-out-dtls
           if-no-files-found: ignore
 
   buildhash:
