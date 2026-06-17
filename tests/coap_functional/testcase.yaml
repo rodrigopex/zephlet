@@ -37,6 +37,9 @@ tests:
   zephlet.coap_functional.dtls:
     # CoAPS (DTLS-PSK) on 5684. The pytest drives libcoap's coap-client
     # (aiocoap has no PSK-DTLS binding here); CI installs libcoap3-bin.
+    # Each case restarts the DUT (function-scoped) and does a DTLS
+    # handshake, so it needs more than the default 60s on slow runners.
+    timeout: 180
     extra_configs:
       - CONFIG_ZEPHLETS_COAP_DTLS=y
       - 'CONFIG_ZEPHLETS_COAP_DTLS_PSK_IDENTITY="Client_identity"'

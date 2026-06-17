@@ -1,4 +1,4 @@
-"""DTLS-PSK functional cases for the CoAP frontend.
+"""DTLS-PSK functional case for the CoAP frontend.
 
 Built against the `zephlet.coap_functional.dtls` sub-target, which sets
 `CONFIG_ZEPHLETS_COAP_DTLS=y` with a test PSK (identity `Client_identity`,
@@ -7,9 +7,13 @@ plain CoAP on 5683.
 
 aiocoap has no PSK-DTLS binding in this environment, so the client is
 libcoap's `coap-client` driven as a subprocess (CI installs `libcoap3-bin`;
-the binary is usually `coap-client-gnutls`). The cases cover the issue's
-DTLS acceptance: handshake succeeds with the test PSK, an RPC round-trips,
-and a wrong PSK is rejected.
+the binary is usually `coap-client-gnutls`).
+
+The whole DTLS acceptance is exercised in a single test: twister's `dut`
+fixture is function-scoped, so each test function reboots the binary and
+re-handshakes. Folding handshake, RPC, and the wrong-PSK check into one
+case keeps that cost to a single boot — important on the slower 32-bit
+`native_sim/native` runner CI uses.
 """
 
 from __future__ import annotations
@@ -38,60 +42,48 @@ def _coap_client() -> str:
     pytest.skip("libcoap coap-client (DTLS-capable) not available")
 
 
-def _run(cc: str, method: str, path: str, key: str = PSK_KEY, timeout: float = 15.0):
+def _run(cc: str, method: str, path: str, key: str = PSK_KEY, timeout: float = 12.0):
+    """Run coap-client; return captured bytes, treating a timeout as no reply."""
     uri = f"coaps://{HOST}:{PORT}/{path}"
-    return subprocess.run(
-        [cc, "-u", PSK_ID, "-k", key, "-m", method, uri],
-        capture_output=True,
-        timeout=timeout,
-    )
+    try:
+        out = subprocess.run(
+            [cc, "-u", PSK_ID, "-k", key, "-m", method, uri],
+            capture_output=True,
+            timeout=timeout,
+        )
+        return out.stdout, out.stderr
+    except subprocess.TimeoutExpired as exc:
+        return (exc.stdout or b""), (exc.stderr or b"")
 
 
-@pytest.fixture
-def coaps(dut: DeviceAdapter) -> str:
-    """A coap-client path, once the DTLS service answers a handshake.
-
-    Function-scoped to match twister's function-scoped `dut`; once the
-    server is up the readiness GET returns on the first attempt, so the
-    per-test cost is negligible.
-    """
-    cc = _coap_client()
+def _wait_ready(cc: str) -> None:
     deadline = time.time() + READY_TIMEOUT_S
-    last = None
+    last = (b"", b"")
     while time.time() < deadline:
-        try:
-            last = _run(cc, "get", "zlet/tick/instances")
-            if b"tick_fast" in last.stdout:
-                return cc
-        except subprocess.TimeoutExpired as exc:
-            last = exc
+        last = _run(cc, "get", "zlet/tick/instances")
+        if b"tick_fast" in last[0]:
+            return
         time.sleep(1.0)
     raise AssertionError(
-        f"CoAPS server not reachable on {HOST}:{PORT} within {READY_TIMEOUT_S}s; last={last!r}"
+        f"CoAPS server not reachable on {HOST}:{PORT} within {READY_TIMEOUT_S}s; "
+        f"last stdout={last[0]!r} stderr={last[1]!r}"
     )
 
 
-def test_dtls_handshake_and_discovery(coaps: str):
-    """Handshake with the test PSK, then a GET that returns the instance list."""
-    out = _run(coaps, "get", "zlet/tick/instances")
-    assert b"tick_fast" in out.stdout, f"expected instances, got {out.stdout!r} / {out.stderr!r}"
+def test_dtls_psk_acceptance(dut: DeviceAdapter):
+    """Handshake + discovery, an RPC round-trip, and wrong-PSK rejection."""
+    cc = _coap_client()
+    _wait_ready(cc)
 
+    # 1. Handshake with the test PSK, then a GET returns the instance list.
+    stdout, stderr = _run(cc, "get", "zlet/tick/instances")
+    assert b"tick_fast" in stdout, f"discovery GET failed: {stdout!r} / {stderr!r}"
 
-def test_dtls_rpc_roundtrips(coaps: str):
-    """An RPC POST over DTLS reaches the dispatcher and a response comes back.
+    # 2. An RPC POST reaches the dispatcher; tick.start answers a non-empty
+    #    Lifecycle.Status (2.05), so a payload comes back over the secure socket.
+    stdout, stderr = _run(cc, "post", "zlet/tick/tick_fast/start")
+    assert stdout, f"RPC POST returned no response: stderr={stderr!r}"
 
-    `tick.start` returns a non-empty `Lifecycle.Status`, so a 2.05 with a
-    protobuf payload proves the call round-tripped over the secure socket.
-    """
-    out = _run(coaps, "post", "zlet/tick/tick_fast/start")
-    assert out.stdout, f"expected a non-empty RPC response, got stderr={out.stderr!r}"
-
-
-def test_dtls_wrong_psk_rejected(coaps: str):
-    """A client presenting the wrong PSK cannot complete the handshake."""
-    try:
-        out = _run(coaps, "get", "zlet/tick/instances", key="WRONGKEY99", timeout=12.0)
-        stdout = out.stdout
-    except subprocess.TimeoutExpired as exc:
-        stdout = exc.stdout or b""
-    assert b"tick_fast" not in stdout, "wrong PSK must not yield a valid response"
+    # 3. A client presenting the wrong PSK cannot complete the handshake.
+    bad_stdout, _ = _run(cc, "get", "zlet/tick/instances", key="WRONGKEY99", timeout=8.0)
+    assert b"tick_fast" not in bad_stdout, "wrong PSK must not yield a valid response"
