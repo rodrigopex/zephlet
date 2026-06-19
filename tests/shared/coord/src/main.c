@@ -174,6 +174,13 @@ ZTEST(zephlet_coord, test_kick_busy_returns_ebusy)
 	k_sem_give(&busy_blocker_sem);
 	err = k_sem_take(&done_sem, K_MSEC(500));
 	zassert_equal(err, 0, "busy flow did not unblock");
+
+	/* the busy-time kick is deferred, not dropped: done re-runs once */
+	err = k_sem_take(&busy_step_started_sem, K_MSEC(500));
+	zassert_equal(err, 0, "deferred kick did not re-run the flow");
+	k_sem_give(&busy_blocker_sem);
+	err = k_sem_take(&done_sem, K_MSEC(500));
+	zassert_equal(err, 0, "deferred flow did not complete");
 }
 
 ZTEST(zephlet_coord, test_await_accept_any_publish)

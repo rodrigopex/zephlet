@@ -54,11 +54,17 @@ void zephlet_coord_dispatch(struct k_work *w)
 
 int zephlet_coord_kick(struct zephlet_coord *c)
 {
+	k_spinlock_key_t key = k_spin_lock(&c->lock);
+
 	if (c->current != NULL) {
-		LOG_DBG("kick %p rejected: already running", c);
+		c->kick_pending = true;
+		k_spin_unlock(&c->lock, key);
+		LOG_DBG("kick %p deferred: already running", c);
 		return -EBUSY;
 	}
 	c->current = c->entry;
+	k_spin_unlock(&c->lock, key);
+
 	k_work_submit_to_queue(&zephlet_coord_workq, &c->work);
 	LOG_DBG("kick %p entry=%p", c, c->entry);
 	return 0;
@@ -73,7 +79,19 @@ void zephlet_coord_next(struct zephlet_coord *c, zephlet_coord_step_fn fn)
 
 void zephlet_coord_done(struct zephlet_coord *c)
 {
+	k_spinlock_key_t key = k_spin_lock(&c->lock);
+
+	if (c->kick_pending) {
+		c->kick_pending = false;
+		c->current = c->entry;
+		k_spin_unlock(&c->lock, key);
+
+		k_work_submit_to_queue(&zephlet_coord_workq, &c->work);
+		LOG_DBG("done %p: re-running for deferred kick", c);
+		return;
+	}
 	c->current = NULL;
+	k_spin_unlock(&c->lock, key);
 	LOG_DBG("done %p", c);
 }
 

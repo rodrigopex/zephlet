@@ -73,6 +73,11 @@ struct zephlet_coord {
 	zephlet_coord_step_fn entry;
 	/** User-defined per-flow state; opaque to the framework. */
 	void *ctx;
+	/** A kick arrived while running; @ref zephlet_coord_done re-runs from
+	 *  @c entry instead of going idle. */
+	bool kick_pending;
+	/** Serialises @ref zephlet_coord_kick against @ref zephlet_coord_done. */
+	struct k_spinlock lock;
 };
 
 /**
