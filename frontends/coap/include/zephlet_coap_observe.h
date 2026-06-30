@@ -99,4 +99,17 @@ int zephlet_coap_observe_handle_get(struct coap_resource *res, struct coap_packe
 void zephlet_coap_observe_notify(struct coap_resource *res, const struct zephlet *z,
 				 const uint8_t *payload, size_t payload_len);
 
+/**
+ * @brief Free every current subscriber across all instances back to the
+ *        shared slab.
+ *
+ * The service is stopped and restarted with L4 connectivity (see the
+ * connection-manager path in `zephlet_coap_frontend.c`), and a subscriber
+ * stranded by a disconnect has no way to send the deregistering GET that
+ * would otherwise free its slab block — call this once on
+ * `NET_EVENT_L4_DISCONNECTED` so a reconnect starts with an empty pool
+ * instead of leaking one block per stranded subscriber.
+ */
+void zephlet_coap_observe_purge_all(void);
+
 #endif /* ZEPHLET_FRONTENDS_COAP_OBSERVE_H */

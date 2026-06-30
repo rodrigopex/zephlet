@@ -181,6 +181,25 @@ int zephlet_coap_observe_handle_get(struct coap_resource *res, struct coap_packe
 	return zlet_send_2_05(res, req, addr, addr_len, false, 0);
 }
 
+void zephlet_coap_observe_purge_all(void)
+{
+	STRUCT_SECTION_FOREACH(zephlet_coap_instance_state, state) {
+		sys_slist_t freed;
+
+		sys_slist_init(&freed);
+
+		k_spinlock_key_t key = k_spin_lock(&zlet_observe_lock);
+		sys_slist_merge_slist(&freed, &state->observers);
+		k_spin_unlock(&zlet_observe_lock, key);
+
+		struct zlet_observe_sub *sub, *tmp;
+
+		SYS_SLIST_FOR_EACH_CONTAINER_SAFE(&freed, sub, tmp, node) {
+			k_mem_slab_free(&zlet_observe_slab, sub);
+		}
+	}
+}
+
 void zephlet_coap_observe_notify(struct coap_resource *res, const struct zephlet *z,
 				 const uint8_t *payload, size_t payload_len)
 {

@@ -9,6 +9,27 @@
 #include <zephyr/net/tls_credentials.h>
 #endif
 
+#if defined(CONFIG_NET_CONNECTION_MANAGER)
+#include <errno.h>
+#include <zephyr/net/net_event.h>
+#include <zephyr/net/net_if.h>
+#include <zephyr/net/net_mgmt.h>
+
+#include "zephlet_coap_observe.h"
+
+/*
+ * NET_MGMT_REGISTER_EVENT_HANDLER dispatches zlet_coap_on_l4_event() inline
+ * on whatever context raised the event. coap_service_start() blocks on a
+ * socket bind, which is fine on the default NET_MGMT_EVENT_THREAD (a
+ * dedicated callback thread) but would run under conn_mgr's own
+ * conn_mgr_mon_lock if the board instead selects NET_MGMT_EVENT_DIRECT.
+ */
+BUILD_ASSERT(!IS_ENABLED(CONFIG_NET_MGMT_EVENT_DIRECT),
+	     "ZEPHLETS_COAP's connection-manager L4 handler blocks on socket "
+	     "bind/close; select NET_MGMT_EVENT_THREAD (the default) instead "
+	     "of NET_MGMT_EVENT_DIRECT");
+#endif
+
 LOG_MODULE_REGISTER(zlet_coap, CONFIG_ZEPHLET_LOG_LEVEL);
 
 /**
@@ -26,6 +47,20 @@ LOG_MODULE_REGISTER(zlet_coap, CONFIG_ZEPHLET_LOG_LEVEL);
  * via Kconfig; otherwise it is plain CoAP over UDP on 5683.
  */
 
+/*
+ * With offloaded sockets (e.g. ESP-AT Wi-Fi) the listen socket cannot bind
+ * until the link is up, which the connection manager reports asynchronously
+ * well after boot — so COAP_SERVICE_AUTOSTART loses the race and the service
+ * never comes up. When the connection manager is present, declare the service
+ * without autostart and drive start/stop from the L4 connectivity events (see
+ * zlet_coap_on_l4_event below); otherwise keep boot-time autostart.
+ */
+#if defined(CONFIG_NET_CONNECTION_MANAGER)
+#define ZLET_COAP_SERVICE_FLAGS 0
+#else
+#define ZLET_COAP_SERVICE_FLAGS COAP_SERVICE_AUTOSTART
+#endif
+
 #ifdef CONFIG_ZEPHLETS_COAP_DTLS
 
 static uint16_t zlet_coap_port = CONFIG_ZEPHLETS_COAP_SECURE_PORT;
@@ -37,7 +72,7 @@ static const sec_tag_t zlet_coap_sec_tags[] = {
 /* The service's sec_tag_list_size is forwarded verbatim as the
  * setsockopt(TLS_SEC_TAG_LIST) option length, which is a byte count — use
  * sizeof, not ARRAY_SIZE, or coap_service_start() rejects it with -EINVAL. */
-COAPS_SERVICE_DEFINE(zlet_coap_service, "0.0.0.0", &zlet_coap_port, COAP_SERVICE_AUTOSTART,
+COAPS_SERVICE_DEFINE(zlet_coap_service, "0.0.0.0", &zlet_coap_port, ZLET_COAP_SERVICE_FLAGS,
 		     zlet_coap_sec_tags, sizeof(zlet_coap_sec_tags));
 
 /**
@@ -79,6 +114,49 @@ SYS_INIT(zlet_coap_dtls_psk_init, APPLICATION, 0);
 
 static uint16_t zlet_coap_port = 5683;
 
-COAP_SERVICE_DEFINE(zlet_coap_service, "0.0.0.0", &zlet_coap_port, COAP_SERVICE_AUTOSTART);
+COAP_SERVICE_DEFINE(zlet_coap_service, "0.0.0.0", &zlet_coap_port, ZLET_COAP_SERVICE_FLAGS);
 
 #endif /* CONFIG_ZEPHLETS_COAP_DTLS */
+
+#if defined(CONFIG_NET_CONNECTION_MANAGER)
+/*
+ * Start/stop the service in step with L4 connectivity. zlet_coap_service is
+ * declared in both the DTLS and plain branches above, so this is independent
+ * of the transport.
+ */
+static void zlet_coap_on_l4_event(uint64_t mgmt_event, struct net_if *iface, void *info,
+				  size_t info_length, void *user_data)
+{
+	int ret;
+
+	ARG_UNUSED(iface);
+	ARG_UNUSED(info);
+	ARG_UNUSED(info_length);
+	ARG_UNUSED(user_data);
+
+	switch (mgmt_event) {
+	case NET_EVENT_L4_CONNECTED:
+		ret = coap_service_start(&zlet_coap_service);
+		if (ret < 0 && ret != -EALREADY) {
+			LOG_ERR("CoAP service start failed on L4 connect: %d", ret);
+		}
+		break;
+	case NET_EVENT_L4_DISCONNECTED:
+		ret = coap_service_stop(&zlet_coap_service);
+		if (ret < 0 && ret != -EALREADY) {
+			LOG_ERR("CoAP service stop failed on L4 disconnect: %d", ret);
+		}
+		/*
+		 * A subscriber stranded by the disconnect has no way left to
+		 * send the deregistering GET, so its slab block would
+		 * otherwise leak permanently across the reconnect.
+		 */
+		zephlet_coap_observe_purge_all();
+		break;
+	}
+}
+
+NET_MGMT_REGISTER_EVENT_HANDLER(zlet_coap_l4_handler,
+				NET_EVENT_L4_CONNECTED | NET_EVENT_L4_DISCONNECTED,
+				zlet_coap_on_l4_event, NULL);
+#endif /* CONFIG_NET_CONNECTION_MANAGER */
