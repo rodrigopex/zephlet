@@ -34,6 +34,39 @@ tests:
     harness_config:
       pytest_root:
         - "pytest/test_observe.py"
+  zephlet.coap_functional.connmgr:
+    # Exercises the CONFIG_NET_CONNECTION_MANAGER start/stop path in
+    # zlet_coap_on_l4_event (zephlet_coap_frontend.c) end to end: the
+    # native-sim offloaded-sockets driver's connectivity-sim binding
+    # stands in for a real link, driven by the stock `net cm
+    # connect`/`disconnect` shell commands — no fake iface or extra
+    # driver code needed. MAX_OBSERVERS=1 makes a single leaked
+    # subscriber from one disconnect fatal to the next cycle's
+    # subscribe, so a repeated connect/subscribe/disconnect loop that
+    # keeps succeeding is proof the Observe pool is purged on
+    # disconnect rather than leaking one block per cycle.
+    timeout: 90
+    extra_configs:
+      - CONFIG_NET_CONNECTION_MANAGER=y
+      - CONFIG_NET_NATIVE_OFFLOADED_SOCKETS_CONNECTIVITY_SIM=y
+      - CONFIG_NET_IPV4=y
+      # native_sim's board default auto-enables its own always-up virtual
+      # Ethernet iface (zeth0/eth_native_tap), which alone satisfies
+      # conn_mgr's aggregate L4 readiness check regardless of the
+      # offloaded-sockets iface under test — disable it so the CoAP
+      # service really does wait on the iface driven by `net cm`.
+      - CONFIG_ETH_NATIVE_TAP=n
+      - CONFIG_NET_SHELL=y
+      - CONFIG_SHELL=y
+      # The shell's PTY UART defaults to a new pseudoterminal, which the
+      # pytest harness (piping the DUT's own stdin/stdout) can't reach;
+      # route it to stdin/stdout instead so `net cm connect`/`disconnect`
+      # can be driven the same way as the DUT's other input.
+      - CONFIG_UART_NATIVE_PTY_0_ON_STDINOUT=y
+      - CONFIG_ZEPHLETS_COAP_MAX_OBSERVERS=1
+    harness_config:
+      pytest_root:
+        - "pytest/test_connmgr.py"
   zephlet.coap_functional.dtls:
     # CoAPS (DTLS-PSK) on 5684. The pytest drives libcoap's coap-client
     # (aiocoap has no PSK-DTLS binding here); CI installs libcoap3-bin.
