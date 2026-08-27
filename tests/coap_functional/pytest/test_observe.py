@@ -16,13 +16,11 @@ import pytest
 from aiocoap import GET, POST, CONTENT, NOT_FOUND, Message
 from twister_harness import DeviceAdapter
 
+from conftest import _events_uri
+
 
 def _post(host: str, port: int, path: str, payload: bytes = b"") -> Message:
 	return Message(code=POST, uri=f"coap://{host}:{port}/{path}", payload=payload)
-
-
-def _events_uri(host: str, port: int, instance: str) -> str:
-	return f"coap://{host}:{port}/zlet/tick/{instance}/events"
 
 
 async def _collect_observe(observation, count: int) -> list[int]:

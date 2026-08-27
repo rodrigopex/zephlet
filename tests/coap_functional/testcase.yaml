@@ -61,7 +61,13 @@ tests:
       # The shell's PTY UART defaults to a new pseudoterminal, which the
       # pytest harness (piping the DUT's own stdin/stdout) can't reach;
       # route it to stdin/stdout instead so `net cm connect`/`disconnect`
-      # can be driven the same way as the DUT's other input.
+      # can be driven the same way as the DUT's other input. This puts
+      # shell traffic on the same stream as the DUT's log output, but
+      # that's benign: twister_harness's Shell.exec_command()/
+      # wait_for_prompt() read line by line and only require the
+      # expected command-echo/prompt line to show up *eventually*
+      # within their timeout — an interleaved log line is read, doesn't
+      # match, and is simply skipped over, not misparsed.
       - CONFIG_UART_NATIVE_PTY_0_ON_STDINOUT=y
       - CONFIG_ZEPHLETS_COAP_MAX_OBSERVERS=1
     harness_config:

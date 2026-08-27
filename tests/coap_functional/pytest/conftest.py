@@ -28,25 +28,36 @@ READY_POLL_INTERVAL_S = 0.5
 log = logging.getLogger("zlet.coap.fixture")
 
 
-async def _wait_for_server(ctx: Context, host: str, port: int) -> None:
-	deadline = asyncio.get_event_loop().time() + READY_TIMEOUT_S
-	probe_uri = f"coap://{host}:{port}/_zlet_ready_probe"
+async def _probe_once(ctx: Context, host: str, port: int, timeout_s: float = READY_POLL_INTERVAL_S) -> bool:
+	"""Single reachability check: any response (even an error code) means
+	the server is up; a network/timeout error means it isn't."""
+	req = Message(code=GET, uri=f"coap://{host}:{port}/_zlet_ready_probe")
+	try:
+		await asyncio.wait_for(ctx.request(req).response, timeout=timeout_s)
+		return True
+	except (NetworkError, asyncio.TimeoutError, OSError):
+		return False
+
+
+async def _wait_until_reachable(
+	ctx: Context, host: str, port: int, want_up: bool, timeout_s: float
+) -> None:
+	"""Poll _probe_once until it matches @want_up, or raise TimeoutError."""
+	deadline = asyncio.get_event_loop().time() + timeout_s
 	while asyncio.get_event_loop().time() < deadline:
-		try:
-			req = Message(code=GET, uri=probe_uri)
-			await asyncio.wait_for(
-				ctx.request(req).response,
-				timeout=READY_POLL_INTERVAL_S,
-			)
+		if await _probe_once(ctx, host, port) == want_up:
 			return
-		except NetworkError:
-			pass
-		except (asyncio.TimeoutError, OSError):
-			pass
 		await asyncio.sleep(READY_POLL_INTERVAL_S)
-	raise TimeoutError(
-		f"CoAP server at {host}:{port} not reachable within {READY_TIMEOUT_S}s"
-	)
+	state = "reachable" if want_up else "unreachable"
+	raise TimeoutError(f"CoAP server at {host}:{port} did not become {state} within {timeout_s}s")
+
+
+async def _wait_for_server(ctx: Context, host: str, port: int) -> None:
+	await _wait_until_reachable(ctx, host, port, want_up=True, timeout_s=READY_TIMEOUT_S)
+
+
+def _events_uri(host: str, port: int, instance: str, type_name: str = "tick") -> str:
+	return f"coap://{host}:{port}/zlet/{type_name}/{instance}/events"
 
 
 @pytest.fixture(scope="session")
