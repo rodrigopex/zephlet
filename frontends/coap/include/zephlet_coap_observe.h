@@ -65,7 +65,10 @@ struct zephlet_coap_instance_state *zephlet_coap_state_for(const struct zephlet 
  * Observe value 0 registers (or refreshes) a subscriber and answers 2.05
  * Content carrying the current sequence value; value 1 deregisters the
  * matching subscriber and answers a bare 2.05 with no Observe option. A
- * register that finds no free slab block is answered 5.03.
+ * register is answered 5.03 if it finds no free slab block, or if the
+ * registration gate is currently closed (`zephlet_coap_observe_purge_all()`
+ * has run and the matching `zephlet_coap_observe_reopen()` hasn't yet —
+ * i.e. an L4 disconnect is in progress).
  *
  * @param res       Matched `coap_resource`.
  * @param req       Inbound request packet.
