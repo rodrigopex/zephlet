@@ -22,12 +22,17 @@
  * on whatever context raised the event. coap_service_start() blocks on a
  * socket bind, which is fine on the default NET_MGMT_EVENT_THREAD (a
  * dedicated callback thread) but would run under conn_mgr's own
- * conn_mgr_mon_lock if the board instead selects NET_MGMT_EVENT_DIRECT.
+ * conn_mgr_mon_lock if the board instead selects NET_MGMT_EVENT_DIRECT, or
+ * on the system workqueue — shared with every ZEPHLET_EVENTS_LISTENER
+ * callback — if it selects NET_MGMT_EVENT_SYSTEM_WORKQUEUE. Both are
+ * non-default alternatives to NET_MGMT_EVENT_THREAD in Zephyr's
+ * NET_MGMT_EVENT_WORKER choice (subsys/net/ip/Kconfig.mgmt).
  */
-BUILD_ASSERT(!IS_ENABLED(CONFIG_NET_MGMT_EVENT_DIRECT),
+BUILD_ASSERT(!IS_ENABLED(CONFIG_NET_MGMT_EVENT_DIRECT) &&
+		     !IS_ENABLED(CONFIG_NET_MGMT_EVENT_SYSTEM_WORKQUEUE),
 	     "ZEPHLETS_COAP's connection-manager L4 handler blocks on socket "
 	     "bind/close; select NET_MGMT_EVENT_THREAD (the default) instead "
-	     "of NET_MGMT_EVENT_DIRECT");
+	     "of NET_MGMT_EVENT_DIRECT or NET_MGMT_EVENT_SYSTEM_WORKQUEUE");
 #endif
 
 LOG_MODULE_REGISTER(zlet_coap, CONFIG_ZEPHLET_LOG_LEVEL);
@@ -136,6 +141,12 @@ static void zlet_coap_on_l4_event(uint64_t mgmt_event, struct net_if *iface, voi
 
 	switch (mgmt_event) {
 	case NET_EVENT_L4_CONNECTED:
+		/*
+		 * Reopen before start: a request that arrives the instant the
+		 * socket binds must find the registration gate already open,
+		 * not racing this call on a separate thread.
+		 */
+		zephlet_coap_observe_reopen();
 		ret = coap_service_start(&zlet_coap_service);
 		if (ret < 0 && ret != -EALREADY) {
 			LOG_ERR("CoAP service start failed on L4 connect: %d", ret);

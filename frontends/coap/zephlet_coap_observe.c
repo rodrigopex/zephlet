@@ -47,6 +47,17 @@ K_MEM_SLAB_DEFINE(zlet_observe_slab,
 static struct k_spinlock zlet_observe_lock;
 
 /*
+ * Gates new Observe registrations. Closed by purge_all() and reopened by
+ * reopen(), both under zlet_observe_lock, so a registration that races a
+ * disconnect is resolved by strict lock ordering: if it acquires the lock
+ * before purge_all() does, it's registered and then correctly purged; if
+ * after, it sees the gate closed and is rejected instead of being appended
+ * to a list that already finished draining — closing the window where a
+ * subscriber could survive the very purge meant to catch it.
+ */
+static bool zlet_observe_open = true;
+
+/*
  * Notification scratch reused across sends. The events-channel async
  * listener runs on the system workqueue, which executes work items one at
  * a time, so a notify() call never overlaps another — these file-static
@@ -141,6 +152,12 @@ int zephlet_coap_observe_handle_get(struct coap_resource *res, struct coap_packe
 	if (observe == 0) {
 		/* Register, or refresh an already-registered subscriber. */
 		k_spinlock_key_t key = k_spin_lock(&zlet_observe_lock);
+
+		if (!zlet_observe_open) {
+			k_spin_unlock(&zlet_observe_lock, key);
+			return zephlet_coap_send_error(res, req, addr, addr_len, -EBUSY);
+		}
+
 		struct zlet_observe_sub *sub = zlet_find_sub(state, addr, addr_len, token, tkl);
 
 		if (sub == NULL) {
@@ -183,6 +200,11 @@ int zephlet_coap_observe_handle_get(struct coap_resource *res, struct coap_packe
 
 void zephlet_coap_observe_purge_all(void)
 {
+	k_spinlock_key_t gate_key = k_spin_lock(&zlet_observe_lock);
+
+	zlet_observe_open = false;
+	k_spin_unlock(&zlet_observe_lock, gate_key);
+
 	STRUCT_SECTION_FOREACH(zephlet_coap_instance_state, state) {
 		sys_slist_t freed;
 
@@ -198,6 +220,14 @@ void zephlet_coap_observe_purge_all(void)
 			k_mem_slab_free(&zlet_observe_slab, sub);
 		}
 	}
+}
+
+void zephlet_coap_observe_reopen(void)
+{
+	k_spinlock_key_t key = k_spin_lock(&zlet_observe_lock);
+
+	zlet_observe_open = true;
+	k_spin_unlock(&zlet_observe_lock, key);
 }
 
 void zephlet_coap_observe_notify(struct coap_resource *res, const struct zephlet *z,

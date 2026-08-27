@@ -101,7 +101,7 @@ void zephlet_coap_observe_notify(struct coap_resource *res, const struct zephlet
 
 /**
  * @brief Free every current subscriber across all instances back to the
- *        shared slab.
+ *        shared slab, and close the registration gate.
  *
  * The service is stopped and restarted with L4 connectivity (see the
  * connection-manager path in `zephlet_coap_frontend.c`), and a subscriber
@@ -109,7 +109,23 @@ void zephlet_coap_observe_notify(struct coap_resource *res, const struct zephlet
  * would otherwise free its slab block — call this once on
  * `NET_EVENT_L4_DISCONNECTED` so a reconnect starts with an empty pool
  * instead of leaking one block per stranded subscriber.
+ *
+ * Also closes the same gate `zephlet_coap_observe_reopen()` opens: a
+ * registration racing the disconnect is resolved by lock ordering against
+ * this gate rather than being able to append to a list this function
+ * already finished draining. Pair with a `zephlet_coap_observe_reopen()`
+ * call on the matching `NET_EVENT_L4_CONNECTED`, or every future
+ * registration is rejected forever.
  */
 void zephlet_coap_observe_purge_all(void);
+
+/**
+ * @brief Re-open the registration gate `zephlet_coap_observe_purge_all()`
+ *        closes.
+ *
+ * Call once on `NET_EVENT_L4_CONNECTED`, symmetric with `purge_all()` on
+ * `NET_EVENT_L4_DISCONNECTED`.
+ */
+void zephlet_coap_observe_reopen(void);
 
 #endif /* ZEPHLET_FRONTENDS_COAP_OBSERVE_H */
