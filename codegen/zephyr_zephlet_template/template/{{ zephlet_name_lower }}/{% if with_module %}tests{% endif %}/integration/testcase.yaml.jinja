@@ -4,5 +4,6 @@ tests:
     harness: ztest
     platform_allow:
       - native_sim
+      - native_sim/native/64 # arm64 hosts (Apple Silicon) need this qualifier
       - mps2/an385 # A qemu alternative for macos and windows
     timeout: 60
