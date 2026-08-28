@@ -26,6 +26,17 @@
 # the ZEPHLET_ADAPTER_DEFINE macro (see zephlet.h) under a Kconfig +
 # CMake guard that depends on the participating zephlets.
 
+# Fold nanopb's generated-header barrier into Zephyr's, so every Zephyr
+# library -- not only the app that called zephyr_nanopb_sources() -- is
+# ordered after protoc. Deferred to the end of the app's directory,
+# because `include(nanopb)` creates the target after this file's
+# functions have already run.
+function(_zephlet_order_nanopb_headers)
+  if(TARGET nanopb_generated_headers)
+    add_dependencies(zephyr_generated_headers nanopb_generated_headers)
+  endif()
+endfunction()
+
 function(zephyr_zephlet_generate)
   cmake_parse_arguments(_zg "" "TYPE;PREFIX" "SOURCES;INCLUDE_DIRS" ${ARGN})
 
@@ -77,6 +88,19 @@ function(zephyr_zephlet_generate)
   # error whose outcome depends on host core count, ninja -j and the
   # ccache hit rate, so it reproduces on some build machines only.
   add_dependencies(zephyr_generated_headers ${_zg_PREFIX}_codegen)
+
+  # That header also #includes the nanopb header for this zephlet's
+  # .proto, and Zephyr hooks `nanopb_generated_headers` to the single
+  # target handed to zephyr_nanopb_sources() -- the app. Every other
+  # library including the interface header races protoc the same way,
+  # so fold nanopb's barrier into Zephyr's too. Register the hook once
+  # per build rather than once per zephlet.
+  get_property(_zg_nanopb_hooked GLOBAL PROPERTY _ZEPHLET_NANOPB_HOOKED)
+  if(NOT _zg_nanopb_hooked)
+    set_property(GLOBAL PROPERTY _ZEPHLET_NANOPB_HOOKED TRUE)
+    cmake_language(DEFER DIRECTORY ${CMAKE_SOURCE_DIR}
+                   CALL _zephlet_order_nanopb_headers)
+  endif()
 
   zephyr_include_directories(
       ${CMAKE_CURRENT_SOURCE_DIR}
