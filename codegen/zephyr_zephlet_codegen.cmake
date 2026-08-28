@@ -64,6 +64,20 @@ function(zephyr_zephlet_generate)
   add_custom_target(${_zg_PREFIX}_codegen
     DEPENDS ${_zg_GEN_H} ${_zg_GEN_C} ${_zg_GEN_COAP_H} ${_zg_GEN_COAP_C})
 
+  # Any Zephyr library may #include the generated <prefix>_interface.h,
+  # directly or transitively: the zephlet's own library, the user's
+  # `app`, and coordinator libraries that live in other modules. Zephyr
+  # gives every registered library an ordering dependency on
+  # `zephyr_generated_headers` (see zephyr/CMakeLists.txt), so hooking
+  # the codegen target there covers all of them at once, including
+  # consumers that do not exist yet.
+  #
+  # Without it ninja is free to compile such a TU before the generator
+  # has run. That surfaces as an intermittent missing-header build
+  # error whose outcome depends on host core count, ninja -j and the
+  # ccache hit rate, so it reproduces on some build machines only.
+  add_dependencies(zephyr_generated_headers ${_zg_PREFIX}_codegen)
+
   zephyr_include_directories(
       ${CMAKE_CURRENT_SOURCE_DIR}
       ${_zg_GEN_DIR}
@@ -81,19 +95,4 @@ function(zephyr_zephlet_generate)
   foreach(_src IN LISTS _zg_SOURCES)
     zephyr_library_sources("${CMAKE_CURRENT_SOURCE_DIR}/${_src}")
   endforeach()
-  add_dependencies(${ZEPHYR_CURRENT_LIBRARY} ${_zg_PREFIX}_codegen)
-
-  # The user's `app` library also #includes the generated <prefix>_interface.h
-  # transitively (via the user's <prefix>.h). Without an explicit dependency,
-  # ninja may try to compile `main.c` before the codegen finishes, which
-  # surfaces on slower hosts as a missing-header build error. Defer the
-  # `add_dependencies` call so it runs after the user's CMakeLists has
-  # declared the `app` target.
-  #
-  # `DEFER CALL` evaluates variable references at the time the deferred call
-  # runs, when `_zg_PREFIX` is already out of scope. Use `EVAL CODE` to
-  # substitute the prefix into the deferred command at registration time.
-  cmake_language(EVAL CODE
-    "cmake_language(DEFER DIRECTORY \${CMAKE_SOURCE_DIR} \
-       CALL add_dependencies app ${_zg_PREFIX}_codegen)")
 endfunction()
