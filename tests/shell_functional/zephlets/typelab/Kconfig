@@ -1,0 +1,20 @@
+config ZEPHLET_TYPELAB
+    bool "Typelab zephlet (shell functional test fixture)"
+    select NANOPB
+    select ZBUS
+    select ZBUS_ASYNC_LISTENER
+    help
+      Enable the `typelab` zephlet the shell functional test instantiates
+      as `typelab_bench` — one Config field per nanopb scalar type the
+      `zlet` shell frontend supports, plus a set_X/get_X rpc pair per
+      type, so the dispatch tests exercise every shell parse/print path
+      through real `zlet typelab_bench ...` commands, not just the
+      couple of scalar types tick/ui happen to use.
+
+if ZEPHLET_TYPELAB
+
+module = ZEPHLET_TYPELAB
+module-str = zlet_typelab
+source "subsys/logging/Kconfig.template.log_config"
+
+endif

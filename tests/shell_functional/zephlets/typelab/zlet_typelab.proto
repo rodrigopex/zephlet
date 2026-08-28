@@ -1,0 +1,152 @@
+syntax = "proto3";
+
+import "nanopb.proto";
+import "zephlet.proto";
+
+option (nanopb_fileopt).long_names = false;
+
+/* No negative-valued member -> nanopb promotes fields of this enum
+ * from ENUM to UENUM (nanopb_generator.py's has_negative() check). */
+enum TypelabUFlag {
+  TYPELAB_UFLAG_ZERO = 0;
+  TYPELAB_UFLAG_ONE = 1;
+}
+
+/* Has a negative-valued member -> stays signed ENUM. */
+enum TypelabSFlag {
+  TYPELAB_SFLAG_ZERO = 0;
+  TYPELAB_SFLAG_NEG = -1;
+}
+
+message Typelab {
+  /* One field per nanopb scalar type the `zlet` shell frontend
+   * supports (all 18) — a bench for exercising every shell value
+   * parse (`zlet typelab_bench config ...`) and print
+   * (`zlet typelab_bench get_config`) path in one place. Declaration
+   * order matches the family grouping in
+   * docs/plans/shell-frontend.md: unsigned(5),
+   * signed(7), floating(2), bool(1), bytes(2), string(1). */
+  message Config {
+    uint32 f_uint32 = 1;
+    uint64 f_uint64 = 2;
+    fixed32 f_fixed32 = 3;
+    fixed64 f_fixed64 = 4;
+    TypelabUFlag f_uenum = 5;
+
+    int32 f_int32 = 6;
+    int64 f_int64 = 7;
+    sint32 f_sint32 = 8;
+    sint64 f_sint64 = 9;
+    sfixed32 f_sfixed32 = 10;
+    sfixed64 f_sfixed64 = 11;
+    TypelabSFlag f_enum = 12;
+
+    float f_float = 13;
+    double f_double = 14;
+
+    bool f_bool = 15;
+
+    bytes f_bytes = 16 [(nanopb).max_size = 8];
+    bytes f_fixed_bytes = 17 [(nanopb).max_size = 4, (nanopb).fixed_length = true];
+
+    string f_string = 18 [(nanopb).max_size = 16];
+  }
+
+  /*
+   * One single-field wrapper message per type in Config above, so each
+   * gets its own set_X/get_X rpc pair (below) instead of only being
+   * reachable through the one big `config` call. All 18 read/write the
+   * *same* underlying storage as `config`/`get_config` — there is only
+   * one `struct typelab_config` per instance (`z->config`); these are
+   * just narrower accessors into it.
+   */
+  message Uint32Value { uint32 value = 1; }
+  message Uint64Value { uint64 value = 1; }
+  message Fixed32Value { fixed32 value = 1; }
+  message Fixed64Value { fixed64 value = 1; }
+  message UenumValue { TypelabUFlag value = 1; }
+  message Int32Value { int32 value = 1; }
+  message Int64Value { int64 value = 1; }
+  message Sint32Value { sint32 value = 1; }
+  message Sint64Value { sint64 value = 1; }
+  message Sfixed32Value { sfixed32 value = 1; }
+  message Sfixed64Value { sfixed64 value = 1; }
+  message EnumValue { TypelabSFlag value = 1; }
+  message FloatValue { float value = 1; }
+  message DoubleValue { double value = 1; }
+  message BoolValue { bool value = 1; }
+  message BytesValue { bytes value = 1 [(nanopb).max_size = 8]; }
+  message FixedBytesValue {
+    bytes value = 1 [(nanopb).max_size = 4, (nanopb).fixed_length = true];
+  }
+  message StringValue { string value = 1 [(nanopb).max_size = 16]; }
+
+  /* typelab never emits — there's no periodic or triggered behavior
+   * to report, only a config surface. A zephlet still needs an Events
+   * message (ZEPHLET_NEW's channel setup expects `struct
+   * typelab_events` to exist), so this stays a single unused field. */
+  message Events {
+    int32 timestamp = 1;
+  }
+}
+
+/*
+ * Service is informational to nanopb (no code is generated from it);
+ * the zephlet v0.3 codegen parses this block to allocate method ids in
+ * declaration order starting at 1 (0 is reserved). Service name must
+ * not collide with the message name above.
+ *
+ * config/get_config exercise all 18 shell value types in one call;
+ * the set_X/get_X pairs below exercise each one in isolation, so a
+ * single `zlet typelab_bench set_X <value>` / `get_X` round-trip can
+ * target exactly one shell parse/print path at a time.
+ */
+service TypelabApi {
+  rpc start      (Empty)           returns (Lifecycle.Status);
+  rpc stop       (Empty)           returns (Lifecycle.Status);
+  rpc get_status (Empty)           returns (Lifecycle.Status);
+  rpc config     (Typelab.Config)  returns (Typelab.Config);
+  rpc get_config (Empty)           returns (Typelab.Config);
+
+  rpc set_uint32      (Typelab.Uint32Value)      returns (Typelab.Uint32Value);
+  rpc get_uint32      (Empty)                    returns (Typelab.Uint32Value);
+  rpc set_uint64      (Typelab.Uint64Value)      returns (Typelab.Uint64Value);
+  rpc get_uint64      (Empty)                    returns (Typelab.Uint64Value);
+  rpc set_fixed32     (Typelab.Fixed32Value)     returns (Typelab.Fixed32Value);
+  rpc get_fixed32     (Empty)                    returns (Typelab.Fixed32Value);
+  rpc set_fixed64     (Typelab.Fixed64Value)     returns (Typelab.Fixed64Value);
+  rpc get_fixed64     (Empty)                    returns (Typelab.Fixed64Value);
+  rpc set_uenum       (Typelab.UenumValue)       returns (Typelab.UenumValue);
+  rpc get_uenum       (Empty)                    returns (Typelab.UenumValue);
+
+  rpc set_int32       (Typelab.Int32Value)       returns (Typelab.Int32Value);
+  rpc get_int32       (Empty)                    returns (Typelab.Int32Value);
+  rpc set_int64       (Typelab.Int64Value)       returns (Typelab.Int64Value);
+  rpc get_int64       (Empty)                    returns (Typelab.Int64Value);
+  rpc set_sint32      (Typelab.Sint32Value)      returns (Typelab.Sint32Value);
+  rpc get_sint32      (Empty)                    returns (Typelab.Sint32Value);
+  rpc set_sint64      (Typelab.Sint64Value)      returns (Typelab.Sint64Value);
+  rpc get_sint64      (Empty)                    returns (Typelab.Sint64Value);
+  rpc set_sfixed32    (Typelab.Sfixed32Value)    returns (Typelab.Sfixed32Value);
+  rpc get_sfixed32    (Empty)                    returns (Typelab.Sfixed32Value);
+  rpc set_sfixed64    (Typelab.Sfixed64Value)    returns (Typelab.Sfixed64Value);
+  rpc get_sfixed64    (Empty)                    returns (Typelab.Sfixed64Value);
+  rpc set_enum        (Typelab.EnumValue)        returns (Typelab.EnumValue);
+  rpc get_enum        (Empty)                    returns (Typelab.EnumValue);
+
+  rpc set_float       (Typelab.FloatValue)       returns (Typelab.FloatValue);
+  rpc get_float       (Empty)                    returns (Typelab.FloatValue);
+  rpc set_double      (Typelab.DoubleValue)      returns (Typelab.DoubleValue);
+  rpc get_double      (Empty)                    returns (Typelab.DoubleValue);
+
+  rpc set_bool        (Typelab.BoolValue)        returns (Typelab.BoolValue);
+  rpc get_bool        (Empty)                    returns (Typelab.BoolValue);
+
+  rpc set_bytes       (Typelab.BytesValue)       returns (Typelab.BytesValue);
+  rpc get_bytes       (Empty)                    returns (Typelab.BytesValue);
+  rpc set_fixed_bytes  (Typelab.FixedBytesValue) returns (Typelab.FixedBytesValue);
+  rpc get_fixed_bytes  (Empty)                   returns (Typelab.FixedBytesValue);
+
+  rpc set_string      (Typelab.StringValue)      returns (Typelab.StringValue);
+  rpc get_string      (Empty)                    returns (Typelab.StringValue);
+}

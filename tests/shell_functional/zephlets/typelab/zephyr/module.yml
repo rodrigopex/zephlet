@@ -1,0 +1,4 @@
+name: zlet_typelab
+build:
+  cmake: .
+  kconfig: Kconfig

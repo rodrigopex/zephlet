@@ -265,18 +265,34 @@ naming/dispatch/ergonomics detail the issue flagged as open, or an
 improvement the issue's own reasoning (§1's aggregator precedent) already
 pointed toward without spelling out.
 
-## Known integration gotcha
+## Known integration gotchas
 
-`zlet_shell_print_float()`/`_print_double()` use `"%g"`. Zephyr's
-`cbprintf` silently **drops** floating-point conversions unless built
-with `CONFIG_CBPRINTF_COMPLETE=y` and `CONFIG_CBPRINTF_FP_SUPPORT=y` — a
-zephlet with a `float`/`double` field will otherwise print the literal
-string `f_float = %g` instead of the value (caught by
-`test_round_trip_decimal_and_hex_all_18_fields` in
-`tests/shell_macros/`, and now documented on `CONFIG_ZEPHLETS_SHELL`'s
-own Kconfig help). Neither symbol is force-selected — the cost is
-real (code size) and most zephlets have no float/double shell field —
-so an app author with one must opt in explicitly.
+- **Float/double printing.** `zlet_shell_print_float()`/`_print_double()`
+  use `"%g"`. Zephyr's `cbprintf` silently **drops** floating-point
+  conversions unless built with `CONFIG_CBPRINTF_COMPLETE=y` and
+  `CONFIG_CBPRINTF_FP_SUPPORT=y` — a zephlet with a `float`/`double`
+  field will otherwise print the literal string `f_float = %g` instead
+  of the value (caught by `test_round_trip_decimal_and_hex_all_18_fields`
+  in `tests/shell_macros/`, and now documented on `CONFIG_ZEPHLETS_SHELL`'s
+  own Kconfig help). Neither symbol is force-selected — the cost is
+  real (code size) and most zephlets have no float/double shell field —
+  so an app author with one must opt in explicitly.
+- **`CONFIG_SHELL_ARGC_MAX` (default 20).** Counts every token
+  including `zlet`, the instance name, and the RPC name itself — a
+  zephlet whose aggregate `config`/`get_config` carries more than
+  ~17 fields overflows it with `Too many arguments in the command.`
+  (`typelab_bench`'s 18-field `Config` needs 21 tokens; caught by
+  `tests/shell_functional/pytest/test_typelab_types.py`, which raises
+  it to 32 in its own `prj.conf`). Only matters for a `config` call
+  with many fields — the per-type `set_X`/`get_X` pairs never approach
+  this ceiling.
+- **`CONFIG_SHELL_DEFAULT_TERMINAL_WIDTH` (default 80).** A long
+  command line wraps across physical lines when the shell echoes it
+  back — harmless for a real console (or a test driving the shell with
+  raw byte comparison), but breaks `twister_harness.Shell.exec_command()`,
+  whose echo-matching regex only looks at a single line. Same
+  `typelab_bench` `config` call above needed this raised to 400 in the
+  test's `prj.conf` for `pytest` to see its own echoed command.
 
 ## Testing
 
@@ -304,6 +320,19 @@ so an app author with one must opt in explicitly.
   and that they're byte-identical whether or not the CoAP opt-in option
   is set; a third asserts `_ZLET_SHELL_HOOK_tick` is chained into
   `_ZLET_FRONTEND_HOOKS_tick` alongside the CoAP hook.
+- `tests/shell_functional/pytest/test_typelab_types.py` (added a 4th
+  instance, `typelab_bench`, to the same fixture app): full-type-coverage
+  RPC round-trip over the *real* shell — one `set_X`/`get_X` pair per
+  nanopb scalar type (`zlet_typelab.proto`'s `Config` mirrors
+  `tests/shell_macros/src/fixture.proto`'s 18 fields, plus a matching
+  `set_X`/`get_X` rpc pair per field). Neither `tests/shell_macros`
+  (bypasses real shell dispatch) nor `tests/shell_functional`'s other
+  tests (only ever touch `tick`'s two `uint32` fields) prove every type
+  dispatches correctly through an actual `zlet typelab_bench set_X
+  <value>` typed at a real console — this does, and also proves the
+  aggregate `config`/`get_config` and the narrower `set_X`/`get_X`
+  pairs read/write the *same* `struct typelab_config` (set via one
+  surface, read back via the other, in both directions).
 - `tests/coap_functional/pytest/test_dual_frontend.py` (new scenario,
   `zephlet.coap_functional.dual_frontend`, `CONFIG_ZEPHLETS_SHELL=y`
   added on top of `tick_fast`'s existing CoAP opt-in): proves the two

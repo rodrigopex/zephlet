@@ -22,3 +22,10 @@ tests:
     harness_config:
       pytest_root:
         - "pytest/test_multi_instance.py"
+  zephlet.shell_functional.typelab_types:
+    # Full-type-coverage RPC round-trip over the real shell, using
+    # typelab_bench (zephlets/typelab/) — one set_X/get_X pair per
+    # nanopb scalar type the shell frontend supports.
+    harness_config:
+      pytest_root:
+        - "pytest/test_typelab_types.py"
