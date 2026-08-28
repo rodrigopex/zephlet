@@ -133,6 +133,18 @@ jobs:
             --inline-logs --jobs 1 \
             -O /tmp/twister-out-dtls
 
+      - name: Run codegen build-order regression test
+        # Deterministic guard for generated-header ordering: builds one
+        # consumer object in isolation, so no unrelated edge can pull the
+        # generators in and mask a missing dependency. EXTRA_ZEPHYR_MODULES
+        # is set by the fixture's own CMakeLists, so the job-level
+        # ZEPHYR_EXTRA_MODULES is cleared to avoid declaring the infra
+        # module twice.
+        env:
+          ZEPHYR_BASE: ${{ github.workspace }}/zephyr
+          ZEPHYR_EXTRA_MODULES: ""
+        run: pytest -v modules/lib/zephlet/tests/codegen_order/
+
       - name: Upload twister artefacts on failure
         if: failure()
         uses: actions/upload-artifact@v4
