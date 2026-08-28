@@ -36,8 +36,7 @@ int ui_get_status_impl(const struct zephlet *z, struct lifecycle_status *resp)
 	return 0;
 }
 
-int ui_config_impl(const struct zephlet *z, const struct ui_config *req,
-		   struct ui_config *resp)
+int ui_config_impl(const struct zephlet *z, const struct ui_config *req, struct ui_config *resp)
 {
 	struct ui_config *cfg = z->config;
 

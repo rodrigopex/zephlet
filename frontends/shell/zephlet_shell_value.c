@@ -114,8 +114,7 @@ int zlet_shell_parse_bool(const char *tok, bool *out)
 	return -EINVAL;
 }
 
-int zlet_shell_parse_hexbytes(const char *tok, uint8_t *out, size_t max_len,
-			       size_t *out_len)
+int zlet_shell_parse_hexbytes(const char *tok, uint8_t *out, size_t max_len, size_t *out_len)
 {
 	size_t hexlen;
 	size_t nbytes;
@@ -179,8 +178,8 @@ void zlet_shell_print_bool(const struct shell *sh, const char *name, bool v)
 	shell_print(sh, "%s = %s", name, v ? "true" : "false");
 }
 
-void zlet_shell_print_hexbytes(const struct shell *sh, const char *name,
-				const uint8_t *data, size_t len)
+void zlet_shell_print_hexbytes(const struct shell *sh, const char *name, const uint8_t *data,
+			       size_t len)
 {
 	char buf[2 * ZLET_SHELL_PRINT_HEX_MAX_BYTES + 1];
 	size_t print_len = MIN(len, ZLET_SHELL_PRINT_HEX_MAX_BYTES);

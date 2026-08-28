@@ -59,8 +59,7 @@ int zlet_shell_parse_bool(const char *tok, bool *out);
  * @retval -EINVAL malformed token (missing prefix, odd length, bad hex).
  * @retval -ENOSPC decoded length would exceed max_len.
  */
-int zlet_shell_parse_hexbytes(const char *tok, uint8_t *out, size_t max_len,
-			       size_t *out_len);
+int zlet_shell_parse_hexbytes(const char *tok, uint8_t *out, size_t max_len, size_t *out_len);
 
 /**
  * @brief Bounded copy of `tok` into a fixed `char[cap]` string field.
@@ -78,8 +77,8 @@ void zlet_shell_print_uint(const struct shell *sh, const char *name, uint64_t v)
 void zlet_shell_print_int(const struct shell *sh, const char *name, int64_t v);
 void zlet_shell_print_float(const struct shell *sh, const char *name, double v);
 void zlet_shell_print_bool(const struct shell *sh, const char *name, bool v);
-void zlet_shell_print_hexbytes(const struct shell *sh, const char *name,
-				const uint8_t *data, size_t len);
+void zlet_shell_print_hexbytes(const struct shell *sh, const char *name, const uint8_t *data,
+			       size_t len);
 void zlet_shell_print_string(const struct shell *sh, const char *name, const char *s);
 
 #endif /* ZEPHLET_SHELL_VALUE_H_ */
