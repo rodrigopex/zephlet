@@ -1,0 +1,4 @@
+name: zlet_tick
+build:
+  cmake: .
+  kconfig: Kconfig

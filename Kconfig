@@ -218,6 +218,35 @@ config ZEPHLETS_COAP_MAX_OBSERVERS
       raise it when clients fan out with several observers per instance,
       lower it to bound RAM.
 
+config ZEPHLETS_SHELL
+    bool "Static shell frontend for zephlets"
+    select SHELL
+    help
+      Expose every ZLET_SHELL_INSTANCE()'d instance's RPCs under one
+      `zlet` shell root command, entirely via compile-time-generated
+      SHELL_STATIC_SUBCMD_SET_CREATE trees — see
+      docs/plans/shell-frontend.md. No per-service proto opt-in:
+      enabling shell already implies local, privileged console access.
+
+      If any exposed zephlet's proto has a `float`/`double` field,
+      also enable CONFIG_CBPRINTF_COMPLETE and CONFIG_CBPRINTF_FP_SUPPORT
+      — cbprintf drops "%g"/"%f" conversions without them, and the
+      printed value silently becomes the literal format string.
+
+config ZEPHLETS_SHELL_CMD_TIMEOUT_MS
+    int "Timeout for publishing a shell-originated call onto the command channel (ms)"
+    depends on ZEPHLETS_SHELL
+    default 1000
+    help
+      Upper bound a `zlet` shell command is willing to wait for
+      `zbus_chan_pub()` on a zephlet's `command` channel before
+      reporting the error to the console. Only the channel mutex
+      contention is relevant — the sync listener runs in the shell
+      thread, so this never times out a handler making forward
+      progress. Longer than CoAP's default (see
+      ZEPHLETS_COAP_CMD_TIMEOUT_MS) since a human at a console is far
+      more timeout-tolerant than a network client.
+
 module = ZEPHLET
 module-str = zephlet
 source "subsys/logging/Kconfig.template.log_config"

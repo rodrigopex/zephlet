@@ -1,0 +1,18 @@
+config ZEPHLET_UI
+    bool "UI zephlet (shell functional test fixture)"
+    select NANOPB
+    select ZBUS
+    select ZBUS_ASYNC_LISTENER
+    help
+      Enable the `ui` zephlet copy used by the shell functional test to
+      register a second type (`ui_main`) alongside `tick_fast`/
+      `tick_slow`, so the no-cross-talk assertions cover both
+      multi-instance (same type) and multi-type cases.
+
+if ZEPHLET_UI
+
+module = ZEPHLET_UI
+module-str = zlet_ui
+source "subsys/logging/Kconfig.template.log_config"
+
+endif

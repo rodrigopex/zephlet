@@ -31,6 +31,34 @@ enum {{ type_snake }}_method_id {
 /** Method dispatch table exposed via ZEPHLET_NEW({{ type_snake }}, ...). */
 extern const struct zephlet_api {{ type_snake }}_api;
 
+/* Shell-frontend method table. One row per RPC, in declaration order:
+ * (name, req struct name, req _FIELDLIST macro name, resp struct name,
+ * resp _FIELDLIST macro name, call shape) — nanopb's own generated
+ * names, so the shell macro framework (frontends/shell/) can walk each
+ * field without any new proto parsing. 'Empty' has no generated struct;
+ * the shared zephlet.proto Empty message's own EMPTY_FIELDLIST macro is
+ * used instead. `call shape` is one of EMPTY_EMPTY/EMPTY_RESP/REQ_EMPTY/
+ * REQ_RESP, decided here (codegen already knows req/resp_is_empty) so
+ * the shell macros never infer it from a name match. Always emitted —
+ * a compile-time table, never a function call, so it costs nothing
+ * unless ZLET_SHELL_INSTANCE() is used. */
+#define {{ type_upper }}_SHELL_METHODS(X) \
+{% for cmd in commands %}
+	X({{ cmd.name }}, {{ cmd.req_shell_lc }}, {{ cmd.req_shell_uc }}, {{ cmd.resp_shell_lc }}, {{ cmd.resp_shell_uc }}, {{ cmd.shell_call_shape }}){% if not loop.last %} \{% endif %}
+
+{% endfor %}
+/* Same rows, with the zephlet type baked in literally as each row's
+ * first field (not forwarded as a macro parameter) so the macro's own
+ * name can be pasted directly from the lowercase `_type` token passed
+ * to ZLET_SHELL_INSTANCE(_type, _instance) — mirrors this file's own
+ * `_ZLET_COAP_HOOK_{{ type_snake }}` convention above. See
+ * ZLET_SHELL_INSTANCE() in zephlet_shell_macros.h. */
+#define _ZLET_SHELL_METHODS_APPLY_{{ type_snake }}(_instance, X) \
+{% for cmd in commands %}
+	X({{ type_snake }}, _instance, {{ cmd.name }}, {{ cmd.req_shell_lc }}, {{ cmd.req_shell_uc }}, {{ cmd.resp_shell_lc }}, {{ cmd.resp_shell_uc }}, {{ cmd.shell_call_shape }}){% if not loop.last %} \{% endif %}
+
+{% endfor %}
+
 /* Per-type frontend aggregator expanded by ZEPHLET_NEW_PRIO for every
  * instance of `{{ type_snake }}`. Chains every known frontend's per-type
  * hook macro. Macro expansion is lazy, so a frontend override (defined

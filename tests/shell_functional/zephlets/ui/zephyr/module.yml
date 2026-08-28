@@ -1,0 +1,4 @@
+name: zlet_ui
+build:
+  cmake: .
+  kconfig: Kconfig

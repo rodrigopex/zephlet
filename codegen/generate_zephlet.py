@@ -261,6 +261,8 @@ def parse_proto(proto_path: str) -> dict:
 
         req_c = message_c_name(input_type, owning_type)
         resp_c = message_c_name(output_type, owning_type)
+        req_shell_lc = req_c or "empty"
+        resp_shell_lc = resp_c or "empty"
 
         commands.append({
             "name": method.name,
@@ -271,6 +273,23 @@ def parse_proto(proto_path: str) -> dict:
             "resp_is_empty": (output_type == "Empty"),
             "req_desc": nanopb_descriptor(req_c) or None,
             "resp_desc": nanopb_descriptor(resp_c) or None,
+            # Nanopb's own per-message _FIELDLIST macro name, used by the
+            # shell frontend's macro framework to walk each field. 'Empty'
+            # has no generated struct (req_c/resp_c == ""), but the shared
+            # zephlet.proto Empty message still emits EMPTY_FIELDLIST.
+            "req_shell_lc": req_shell_lc,
+            "req_shell_uc": req_shell_lc.upper(),
+            "resp_shell_lc": resp_shell_lc,
+            "resp_shell_uc": resp_shell_lc.upper(),
+            # Which of the 4 wrapper call shapes this RPC needs — decided
+            # here (codegen already knows req/resp_is_empty) so the shell
+            # macro framework never has to infer it from a name match.
+            "shell_call_shape": (
+                "EMPTY_EMPTY" if (input_type == "Empty" and output_type == "Empty") else
+                "EMPTY_RESP" if input_type == "Empty" else
+                "REQ_EMPTY" if output_type == "Empty" else
+                "REQ_RESP"
+            ),
         })
         next_id += 1
 

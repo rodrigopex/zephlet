@@ -213,6 +213,51 @@ def test_discoverable_base_only_emits_instances_no_apis(tmp_path):
 	assert "ZEPHLET_COAP_HIDDEN" not in coap_c
 
 
+def test_shell_methods_emitted_for_every_rpc(tmp_path):
+	"""`<TYPE>_SHELL_METHODS(X)` / `_ZLET_SHELL_METHODS_APPLY_<type>(...)`
+	always render (no opt-in gate — shell exposure is per-app, not
+	per-proto), with one X() row per RPC in declaration order, the
+	uppercase _FIELDLIST macro name for Empty request/response
+	messages resolved to EMPTY (not the blank req_c_name), and the
+	correct 4-shape call_shape token."""
+	_run_codegen(_FIXTURES / "tick_no_opt.proto", tmp_path)
+	header = (tmp_path / "zlet_tick_interface.h").read_text()
+
+	assert "#define TICK_SHELL_METHODS(X)" in header
+	assert "#define _ZLET_SHELL_METHODS_APPLY_tick(_instance, X)" in header
+
+	# start/stop/get_status/dump_state-less base set: Empty req, non-Empty resp.
+	assert "X(start, empty, EMPTY, lifecycle_status, LIFECYCLE_STATUS, EMPTY_RESP)" in header
+	# config: non-Empty req and resp.
+	assert "X(config, tick_config, TICK_CONFIG, tick_config, TICK_CONFIG, REQ_RESP)" in header
+	# get_config: Empty req, non-Empty resp.
+	assert "X(get_config, empty, EMPTY, tick_config, TICK_CONFIG, EMPTY_RESP)" in header
+
+	# The _APPLY rows carry the same tuples with the type baked in
+	# literally as the first field (not forwarded as a macro parameter).
+	assert "X(tick, _instance, config, tick_config, TICK_CONFIG, tick_config, TICK_CONFIG, REQ_RESP)" in header
+
+
+def test_shell_methods_invariant_across_coap_opt_in(tmp_path):
+	"""The shell macro table doesn't depend on the CoAP opt-in option —
+	same rows whether or not `option (zephlet.coap) = true;` is set."""
+	dir_no = tmp_path / "no"
+	dir_yes = tmp_path / "yes"
+	dir_no.mkdir()
+	dir_yes.mkdir()
+
+	_run_codegen(_FIXTURES / "tick_no_opt.proto", dir_no)
+	_run_codegen(_FIXTURES / "tick_opted.proto", dir_yes)
+
+	def shell_block(d):
+		header = (d / "zlet_tick_interface.h").read_text()
+		start = header.index("#define TICK_SHELL_METHODS(X)")
+		end = header.index("/* Per-type frontend aggregator")
+		return header[start:end]
+
+	assert shell_block(dir_no) == shell_block(dir_yes)
+
+
 def test_discoverable_missing_method_is_rejected(tmp_path):
 	"""Codegen must surface a diagnostic naming the missing base methods
 	and exit non-zero rather than emit a half-broken interface."""

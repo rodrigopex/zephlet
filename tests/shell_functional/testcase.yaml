@@ -1,0 +1,24 @@
+common:
+  tags: zephlet shell pytest
+  harness: pytest
+  timeout: 60
+  platform_allow:
+    - native_sim
+    - native_sim/native/64
+tests:
+  zephlet.shell_functional.smoke:
+    harness_config:
+      pytest_root:
+        - "pytest/test_smoke.py"
+  zephlet.shell_functional.rpc:
+    harness_config:
+      pytest_root:
+        - "pytest/test_rpc.py"
+  zephlet.shell_functional.errors:
+    harness_config:
+      pytest_root:
+        - "pytest/test_errors.py"
+  zephlet.shell_functional.multi_instance:
+    harness_config:
+      pytest_root:
+        - "pytest/test_multi_instance.py"

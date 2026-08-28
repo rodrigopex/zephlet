@@ -1,0 +1,48 @@
+syntax = "proto3";
+
+import "nanopb.proto";
+
+option (nanopb_fileopt).long_names = false;
+
+/* No negative-valued member -> nanopb promotes this enum's fields from
+ * ENUM to UENUM (see nanopb_generator.py's has_negative() check). */
+enum UFlag {
+  UFLAG_ZERO = 0;
+  UFLAG_ONE = 1;
+}
+
+/* Has a negative-valued member -> stays ENUM (signed). */
+enum SFlag {
+  SFLAG_ZERO = 0;
+  SFLAG_NEG = -1;
+}
+
+/* One field per nanopb scalar ltype token the shell macro framework
+ * supports — all 18 (see docs/plans/shell-frontend.md §2/§6). Declaration
+ * order matches the family table there: unsigned(5), signed(7),
+ * floating(2), bool(1), bytes(2), string(1). */
+message Fixture {
+  uint32 f_uint32 = 1;
+  uint64 f_uint64 = 2;
+  fixed32 f_fixed32 = 3;
+  fixed64 f_fixed64 = 4;
+  UFlag f_uenum = 5;
+
+  int32 f_int32 = 6;
+  int64 f_int64 = 7;
+  sint32 f_sint32 = 8;
+  sint64 f_sint64 = 9;
+  sfixed32 f_sfixed32 = 10;
+  sfixed64 f_sfixed64 = 11;
+  SFlag f_enum = 12;
+
+  float f_float = 13;
+  double f_double = 14;
+
+  bool f_bool = 15;
+
+  bytes f_bytes = 16 [(nanopb).max_size = 8];
+  bytes f_fixed_bytes = 17 [(nanopb).max_size = 4, (nanopb).fixed_length = true];
+
+  string f_string = 18 [(nanopb).max_size = 16];
+}

@@ -79,6 +79,44 @@ Frontends share these invariants:
 - Adding a new frontend = (a) one Kconfig, (b) one opt-in proto option,
   (c) one codegen branch, (d) one runtime module — no zephlet rewrite.
 
+## Addendum: shell's build-gating differs from the pattern above
+
+The shell frontend (#53, [`../plans/shell-frontend.md`](../plans/shell-frontend.md))
+follows every invariant above except one: it has **no per-service proto
+opt-in** and **no aggregator-macro hook**. `ZLET_SHELL_INSTANCE(_type,
+_instance)` is a macro the app author invokes explicitly, once per
+instance — usually right after that instance's `ZEPHLET_NEW(...)` call —
+not something wired into `zephlet.h`'s `_ZLET_FRONTEND_HOOKS_<type>`
+aggregator the way `_ZLET_COAP_HOOK_<type>` is. `zephlet.h` and
+`zephlet_interface.h.jinja`'s aggregator plumbing stay byte-unchanged by
+the shell frontend.
+
+This is a deliberate, narrower case, not a gap in the pattern:
+
+- **Why no per-service opt-in.** CoAP's opt-in exists because a network
+  frontend changes a zephlet's *exposure surface* — a proto author must
+  consciously choose to put an RPC on the wire. Shell has no such
+  question: `CONFIG_ZEPHLETS_SHELL=y` already means "local, privileged
+  console access to this binary," a broader trust boundary than any
+  individual zephlet's opt-in could narrow.
+- **Why no aggregator hook, and therefore no disabled-build hash-gate
+  requirement.** CoAP's aggregator hook exists so a *disabled* frontend
+  costs nothing while still letting an *opted-in* zephlet's interface
+  header `#include` the frontend's generated artifact unconditionally.
+  Shell's `ZLET_SHELL_INSTANCE`/`ZLET_SHELL_DEFINE` calls live in
+  application code (`main.c`), guarded the ordinary way — an app that
+  never calls them, or wraps the calls in `#if
+  defined(CONFIG_ZEPHLETS_SHELL)`, has zero shell-frontend code in its
+  build. There is no "did a hook leak into the disabled build" risk
+  class to gate against, because there is no hook.
+- **The one thing that *is* unconditional**, matching CoAP's aggregator
+  spirit: `<TYPE>_SHELL_METHODS`/`_ZLET_SHELL_METHODS_APPLY_<type>` in
+  `<prefix>_interface.h` always render, opt-in or not (verified
+  byte-identical across the CoAP opt-in toggle by
+  `test_shell_methods_invariant_across_coap_opt_in`). They cost nothing
+  unused: a `#define` table is not a function call, and nothing
+  references it unless `ZLET_SHELL_INSTANCE` is invoked for that type.
+
 ## Alternatives considered
 
 - **Rewrite each zephlet for each transport.** Rejected: explodes
@@ -96,5 +134,6 @@ Frontends share these invariants:
 | Frontend | Status | Plan |
 |---|---|---|
 | CoAP | Proposed (v1) | [`../plans/coap-frontend.md`](../plans/coap-frontend.md) |
+| Shell | Implemented (v1) | [`../plans/shell-frontend.md`](../plans/shell-frontend.md) |
 | gRPC | Deferred | — |
 | MQTT | Deferred | — |
