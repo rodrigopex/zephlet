@@ -34,6 +34,19 @@ tests:
     harness_config:
       pytest_root:
         - "pytest/test_observe.py"
+  zephlet.coap_functional.dual_frontend:
+    # Proves the CoAP and shell hooks chained into the same
+    # `_ZLET_FRONTEND_HOOKS_tick` (zephlet_interface.h.jinja) both fire
+    # for tick_fast, operating on the *same* live instance: a config
+    # write through one frontend must be readable through the other.
+    # Same UART-to-stdio routing as .connmgr, needed for the `shell`
+    # fixture to reach the console over this harness.
+    extra_configs:
+      - CONFIG_ZEPHLETS_SHELL=y
+      - CONFIG_UART_NATIVE_PTY_0_ON_STDINOUT=y
+    harness_config:
+      pytest_root:
+        - "pytest/test_dual_frontend.py"
   zephlet.coap_functional.connmgr:
     # Exercises the CONFIG_NET_CONNECTION_MANAGER start/stop path in
     # zlet_coap_on_l4_event (zephlet_coap_frontend.c) end to end: the

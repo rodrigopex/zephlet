@@ -63,9 +63,14 @@ extern const struct zephlet_api {{ type_snake }}_api;
  * instance of `{{ type_snake }}`. Chains every known frontend's per-type
  * hook macro. Macro expansion is lazy, so a frontend override (defined
  * below by `<prefix>_<frontend>_interface.h`) wins at the `ZEPHLET_NEW`
- * call site. */
+ * call site. Each hook gets its own trailing `;` here (rather than
+ * relying solely on the caller's own `ZEPHLET_NEW(...);`) since a hook
+ * may expand to several chained declarations, or to none at all when
+ * its frontend is disabled — either way the next hook (or the caller's
+ * final `;`) needs a clean statement boundary to start from. */
 #define _ZLET_FRONTEND_HOOKS_{{ type_snake }}(_name) \
-	_ZLET_COAP_HOOK_{{ type_snake }}(_name)
+	_ZLET_COAP_HOOK_{{ type_snake }}(_name); \
+	_ZLET_SHELL_HOOK_{{ type_snake }}(_name);
 
 {% if coap_opt_in %}
 /* Frontend overrides are included first so their `#define` of the
@@ -79,6 +84,17 @@ extern const struct zephlet_api {{ type_snake }}_api;
  * aggregator expands to nothing. */
 #ifndef _ZLET_COAP_HOOK_{{ type_snake }}
 #define _ZLET_COAP_HOOK_{{ type_snake }}(_name) /* empty */
+#endif
+
+/* Shell has no per-service proto opt-in (see ADR-0001's addendum) — its
+ * hook is gated purely by CONFIG_ZEPHLETS_SHELL, not by an included
+ * override header, so a plain #if/#else suffices here (no #ifndef
+ * fallback needed, unlike CoAP above). */
+#if defined(CONFIG_ZEPHLETS_SHELL)
+#include "zephlet_shell_macros.h"
+#define _ZLET_SHELL_HOOK_{{ type_snake }}(_name) ZLET_SHELL_INSTANCE({{ type_snake }}, _name)
+#else
+#define _ZLET_SHELL_HOOK_{{ type_snake }}(_name) /* empty: CONFIG_ZEPHLETS_SHELL disabled */
 #endif
 
 /* ----- Synchronous command wrappers ------------------------------------ */

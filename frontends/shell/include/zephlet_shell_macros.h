@@ -14,7 +14,6 @@
 
 #include <zephyr/kernel.h>
 #include <zephyr/shell/shell.h>
-#include <zephyr/sys/util_macro.h>
 
 #include "zephlet_shell_value.h"
 
@@ -297,10 +296,19 @@ zlet_shell_bad:                                                                 
 
 /* ----- Per-instance registration ----------------------------------------
  *
- * Invoke once per `ZEPHLET_NEW(...)` instance, e.g. right after it:
+ * Invoked automatically by ZEPHLET_NEW(...)/ZEPHLET_NEW_PRIO(...) for
+ * every instance, via the per-type `_ZLET_SHELL_HOOK_<type>` hook that
+ * `zephlet_interface.h.jinja` chains into `_ZLET_FRONTEND_HOOKS_<type>`
+ * when CONFIG_ZEPHLETS_SHELL=y — mirroring the CoAP frontend's own hook
+ * (see ADR-0001). No app-level call needed.
  *
- *   ZEPHLET_NEW(tick, tick_fast, &tick_fast_cfg, &tick_fast_data, tick_init_fn);
- *   ZLET_SHELL_INSTANCE(tick, tick_fast);
+ * Registration into the `zlet` root command uses Zephyr's decentralized,
+ * multi-file shell subcommand mechanism (SHELL_SUBCMD_SET_CREATE +
+ * SHELL_SUBCMD_ADD — see zephyr/subsys/shell/modules/kernel_service/ for
+ * the in-tree precedent), so no central manifest of instance names is
+ * needed either: each instance's translation unit adds itself to the
+ * `zlet` parent's iterable subcommand section independently. The root
+ * itself is defined once, unconditionally, in zephlet_shell_root.c.
  *
  * `_ZLET_SHELL_METHODS_APPLY_<type>` is emitted by generate_zephlet.py
  * with `<type>` baked in literally (not pasted from `_type` here), so no
@@ -310,22 +318,8 @@ zlet_shell_bad:                                                                 
 		SHELL_STATIC_SUBCMD_SET_CREATE(                                                    \
 			_zlet_shell_subcmds_##_instance,                                           \
 			_ZLET_SHELL_METHODS_APPLY_##_type(_instance, ZLET_SHELL_SUBCMD_ENTRY)      \
-				SHELL_SUBCMD_SET_END)
-
-/* ----- Top-level manifest ------------------------------------------------
- *
- * Invoke exactly once, after every ZLET_SHELL_INSTANCE(...) call, listing
- * every instance that should appear under the `zlet` root command:
- *
- *   ZLET_SHELL_DEFINE(tick_fast, tick_slow, ui_main);
- */
-#define ZLET_SHELL_ENTRY(_instance)                                                                \
-	SHELL_CMD(_instance, &_zlet_shell_subcmds_##_instance, "Zephlet instance", NULL),
-
-#define ZLET_SHELL_DEFINE(...)                                                                     \
-	SHELL_STATIC_SUBCMD_SET_CREATE(zlet_shell_instances,                                       \
-				       FOR_EACH(ZLET_SHELL_ENTRY, (), __VA_ARGS__)                 \
-					       SHELL_SUBCMD_SET_END);                              \
-	SHELL_CMD_REGISTER(zlet, &zlet_shell_instances, "Invoke a zephlet instance's RPC.", NULL)
+				SHELL_SUBCMD_SET_END);                                             \
+	SHELL_SUBCMD_ADD((zlet), _instance, &_zlet_shell_subcmds_##_instance, "Zephlet instance",  \
+			 NULL, 1, 0)
 
 #endif /* ZEPHLET_SHELL_MACROS_H_ */

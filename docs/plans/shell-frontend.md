@@ -34,11 +34,19 @@ strings), zero runtime introspection.
   at compile time, to one call per field carrying the field's C member
   name and nanopb's own exact type token. An empty message expands to
   nothing — no special-casing for `Empty` needed.
-- **No per-service proto opt-in.** Unlike CoAP (see ADR-0001), shell
-  exposure is gated only by `CONFIG_ZEPHLETS_SHELL` — enabling shell
-  already implies local, privileged console access. `ZLET_SHELL_INSTANCE`
-  is a separate macro the app author invokes explicitly per instance, not
-  wired into `zephlet.h`'s frontend aggregator.
+- **No per-service proto opt-in, but full frontend-hook auto-registration.**
+  Unlike CoAP (see ADR-0001), shell exposure is gated only by
+  `CONFIG_ZEPHLETS_SHELL` — enabling shell already implies local,
+  privileged console access, so there's no per-service opt-in to make.
+  What shell *does* share with CoAP: `_ZLET_SHELL_HOOK_<type>` is chained
+  into `_ZLET_FRONTEND_HOOKS_<type>` exactly like `_ZLET_COAP_HOOK_<type>`
+  is, so a plain `ZEPHLET_NEW(...)` call registers the instance under the
+  `zlet` shell root automatically — no app-level `ZLET_SHELL_INSTANCE`
+  call, no manifest of instance names. Root-level registration uses
+  Zephyr's own decentralized multi-file shell mechanism
+  (`SHELL_SUBCMD_SET_CREATE`/`SHELL_SUBCMD_ADD`, the same primitive the
+  in-tree `kernel`/`thread` commands use) so each instance's translation
+  unit can add itself independently. See "Deviations" below.
 - **Family-based value dispatch, not per-token.** nanopb's full scalar
   `ltype` set (21 tokens: `BOOL, BYTES, DOUBLE, ENUM, UENUM, FIXED32,
   FIXED64, FLOAT, INT32, INT64, MESSAGE, MSG_W_CB, SFIXED32, SFIXED64,
@@ -135,10 +143,29 @@ file:
   `mandatory = 1 + ZLET_SHELL_FIELD_COUNT(...)` (Zephyr's `mandatory`
   counts the command token itself).
 - `ZLET_SHELL_INSTANCE(_type, _instance)` — defines every handler for
-  that instance, then its own `SHELL_STATIC_SUBCMD_SET_CREATE`.
-- `ZLET_SHELL_DEFINE(...)` — the one-time top-level manifest, using
-  Zephyr's `FOR_EACH` (`zephyr/sys/util_macro.h`) to build the `zlet`
-  root command's subcommand set.
+  that instance, builds its own `SHELL_STATIC_SUBCMD_SET_CREATE`, then
+  self-registers under the `zlet` root via
+  `SHELL_SUBCMD_ADD((zlet), _instance, &_zlet_shell_subcmds_##_instance, ...)`.
+  Invoked automatically, once per instance, by the
+  `_ZLET_SHELL_HOOK_<type>` hook chained into `zephlet.h`'s
+  `_ZLET_FRONTEND_HOOKS_<type>` (see §1 and "Deviations" below) — never
+  called directly by application code.
+
+The `zlet` root command itself is defined exactly once, unconditionally,
+in `frontends/shell/zephlet_shell_root.c`:
+```c
+SHELL_SUBCMD_SET_CREATE(zlet_shell_root_cmds, (zlet));
+SHELL_CMD_REGISTER(zlet, &zlet_shell_root_cmds, "Invoke a zephlet instance's RPC.", NULL);
+```
+`SHELL_SUBCMD_SET_CREATE`/`SHELL_SUBCMD_ADD` (`zephyr/include/zephyr/shell/shell.h`)
+are Zephyr's own primitive for "commands added from multiple files" —
+each addition is a `TYPE_SECTION_ITERABLE` entry tagged by parent, walked
+at dispatch time (`shell_utils.c`'s `is_section_cmd()`/`z_shell_cmd_get()`).
+The in-tree `kernel`/`thread` shell commands
+(`zephyr/subsys/shell/modules/kernel_service/`) use exactly this pattern:
+`kernel_shell.c` creates the `kernel` parent; `thread/thread.c`, in a
+completely different translation unit, adds `thread` as its child. No
+central manifest of children exists anywhere for either tree.
 
 ### 3. Value parse/print (`frontends/shell/zephlet_shell_value.{h,c}`)
 
@@ -181,9 +208,12 @@ quoting only matters for letting one argument contain spaces. So:
 ## Deviations from the original issue proposal
 
 The issue's own design (§1–§7) is thorough and was treated as final per
-user direction, but two implementation-level gaps surfaced only once
-real nanopb-generated code was compiled and exercised. Both are called
-out in the issue itself as "implementation detail, not a design risk":
+user direction, but three implementation-level gaps surfaced only once
+real nanopb-generated code was compiled, exercised, and — for the
+third — actually flashed to hardware. All three are called out in the
+issue itself as "implementation detail, not a design risk", or fall
+squarely within its own explicit ask for "an extra macro call per
+instance", which turned out to be avoidable entirely:
 
 1. **Call-shape dispatch is explicit, not name-inferred.** The issue's
    illustrative `ZLET_SHELL_DEFINE_METHOD` template always calls
@@ -207,9 +237,33 @@ out in the issue itself as "implementation detail, not a design risk":
    preprocessor cannot uppercase a token, so a macro meant to be invoked
    via `_type##_SUFFIX` paste (from `ZLET_SHELL_INSTANCE`'s lowercase
    `_type` argument) must itself be spelled in lowercase.
+3. **Registration is fully automatic — no `ZLET_SHELL_INSTANCE`/
+   `ZLET_SHELL_DEFINE` call anywhere in application code.** The issue's
+   design still asked the app author to invoke `ZLET_SHELL_INSTANCE(...)`
+   once per instance plus one final `ZLET_SHELL_DEFINE(...)` manifest.
+   The first real-hardware smoke test (flashing the example app,
+   `ports_adapters_zbus`) surfaced this as friction the moment it required
+   *any* app-repo edit for what was scoped as an infra-only issue. Since
+   `_ZLET_FRONTEND_HOOKS_<type>` already exists precisely to let a
+   frontend hook itself into `ZEPHLET_NEW(...)` (CoAP already does this —
+   see ADR-0001), and Zephyr's shell subsystem already ships a
+   decentralized multi-file registration primitive
+   (`SHELL_SUBCMD_SET_CREATE`/`SHELL_SUBCMD_ADD`, used in-tree by the
+   `kernel`/`thread` shell commands), both app-level macros are gone:
+   `ZLET_SHELL_INSTANCE` is invoked automatically by the new
+   `_ZLET_SHELL_HOOK_<type>` hook, and it self-registers into the `zlet`
+   root (defined once in `frontends/shell/zephlet_shell_root.c`) instead
+   of building a static list a `ZLET_SHELL_DEFINE(...)` manifest would
+   have needed. `CONFIG_ZEPHLETS_SHELL=y` is now the *entire* adoption
+   cost for an app — matching CoAP's own zero-app-code experience for an
+   opted-in zephlet.
 
-Neither changes the design's shape or guarantees — both are exactly the
-kind of naming/dispatch detail the issue flagged as open.
+None of the three change the design's guarantees for the shell command
+itself (still fully static, still one handler per instance×RPC, still
+compile-time field-type checking) — they're exactly the kind of
+naming/dispatch/ergonomics detail the issue flagged as open, or an
+improvement the issue's own reasoning (§1's aggregator precedent) already
+pointed toward without spelling out.
 
 ## Known integration gotcha
 
@@ -235,8 +289,9 @@ so an app author with one must opt in explicitly.
   are no-ops outside an active shell command context) and malformed-input
   rejection for every family.
 - `tests/shell_functional/` (pytest + `twister_harness.Shell`,
-  native_sim): two `tick` instances + one `ui` instance, wired with real
-  `ZLET_SHELL_INSTANCE`/`ZLET_SHELL_DEFINE` calls. Covers a base RPC
+  native_sim): two `tick` instances + one `ui` instance, each a plain
+  `ZEPHLET_NEW(...)` call with no shell-specific code — registration
+  under `zlet` is automatic. Covers a base RPC
   round-trip, decimal + hex `config`/`get_config`, a custom (non-base)
   RPC (`kick`), the `mandatory`-argument-count gate, validation-error
   propagation, unknown-instance/unknown-RPC clean failure (Zephyr's own
@@ -247,7 +302,20 @@ so an app author with one must opt in explicitly.
 - `tests/codegen/test_codegen.py`: two new cases assert the emitted
   `<TYPE>_SHELL_METHODS`/`_ZLET_SHELL_METHODS_APPLY_<type>` rows exactly,
   and that they're byte-identical whether or not the CoAP opt-in option
-  is set.
+  is set; a third asserts `_ZLET_SHELL_HOOK_tick` is chained into
+  `_ZLET_FRONTEND_HOOKS_tick` alongside the CoAP hook.
+- `tests/coap_functional/pytest/test_dual_frontend.py` (new scenario,
+  `zephlet.coap_functional.dual_frontend`, `CONFIG_ZEPHLETS_SHELL=y`
+  added on top of `tick_fast`'s existing CoAP opt-in): proves the two
+  hooks chained into `tick_fast`'s `_ZLET_FRONTEND_HOOKS_tick` operate on
+  the *same* live instance, not two independent copies — a `config`
+  write through one frontend (shell or CoAP) is read back correctly
+  through the other. This is the test that answers "how do you know both
+  are actually running at the same time" — a symbol-level check
+  (`nm` showing both `_shell_zlet` and `tick_coap_resource` in one
+  binary) or two frontends' test suites passing independently would only
+  prove they compile and function in isolation, not that they share
+  state.
 
 ## Out of scope (v1)
 

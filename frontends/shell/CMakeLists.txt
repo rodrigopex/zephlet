@@ -1,5 +1,5 @@
 if(CONFIG_ZEPHLETS_SHELL)
     zephyr_library_named(zephlet_shell_frontend)
-    zephyr_library_sources(zephlet_shell_value.c)
+    zephyr_library_sources(zephlet_shell_value.c zephlet_shell_root.c)
     zephyr_include_directories(include)
 endif()

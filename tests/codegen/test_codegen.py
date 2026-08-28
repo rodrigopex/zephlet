@@ -258,6 +258,24 @@ def test_shell_methods_invariant_across_coap_opt_in(tmp_path):
 	assert shell_block(dir_no) == shell_block(dir_yes)
 
 
+def test_shell_hook_chained_into_frontend_aggregator(tmp_path):
+	"""`_ZLET_SHELL_HOOK_tick` is chained into `_ZLET_FRONTEND_HOOKS_tick`
+	alongside the CoAP hook, mirroring ADR-0001's per-type aggregator
+	pattern — so ZEPHLET_NEW(...) alone (no app-level call) registers
+	the instance under the `zlet` shell root once CONFIG_ZEPHLETS_SHELL=y,
+	with no dependency on the CoAP opt-in."""
+	_run_codegen(_FIXTURES / "tick_no_opt.proto", tmp_path)
+	header = (tmp_path / "zlet_tick_interface.h").read_text()
+
+	assert ("_ZLET_COAP_HOOK_tick(_name); \\\n\t_ZLET_SHELL_HOOK_tick(_name);"
+		in header)
+	assert "#if defined(CONFIG_ZEPHLETS_SHELL)" in header
+	assert '#include "zephlet_shell_macros.h"' in header
+	assert ("#define _ZLET_SHELL_HOOK_tick(_name) ZLET_SHELL_INSTANCE(tick, _name)"
+		in header)
+	assert "#define _ZLET_SHELL_HOOK_tick(_name) /* empty: CONFIG_ZEPHLETS_SHELL disabled */" in header
+
+
 def test_discoverable_missing_method_is_rejected(tmp_path):
 	"""Codegen must surface a diagnostic naming the missing base methods
 	and exit non-zero rather than emit a half-broken interface."""

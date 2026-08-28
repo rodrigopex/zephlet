@@ -79,36 +79,46 @@ Frontends share these invariants:
 - Adding a new frontend = (a) one Kconfig, (b) one opt-in proto option,
   (c) one codegen branch, (d) one runtime module — no zephlet rewrite.
 
-## Addendum: shell's build-gating differs from the pattern above
+## Addendum: shell's hook is gated by Kconfig alone, no per-service opt-in
 
 The shell frontend (#53, [`../plans/shell-frontend.md`](../plans/shell-frontend.md))
-follows every invariant above except one: it has **no per-service proto
-opt-in** and **no aggregator-macro hook**. `ZLET_SHELL_INSTANCE(_type,
-_instance)` is a macro the app author invokes explicitly, once per
-instance — usually right after that instance's `ZEPHLET_NEW(...)` call —
-not something wired into `zephlet.h`'s `_ZLET_FRONTEND_HOOKS_<type>`
-aggregator the way `_ZLET_COAP_HOOK_<type>` is. `zephlet.h` and
-`zephlet_interface.h.jinja`'s aggregator plumbing stay byte-unchanged by
-the shell frontend.
-
-This is a deliberate, narrower case, not a gap in the pattern:
+follows the aggregator-hook pattern above exactly — `_ZLET_SHELL_HOOK_<type>`
+is chained into `_ZLET_FRONTEND_HOOKS_<type>` right alongside
+`_ZLET_COAP_HOOK_<type>`, so a plain `ZEPHLET_NEW(...)` call registers the
+instance under the `zlet` shell root with **no app-level code at all**,
+the same zero-boilerplate experience CoAP already gives an opted-in
+zephlet. The one real difference is narrower than it first looks: shell
+has **no per-service proto opt-in**.
 
 - **Why no per-service opt-in.** CoAP's opt-in exists because a network
   frontend changes a zephlet's *exposure surface* — a proto author must
   consciously choose to put an RPC on the wire. Shell has no such
   question: `CONFIG_ZEPHLETS_SHELL=y` already means "local, privileged
   console access to this binary," a broader trust boundary than any
-  individual zephlet's opt-in could narrow.
-- **Why no aggregator hook, and therefore no disabled-build hash-gate
-  requirement.** CoAP's aggregator hook exists so a *disabled* frontend
-  costs nothing while still letting an *opted-in* zephlet's interface
-  header `#include` the frontend's generated artifact unconditionally.
-  Shell's `ZLET_SHELL_INSTANCE`/`ZLET_SHELL_DEFINE` calls live in
-  application code (`main.c`), guarded the ordinary way — an app that
-  never calls them, or wraps the calls in `#if
-  defined(CONFIG_ZEPHLETS_SHELL)`, has zero shell-frontend code in its
-  build. There is no "did a hook leak into the disabled build" risk
-  class to gate against, because there is no hook.
+  individual zephlet's opt-in could narrow. So the shell hook is a plain
+  `#if defined(CONFIG_ZEPHLETS_SHELL) ... #else ... #endif` in
+  `zephlet_interface.h.jinja` — no `#ifndef`-guarded default-empty
+  fallback waiting to be overridden by an included per-service header,
+  because there is no per-service override to make. This is actually
+  *simpler* than CoAP's own hook to reason about: the `#else` branch is
+  the only definition of `_ZLET_SHELL_HOOK_<type>` in a disabled build,
+  so "did a hook leak into the disabled build" has no failure mode to
+  check for.
+- **Root registration needs no manifest.** CoAP has no equivalent
+  problem to begin with — each opted-in instance is an independent
+  `COAP_RESOURCE_DEFINE`, dispatched by URI path, with no single tree
+  that has to enumerate every instance. Shell's `zlet` root command
+  *is* one such tree, but Zephyr's shell subsystem already ships the
+  primitive for exactly this: `SHELL_SUBCMD_SET_CREATE` +
+  `SHELL_SUBCMD_ADD` (`zephyr/include/zephyr/shell/shell.h`) let
+  multiple translation units add children to one named, iterable-linker-
+  section-backed parent — the same mechanism the in-tree `kernel`/
+  `thread` shell commands use
+  (`zephyr/subsys/shell/modules/kernel_service/`). `zlet` itself is
+  defined once, unconditionally, in `frontends/shell/zephlet_shell_root.c`;
+  each instance's own `SHELL_SUBCMD_ADD((zlet), ...)` call (inside
+  `ZLET_SHELL_INSTANCE`, invoked by the hook) adds itself independently.
+  No central list of instance names exists anywhere.
 - **The one thing that *is* unconditional**, matching CoAP's aggregator
   spirit: `<TYPE>_SHELL_METHODS`/`_ZLET_SHELL_METHODS_APPLY_<type>` in
   `<prefix>_interface.h` always render, opt-in or not (verified
