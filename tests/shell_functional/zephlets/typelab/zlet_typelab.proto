@@ -53,6 +53,62 @@ message Typelab {
   }
 
   /*
+   * Every *repetition rule* the library handles, in one message --
+   * Config above covers every scalar ltype, this covers every shape.
+   * None of these could be expressed at all while the frontend parsed
+   * arguments itself: the macro framework pasted nanopb's htype/ltype
+   * tokens into macro names and only `STATIC SINGULAR <scalar>` had a
+   * definition, so a single `optional` or one submessage anywhere in an
+   * RPC's request or response broke the whole app's build.
+   *
+   * Modelled on the library's own tests/textformat/src/fixture.proto,
+   * so the zephlet frontend is exercised against the same shape matrix
+   * the library tests itself against.
+   *
+   * `sing_msg` and `opt_msg` are declared separately on purpose even
+   * though proto3 makes them identical: nanopb emits byte-identical
+   * FIELDLIST rows (STATIC OPTIONAL MESSAGE) and identical storage for
+   * both, and a test asserts they behave the same, pinning that.
+   */
+  message Shapes {
+    uint32 plain_scalar = 1;
+    optional uint32 opt_scalar = 2;
+    repeated uint32 rep_scalar = 3 [(nanopb).max_count = 4];
+
+    Inner sing_msg = 4;
+    optional Inner opt_msg = 5;
+    repeated Inner rep_msg = 6 [(nanopb).max_count = 3];
+
+    optional string opt_string = 7 [(nanopb).max_size = 12];
+    repeated string rep_string = 8 [(nanopb).max_size = 8, (nanopb).max_count = 3];
+    optional bytes opt_bytes = 9 [(nanopb).max_size = 4];
+    repeated bytes rep_bytes = 10 [(nanopb).max_size = 4, (nanopb).max_count = 2];
+
+    /* Three levels below Shapes itself, so the descriptor tree is walked
+     * to depth 4 -- well inside CONFIG_NANOPB_TEXTFORMAT_MAX_DEPTH's
+     * default of 8, and impossible for any macro-only design at all. */
+    Deep1 deep = 11;
+  }
+
+  /* Submessage for sing_msg / opt_msg / rep_msg. Nested names flatten to
+   * `<parent>_<child>` under long_names = false, so this is
+   * `struct typelab_inner` in C. */
+  message Inner {
+    uint32 a = 1;
+    int32 b = 2;
+  }
+
+  message Deep3 {
+    uint32 v = 1;
+  }
+  message Deep2 {
+    Deep3 d3 = 1;
+  }
+  message Deep1 {
+    Deep2 d2 = 1;
+  }
+
+  /*
    * One single-field wrapper message per type in Config above, so each
    * gets its own set_X/get_X rpc pair (below) instead of only being
    * reachable through the one big `config` call. All 18 read/write the
@@ -149,4 +205,9 @@ service TypelabApi {
 
   rpc set_string      (Typelab.StringValue)      returns (Typelab.StringValue);
   rpc get_string      (Empty)                    returns (Typelab.StringValue);
+
+  /* The shape bench, separate from the 18-scalar Config above so each
+   * command line stays a manageable length. */
+  rpc set_shapes      (Typelab.Shapes)           returns (Typelab.Shapes);
+  rpc get_shapes      (Empty)                    returns (Typelab.Shapes);
 }

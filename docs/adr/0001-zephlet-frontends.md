@@ -144,6 +144,67 @@ has **no per-service proto opt-in**.
 | Frontend | Status | Plan |
 |---|---|---|
 | CoAP | Proposed (v1) | [`../plans/coap-frontend.md`](../plans/coap-frontend.md) |
-| Shell | Implemented (v1) | [`../plans/shell-frontend.md`](../plans/shell-frontend.md) |
+| Shell | Implemented (v2) | [`../plans/shell-frontend.md`](../plans/shell-frontend.md) (v1 design, superseded — see the addendum below) |
 | gRPC | Deferred | — |
 | MQTT | Deferred | — |
+
+## Addendum: the shell frontend delegates parsing to nanopb-textformat
+
+The v1 shell frontend parsed RPC arguments itself, dispatching each field
+through a macro that pasted nanopb's own `htype`/`ltype` X-macro tokens
+into macro names. That supported exactly one field shape —
+`STATIC SINGULAR <scalar>` — and *failed to build* on any other, so one
+`optional` or one submessage anywhere in an RPC's request or response
+broke the whole app's build, app-wide, with an error that named neither
+the field nor the zephlet.
+
+It cannot be extended to cover the rest, for two reasons that are facts
+about the tools rather than about the design:
+
+- **nanopb descriptors carry no field names.** `pb_field_iter_t` exposes
+  `tag`, `data_size`, `array_size`, `type`, `pField`, `pData`, `pSize`
+  and `submsg_desc` — no name. Names exist only as stringified X-macro
+  tokens.
+- **The C preprocessor cannot recurse.** A macro is not re-expanded
+  inside its own expansion, so a field-dispatch macro cannot descend into
+  a submessage's field list. It dies at the *first* level of nesting, not
+  at some configurable depth. Covering depth *N* would mean hand-written
+  `PARSE_FIELD_D0/D1/D2/…` ladders with a hard cap.
+
+So parsing and printing move to
+[zephyr-nanopb-textformat](https://codeberg.org/rodrigopex/zephyr-nanopb-textformat),
+which resolves both: it builds a companion descriptor tree from
+`<MSG>_FIELDLIST` at compile time, keeping the names, and walks it
+**iteratively** with an explicit frame array. RPC arguments become
+protobuf text format — a published standard that round-trips through
+`protoc`, rather than a path syntax invented here.
+
+What this costs, stated plainly:
+
+- **An external dependency**, pinned by tag in the app's `west.yml`.
+- **This ADR's own "compile-time only" stance for the shell.** The v1
+  header claimed "nothing here walks a message's fields at runtime". Per
+  the preprocessor point above, that was never attainable for nested
+  messages; the claim held only because nested messages did not build.
+- **Flash**: ~5.1 KB of library code plus `12 x (fields + 1) + 12` bytes
+  and the field-name strings per message descriptor. No static RAM, and
+  ~400 bytes of stack per call.
+
+What it buys, beyond the shapes: values that the positional grammar could
+not express at all (a string containing a space; a mixed text/binary
+bytes payload), and range checking. The v1 frontend assigned through a
+narrowing C cast with no range check, so a value past a field's width
+truncated silently; every numeric write now dispatches on the field's own
+`data_size`, read from the descriptor.
+
+Two integration details are load-bearing rather than stylistic, and both
+are enforced rather than documented:
+
+- Every RPC leaf is registered `SHELL_OPT_ARG_RAW`. Rejoining `argv`
+  is broken three ways, all silent: `CONFIG_SHELL_ARGC_MAX` (default 20)
+  makes the shell drop tokens past the cap, `z_shell_make_argv()`
+  collapses whitespace and strips quotes and backslashes, and an escape
+  like `\x0F` would lose its backslash before the handler ran.
+- `CONFIG_SHELL_WILDCARD=n`, because wildcard expansion rewrites
+  `cmd_buff` before any handler runs. Kconfig `select` cannot force a
+  symbol off, so `zephlet_shell_root.c` carries a `BUILD_ASSERT`.

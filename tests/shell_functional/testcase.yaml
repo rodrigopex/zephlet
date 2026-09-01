@@ -1,31 +1,65 @@
 common:
   tags: zephlet shell pytest
   harness: pytest
-  timeout: 60
+  # Every entry below sets `pytest_dut_scope: module` in its own
+  # harness_config rather than inheriting one from here, because a
+  # test-level harness_config replaces the common one wholesale instead of
+  # merging into it -- inheriting would silently drop pytest_root.
+  #
+  # Module scope boots the DUT once per file. The default `function` scope
+  # reruns `west build -t run` for every case, which on QEMU costs tens of
+  # seconds to boot and reach the prompt just to send one shell command, so
+  # wall time was dominated by boots rather than by the commands under
+  # test. Every case here either replaces the whole message it acts on or
+  # asserts on a field it set itself, so none depend on a fresh boot.
+  #
+  # Even with one boot per file, each command waits for the shell to echo
+  # it back, and the shape and type benches run dozens. 60 s (the twister
+  # default) is not enough for those on any of the allowed platforms, and
+  # under QEMU with several jobs in parallel the two big benches need well
+  # past 300 s. native_sim is far quicker; this ceiling is sized for the
+  # slowest allowed platform, not the expected one.
+  timeout: 600
   platform_allow:
     - native_sim
     - native_sim/native/64
+    - mps2/an385
 tests:
   zephlet.shell_functional.smoke:
     harness_config:
+      pytest_dut_scope: module
       pytest_root:
         - "pytest/test_smoke.py"
   zephlet.shell_functional.rpc:
     harness_config:
+      pytest_dut_scope: module
       pytest_root:
         - "pytest/test_rpc.py"
   zephlet.shell_functional.errors:
     harness_config:
+      pytest_dut_scope: module
       pytest_root:
         - "pytest/test_errors.py"
   zephlet.shell_functional.multi_instance:
     harness_config:
+      pytest_dut_scope: module
       pytest_root:
         - "pytest/test_multi_instance.py"
+  zephlet.shell_functional.field_shapes:
+    # Every repetition rule: optional/repeated scalars, singular,
+    # optional and repeated submessages, optional/repeated strings and
+    # bytes, and three levels of nesting. All of these failed to *build*
+    # before parsing moved to nanopb-textformat.
+    harness_config:
+      pytest_dut_scope: module
+      pytest_root:
+        - "pytest/test_field_shapes.py"
   zephlet.shell_functional.typelab_types:
     # Full-type-coverage RPC round-trip over the real shell, using
     # typelab_bench (zephlets/typelab/) — one set_X/get_X pair per
-    # nanopb scalar type the shell frontend supports.
+    # nanopb scalar type, so 18 parametrised cases each driving two
+    # shell commands.
     harness_config:
+      pytest_dut_scope: module
       pytest_root:
         - "pytest/test_typelab_types.py"

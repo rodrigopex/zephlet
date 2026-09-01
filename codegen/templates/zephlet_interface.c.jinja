@@ -11,6 +11,24 @@
 
 LOG_MODULE_REGISTER({{ prefix }}, CONFIG_ZEPHLET_{{ type_upper }}_LOG_LEVEL);
 
+/* ----- Shell text-format descriptors ----------------------------------
+ *
+ * One PB_TF_DEFINE per message in {{ prefix }}.proto that carries at least
+ * one field, so the `zlet` shell frontend can parse and print an RPC's
+ * request/response as protobuf text format. PB_TF_DEFINE emits an `extern`
+ * for every submessage descriptor a field row references, so every message
+ * gets one — not just the RPC request/response types — or a nested message
+ * would leave that extern unresolved at link time.
+ *
+ * Defined here (one translation unit) and declared in the header, because
+ * the handlers that reference them are generated at the ZEPHLET_NEW() call
+ * site in user code. Costs flash only: the descriptors are const. */
+#if defined(CONFIG_ZEPHLETS_SHELL)
+{% for m in tf_messages %}
+PB_TF_DEFINE({{ m.uc }}, {{ m.lc }}_t);
+{% endfor %}
+#endif /* CONFIG_ZEPHLETS_SHELL */
+
 /* ----- Weak default handlers (overridden in user source) -------------- */
 
 {% for cmd in commands %}

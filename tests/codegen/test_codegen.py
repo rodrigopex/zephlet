@@ -276,6 +276,105 @@ def test_shell_hook_chained_into_frontend_aggregator(tmp_path):
 	assert "#define _ZLET_SHELL_HOOK_tick(_name) /* empty: CONFIG_ZEPHLETS_SHELL disabled */" in header
 
 
+def test_textformat_descriptors_emitted_per_message(tmp_path):
+	"""One PB_TF_DEFINE per message in the proto, in the .c (a single
+	translation unit), with a matching PB_TF_DECLARE in the header —
+	the handlers that reference them are generated at the ZEPHLET_NEW()
+	call site, in user code.
+
+	Every message gets one, not just the RPC request/response types:
+	PB_TF_DEFINE emits an `extern` for each submessage descriptor a
+	field row references, so a message reachable only as a submessage
+	must still be defined or the link fails."""
+	_run_codegen(_FIXTURES / "tick_no_opt.proto", tmp_path)
+	source = (tmp_path / "zlet_tick_interface.c").read_text()
+	header = (tmp_path / "zlet_tick_interface.h").read_text()
+
+	# Nested messages flatten to <parent>_<child> under
+	# long_names = false, and PB_TF_DEFINE's two arguments are the
+	# FIELDLIST prefix and the C struct — which differ under --c-style.
+	assert "PB_TF_DEFINE(TICK_CONFIG, tick_config_t);" in source
+	assert "PB_TF_DEFINE(TICK_EVENTS, tick_events_t);" in source
+
+	assert "PB_TF_DECLARE(tick_config_t);" in header
+	assert "PB_TF_DECLARE(tick_events_t);" in header
+
+	# Definitions belong to exactly one TU; the header only declares.
+	assert "PB_TF_DEFINE(" not in header
+	assert "PB_TF_DECLARE(" not in source
+
+
+def test_textformat_descriptors_gated_on_shell(tmp_path):
+	"""The descriptors cost flash, so they are compiled only when the
+	shell frontend is on. Nothing else consumes them today."""
+	_run_codegen(_FIXTURES / "tick_no_opt.proto", tmp_path)
+	source = (tmp_path / "zlet_tick_interface.c").read_text()
+
+	start = source.index("#if defined(CONFIG_ZEPHLETS_SHELL)")
+	end = source.index("#endif /* CONFIG_ZEPHLETS_SHELL */")
+	block = source[start:end]
+
+	assert "PB_TF_DEFINE(TICK_CONFIG, tick_config_t);" in block
+	assert "PB_TF_DEFINE(TICK_EVENTS, tick_events_t);" in block
+	# ...and every invocation in the file is inside the guard. Counts
+	# use "PB_TF_DEFINE(" so the surrounding comment, which names the
+	# macro in prose, does not inflate them.
+	assert source.count("PB_TF_DEFINE(") == block.count("PB_TF_DEFINE(")
+
+
+def test_textformat_descriptor_not_emitted_for_field_less_message(tmp_path):
+	"""nanopb emits a struct and an empty FIELDLIST even for a bare
+	namespace wrapper like `message Tick { ... }`, whose descriptor
+	would cost flash and describe nothing. `Empty` is skipped for the
+	same reason — and it lives in the shared zephlet.proto anyway, whose
+	one shell-reaching message the infra defines by hand."""
+	_run_codegen(_FIXTURES / "tick_no_opt.proto", tmp_path)
+	source = (tmp_path / "zlet_tick_interface.c").read_text()
+
+	assert "PB_TF_DEFINE(TICK, tick_t);" not in source
+	assert "PB_TF_DEFINE(EMPTY" not in source
+	assert "PB_TF_DEFINE(LIFECYCLE_STATUS" not in source
+
+
+def test_textformat_descriptors_collect_nested_and_dedupe(tmp_path):
+	"""collect_tf_messages() walks nested messages to any depth and
+	emits each exactly once, however many RPCs share it."""
+	proto = tmp_path / "zlet_nest.proto"
+	proto.write_text("""
+syntax = "proto3";
+import "nanopb.proto";
+import "zephlet.proto";
+option (nanopb_fileopt).long_names = false;
+
+message Nest {
+  message Point { int32 x = 1; }
+  message Config {
+    uint32 a = 1;
+    Point origin = 2;
+  }
+  message Events { int32 timestamp = 1; }
+}
+
+service NestApi {
+  rpc start      (Empty)       returns (Lifecycle.Status);
+  rpc stop       (Empty)       returns (Lifecycle.Status);
+  rpc get_status (Empty)       returns (Lifecycle.Status);
+  rpc config     (Nest.Config) returns (Nest.Config);
+  rpc get_config (Empty)       returns (Nest.Config);
+}
+""")
+	_run_codegen(proto, tmp_path, type_name="nest", prefix="zlet_nest")
+	source = (tmp_path / "zlet_nest_interface.c").read_text()
+
+	# Point is reachable only as a submessage of Config, never as an RPC
+	# request or response — and it still needs a descriptor.
+	assert "PB_TF_DEFINE(NEST_POINT, nest_point_t);" in source
+
+	# config and get_config both carry Nest.Config; one definition only,
+	# or the link fails on a duplicate symbol.
+	assert source.count("PB_TF_DEFINE(NEST_CONFIG, nest_config_t);") == 1
+
+
 def test_discoverable_missing_method_is_rejected(tmp_path):
 	"""Codegen must surface a diagnostic naming the missing base methods
 	and exit non-zero rather than emit a half-broken interface."""

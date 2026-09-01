@@ -18,12 +18,16 @@ LOG_MODULE_REGISTER(zlet_shell_functional, LOG_LEVEL_INF);
  * via the `_ZLET_SHELL_HOOK_<type>` hook chained into
  * `_ZLET_FRONTEND_HOOKS_<type>` — no shell-specific code needed here.
  *
- * `typelab_bench` is the full-type-coverage bench: one Config field and
- * one set_X/get_X rpc pair per nanopb scalar type the shell frontend
- * supports, so `tests/shell_functional/pytest/test_typelab_types.py`
- * exercises every shell parse/print path through a real `zlet
- * typelab_bench ...` command, not just the couple of scalar types
- * tick/ui happen to use.
+ * `typelab_bench` is the coverage bench, in two halves. Typelab.Config
+ * carries one field (and one set_X/get_X rpc pair) per nanopb scalar
+ * ltype, driven by `pytest/test_typelab_types.py`. Typelab.Shapes
+ * carries every *repetition rule* — optional and repeated scalars,
+ * singular/optional/repeated submessages, optional and repeated strings
+ * and bytes, and three levels of nesting — driven by
+ * `pytest/test_field_shapes.py` through its own set_shapes/get_shapes
+ * pair. Between them every shell parse/print path is exercised through a
+ * real `zlet typelab_bench ...` command, not just the couple of scalar
+ * types tick/ui happen to use.
  */
 
 static struct tick_config tick_fast_cfg = {

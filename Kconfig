@@ -221,17 +221,30 @@ config ZEPHLETS_COAP_MAX_OBSERVERS
 config ZEPHLETS_SHELL
     bool "Static shell frontend for zephlets"
     select SHELL
+    select NANOPB_TEXTFORMAT
     help
       Expose every ZLET_SHELL_INSTANCE()'d instance's RPCs under one
       `zlet` shell root command, entirely via compile-time-generated
-      SHELL_STATIC_SUBCMD_SET_CREATE trees — see
-      docs/plans/shell-frontend.md. No per-service proto opt-in:
+      SHELL_STATIC_SUBCMD_SET_CREATE trees. No per-service proto opt-in:
       enabling shell already implies local, privileged console access.
 
-      If any exposed zephlet's proto has a `float`/`double` field,
-      also enable CONFIG_CBPRINTF_COMPLETE and CONFIG_CBPRINTF_FP_SUPPORT
-      — cbprintf drops "%g"/"%f" conversions without them, and the
-      printed value silently becomes the literal format string.
+      An RPC takes its request as a protobuf text-format message:
+
+        zlet tick_a config duration_ms: 100, period_ms: 10
+        zlet ui_a   config tags: [1,2,3], origin {x: 7, y: 0}
+
+      Parsing and printing are done by zephyr-nanopb-textformat, so every
+      field shape works — optional, repeated, submessage, oneof, nested.
+
+      Requires CONFIG_SHELL_WILDCARD=n. Each RPC's message arrives as a
+      SHELL_OPT_ARG_RAW argument, and wildcard expansion rewrites the
+      command buffer before the handler runs, corrupting it silently.
+      Kconfig cannot force a symbol off, so this is a BUILD_ASSERT.
+
+      Set CONFIG_CBPRINTF_FULL_INTEGRAL=y if any exposed message has a
+      64-bit field, or it will print wrongly rather than imprecisely.
+      A long message may also need CONFIG_SHELL_CMD_BUFF_SIZE raised
+      above its 256-byte default, which caps the whole command line.
 
 config ZEPHLETS_SHELL_CMD_TIMEOUT_MS
     int "Timeout for publishing a shell-originated call onto the command channel (ms)"

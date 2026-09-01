@@ -32,7 +32,14 @@ struct typelab_data {
 	/* ----- Framework-standard fields (keep first, in this order) ----- */
 	bool is_running;
 	bool is_ready;
-	/* No custom fields — typelab has no hardware, only Typelab.Config. */
+
+	/* ----- Custom fields --------------------------------------------- */
+
+	/* The shape bench's storage. Typelab.Config lives in `*z->config`
+	 * (the framework's writable per-instance config); Shapes is not
+	 * configuration, just a scratch message whose every repetition rule
+	 * the shell frontend has to round-trip, so it lives here. */
+	struct typelab_shapes shapes;
 };
 
 /**

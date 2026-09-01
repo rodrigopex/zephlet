@@ -16,29 +16,38 @@ def _out(shell: Shell, cmd: str) -> str:
 def test_two_tick_instances_keep_independent_config(dut: DeviceAdapter, shell: Shell):
 	assert shell.wait_for_prompt(), "shell prompt never appeared"
 
-	_out(shell, "zlet tick_fast config 111 111")
-	_out(shell, "zlet tick_slow config 222 222")
+	_out(shell, "zlet tick_fast config duration_ms: 111, period_ms: 111")
+	_out(shell, "zlet tick_slow config duration_ms: 222, period_ms: 222")
 
 	fast_out = _out(shell, "zlet tick_fast get_config")
-	assert "duration_ms = 111" in fast_out, fast_out
-	assert "period_ms = 111" in fast_out, fast_out
+	assert "duration_ms: 111" in fast_out, fast_out
+	assert "period_ms: 111" in fast_out, fast_out
 
 	slow_out = _out(shell, "zlet tick_slow get_config")
-	assert "duration_ms = 222" in slow_out, slow_out
-	assert "period_ms = 222" in slow_out, slow_out
+	assert "duration_ms: 222" in slow_out, slow_out
+	assert "period_ms: 222" in slow_out, slow_out
 
 
 def test_tick_and_ui_types_keep_independent_config(dut: DeviceAdapter, shell: Shell):
 	assert shell.wait_for_prompt(), "shell prompt never appeared"
 
-	_out(shell, "zlet tick_fast config 333 333")
-	_out(shell, "zlet ui_main config 44")
+	_out(shell, "zlet tick_fast config duration_ms: 333, period_ms: 333")
+	_out(shell, "zlet ui_main config blink_period_ms: 44")
 
 	tick_out = _out(shell, "zlet tick_fast get_config")
-	assert "duration_ms = 333" in tick_out, tick_out
+	assert "duration_ms: 333" in tick_out, tick_out
 
 	ui_out = _out(shell, "zlet ui_main get_config")
-	assert "blink_period_ms = 44" in ui_out, ui_out
+	assert "blink_period_ms: 44" in ui_out, ui_out
 	# ui's config has one field, not tick's two — confirms ui_main's
-	# handler used UI_CONFIG_FIELDLIST, not a leaked tick table.
+	# handler used ui_config_t_tf, not a leaked tick descriptor.
 	assert "duration_ms" not in ui_out, ui_out
+
+
+def test_field_name_from_another_type_is_rejected(dut: DeviceAdapter, shell: Shell):
+	"""Each handler parses against its own message descriptor, so a field
+	that exists on tick's Config is unknown to ui's."""
+	assert shell.wait_for_prompt(), "shell prompt never appeared"
+
+	out = _out(shell, "zlet ui_main config duration_ms: 5")
+	assert "no such field" in out, out
