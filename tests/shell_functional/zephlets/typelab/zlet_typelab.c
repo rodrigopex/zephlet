@@ -95,6 +95,36 @@ int typelab_get_config_impl(const struct zephlet *z, struct typelab_config *resp
 }
 
 /*
+ * The shape bench. Whole-struct copies, exactly like config/get_config
+ * above: every interesting behaviour here belongs to the text-format
+ * parser and printer, so the handler deliberately adds nothing of its
+ * own that a test could mistake for library behaviour.
+ */
+
+int typelab_set_shapes_impl(const struct zephlet *z, const struct typelab_shapes *req,
+			    struct typelab_shapes *resp)
+{
+	struct typelab_data *d = z->data;
+
+	d->shapes = *req;
+
+	if (resp != NULL) {
+		*resp = d->shapes;
+	}
+	return 0;
+}
+
+int typelab_get_shapes_impl(const struct zephlet *z, struct typelab_shapes *resp)
+{
+	struct typelab_data *d = z->data;
+
+	if (resp != NULL) {
+		*resp = d->shapes;
+	}
+	return 0;
+}
+
+/*
  * Per-type set_X/get_X pairs — one per field of `struct typelab_config`
  * above, so each nanopb scalar type can be exercised over shell in
  * isolation (`zlet typelab_bench set_X <value>` / `get_X`) instead of

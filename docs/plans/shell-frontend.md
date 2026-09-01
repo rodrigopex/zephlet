@@ -1,3 +1,15 @@
+> **Superseded.** This is the v1 design, in which the frontend parsed RPC
+> arguments itself through a macro framework. Parsing and printing now
+> belong to
+> [zephyr-nanopb-textformat](https://codeberg.org/rodrigopex/zephyr-nanopb-textformat),
+> and RPC arguments are protobuf text format. Sections 2 and 3 below
+> describe code that no longer exists (`zephlet_shell_value.{c,h}`, the
+> `ZLET_SHELL_PARSE_*`/`PRINT_*` families, `ZLET_SHELL_FIELD_COUNT`,
+> `ZLET_SHELL_HELP`), as does every reference to `tests/shell_macros/`.
+> Kept as a record of the reasoning, not as current documentation — see
+> the addendum in [`../adr/0001-zephlet-frontends.md`](../adr/0001-zephlet-frontends.md)
+> for what changed and why.
+
 # Shell Frontend — Design & As-Built Notes
 
 Status: Implemented (v1)

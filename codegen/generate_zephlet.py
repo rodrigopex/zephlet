@@ -179,6 +179,49 @@ def message_c_name(type_ref: str, owning_type: str) -> str:
     return camel_to_snake(type_ref)
 
 
+def collect_tf_messages(tree) -> list[dict]:
+    """
+    Every message declared in the proto that carries at least one field,
+    innermost-first, as {'uc': <FIELDLIST prefix>, 'lc': <C struct name>}.
+
+    Drives one PB_TF_DEFINE per message for the shell frontend's text-format
+    descriptors. Enumerating *every* message rather than only the RPC
+    request/response ones is deliberate: PB_TF_DEFINE emits an `extern` for
+    each submessage descriptor a row references, so any message reachable as a
+    submessage must also be defined or the link fails. Walking the whole file
+    guarantees that closure without a reachability pass.
+
+    Field-less messages are skipped -- nanopb still emits a struct and an empty
+    FIELDLIST for a bare namespace wrapper like `message Typelab { ... }`, and a
+    zero-field descriptor would cost flash for nothing.
+
+    Nested messages flatten to `parent_child`, matching nanopb under
+    `long_names = false`: `Typelab.Config` -> `typelab_config`, whose FIELDLIST
+    is `TYPELAB_CONFIG_FIELDLIST` and whose struct is `typelab_config_t`.
+    """
+    out: list[dict] = []
+
+    def walk(elem, prefix: list[str]) -> None:
+        if elem.__class__.__name__ != "Message":
+            return
+
+        chain = prefix + [camel_to_snake(elem.name)]
+
+        for inner in elem.elements:
+            walk(inner, chain)
+
+        has_field = any(e.__class__.__name__ == "Field"
+                        for e in elem.elements)
+        if has_field:
+            lc = "_".join(chain)
+            out.append({"uc": lc.upper(), "lc": lc})
+
+    for elem in tree.file_elements:
+        walk(elem, [])
+
+    return out
+
+
 def nanopb_descriptor(c_name: str) -> str:
     """
     Nanopb with --c-style appends '_t_msg' to the message descriptor symbol.
@@ -324,6 +367,7 @@ def parse_proto(proto_path: str) -> dict:
         "num_methods_including_reserved": commands[-1]["method_id"] + 1,
         "coap_opt_in": coap_opt_in,
         "coap_discoverable": coap_discoverable,
+        "tf_messages": collect_tf_messages(tree),
     }
 
 
