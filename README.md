@@ -23,7 +23,7 @@ manifest:
     # this entry if you are not enabling the shell frontend.
     - name: zephyr-nanopb-textformat
       url: https://codeberg.org/rodrigopex/zephyr-nanopb-textformat
-      revision: v0.5.0
+      revision: v0.7.0
       path: modules/lib/zephyr-nanopb-textformat
   self:
     path: app
@@ -158,12 +158,15 @@ An RPC takes its request as a protobuf **text-format** message:
 ```
 uart:~$ zlet <TAB>                                    # one entry per instance
 uart:~$ zlet tick_fast config duration_ms: 100, period_ms: 10
-duration_ms: 100
-period_ms: 10
+duration_ms: 100, period_ms: 10
 uart:~$ zlet tick_fast get_config
-duration_ms: 100
-period_ms: 10
+duration_ms: 100, period_ms: 10
 ```
+
+Responses print compact — one line, the shortest form that is still valid
+standalone text format, so `get_config` output pastes straight back into a
+`config` call. The frontend names that style at the call site
+(`pb_tf_print_compact()`); it is not a build option.
 
 Fields are named, so order is free and any subset works. Anything omitted reads
 back as zero — the parser clears the message before writing into it.
@@ -199,7 +202,7 @@ Round-trip holds at the *value* level, not the text level:
 |---|---|---|
 | Repeated | `tags: [1, 2]` or `tags: 1 tags: 2` | `tags: 1` / `tags: 2`, one per element |
 | Bytes | `"\x0F\x0A"`, `\NNN`, `\uXXXX` | three-digit octal: `"\017\012"` |
-| Submessage | `origin {x: 1}` on one line | an indented block |
+| Submessage | `origin {x: 1}` | `origin {x: 1}` — braces inline, since output is compact |
 
 The printer avoids `\xHH` because a hex escape runs on: `\x0` followed by `a`
 reads back as the single byte `0x0A`, while three octal digits cannot.
@@ -277,10 +280,14 @@ needs one.
   selecting both keeps a deliberate `=n` an unmet Kconfig dependency
   rather than a compile error inside a generated handler.
 
-  **Pin a tag.** The API is pre-1.0 and has already moved: v0.3.0 dropped
-  the trailing `flags` argument from `pb_tf_parse()` / `pb_tf_print()` in
-  favour of Kconfig options, and split `PB_TF_NOINIT` out as
-  `pb_tf_merge()`. Tested here against **v0.5.0**.
+  **Pin a tag.** The API is pre-1.0 and has already moved twice. v0.3.0
+  dropped the trailing `flags` argument from `pb_tf_parse()` /
+  `pb_tf_print()` in favour of Kconfig options, and split `PB_TF_NOINIT`
+  out as `pb_tf_merge()`. v0.7.0 then replaced those Kconfig options with
+  named wrappers — `pb_tf_print_compact()`, `pb_tf_print_buf_multiline()`
+  and so on — dropped the `pb_tf_*_t` typedefs, and made every function
+  return `int` Zephyr-style: 0, or a negated `enum pb_tf_err`.
+  Tested here against **v0.7.0**.
 
   Its `docs/shell-integration.md` covers the application-side settings a
   console needs — chiefly `CONFIG_CBPRINTF_FULL_INTEGRAL=y` for fields

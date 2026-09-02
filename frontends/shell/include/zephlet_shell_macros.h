@@ -90,7 +90,7 @@
 	{                                                                                          \
 		struct _req_lc req;                                                                \
 		struct pb_tf_status st;                                                            \
-		enum pb_tf_err terr;                                                               \
+		int terr;                                                                          \
 		int rc;                                                                            \
 		if (argc < 2) {                                                                    \
 			shell_error(sh, "%s: expected a text-format message", #_name);             \
@@ -118,7 +118,7 @@
 		struct _req_lc req;                                                                \
 		struct _resp_lc resp = _resp_uc##_INIT_ZERO;                                       \
 		struct pb_tf_status st;                                                            \
-		enum pb_tf_err terr;                                                               \
+		int terr;                                                                          \
 		int rc;                                                                            \
 		if (argc < 2) {                                                                    \
 			shell_error(sh, "%s: expected a text-format message", #_name);             \
