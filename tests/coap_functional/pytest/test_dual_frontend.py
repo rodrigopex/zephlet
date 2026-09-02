@@ -74,7 +74,8 @@ async def _coap_config_get(aiocoap_client, host, port) -> tuple[int, int]:
 
 
 def _shell_config_set(shell: Shell, duration_ms: int, period_ms: int) -> None:
-	shell.exec_command(f"zlet tick_fast config {duration_ms} {period_ms}")
+	shell.exec_command(
+		f"zlet tick_fast config duration_ms: {duration_ms}, period_ms: {period_ms}")
 
 
 def _shell_config_get(shell: Shell) -> str:
@@ -103,5 +104,5 @@ async def test_coap_write_visible_over_shell(dut: DeviceAdapter, shell: Shell, a
 	await _coap_config_set(aiocoap_client, host, port, 77, 77)
 
 	out = _shell_config_get(shell)
-	assert "duration_ms = 77" in out, out
-	assert "period_ms = 77" in out, out
+	assert "duration_ms: 77" in out, out
+	assert "period_ms: 77" in out, out
