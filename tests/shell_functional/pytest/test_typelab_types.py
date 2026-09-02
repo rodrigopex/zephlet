@@ -132,21 +132,24 @@ def test_string_value_may_contain_spaces(dut: DeviceAdapter, shell: Shell):
 	assert 'value: "hi there"' in out, out
 
 
-def test_narrow_enum_out_of_range_is_rejected_not_truncated(dut: DeviceAdapter, shell: Shell):
-	"""TypelabUFlag/TypelabSFlag declare two values each, so the compiler
-	stores them in a single byte. The old frontend assigned through a
-	narrowing C cast to the field's declared type with no range check, so
-	`set_enum 1000000` silently became `1000000 & 0xFF == 64`.
+def test_enum_out_of_range_is_rejected_not_truncated(dut: DeviceAdapter, shell: Shell):
+	"""The old frontend assigned through a narrowing C cast to the field's
+	declared type with no range check, so an oversized value wrapped
+	silently. Every numeric write now dispatches on the field's own
+	`data_size`, read from the descriptor, so it is refused instead. This
+	is the one behaviour change here that fixes a bug rather than moving
+	syntax around.
 
-	The library dispatches every numeric write on the field's own
-	`data_size`, read from the descriptor rather than assumed, so an
-	out-of-range value is refused instead. This is the one behaviour
-	change here that fixes a bug rather than moving syntax around."""
+	The literal has to exceed *any* plausible enum width, because that
+	width is implementation-defined and reading it from the descriptor is
+	the very property under test: `arm-zephyr-eabi-gcc` stores a two-value
+	enum in one byte, while host gcc without -fshort-enums uses four. A
+	value chosen to overflow one byte would pass on native_sim by simply
+	being in range."""
 	assert shell.wait_for_prompt(), "shell prompt never appeared"
 
-	out = _out(shell, "zlet typelab_bench set_enum value: 1000000")
+	out = _out(shell, "zlet typelab_bench set_enum value: 99999999999999")
 	assert "out of range" in out, out
-	assert "value: 64" not in out, out
 
 
 def test_negative_in_unsigned_field_is_rejected_not_wrapped(dut: DeviceAdapter, shell: Shell):
