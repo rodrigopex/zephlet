@@ -154,6 +154,21 @@ Single script `codegen/generate_zephlet.py` parses the `.proto` service block, c
 - `CONFIG_ZEPHLETS=y` — framework (auto `select ZBUS`, `select ZBUS_ASYNC_LISTENER`).
 - `CONFIG_ZEPHLET_MAX_INSTANCES=N` — bound for the SYS_INIT ordering buffer. Default 16.
 - `CONFIG_ZEPHLET_<TYPE>=y` — per-zephlet switch (selects `NANOPB`).
+- `CONFIG_ZEPHLETS_SHELL=y` — shell frontend. Registers every instance's
+  RPCs under one `zlet` root command, via the per-type
+  `_ZLET_SHELL_HOOK_<type>` hook that `ZEPHLET_NEW` expands; no app code.
+  **`select`s `NANOPB_TEXTFORMAT`, so the app's west manifest must carry
+  [`zephyr-nanopb-textformat`](https://codeberg.org/rodrigopex/zephyr-nanopb-textformat)**
+  (pin a tag — pre-1.0, API already moved at v0.3.0; tested against
+  v0.4.0). An RPC takes its request as a protobuf text-format message
+  (`zlet tick_a config duration_ms: 100, period_ms: 10`), delivered as one
+  `SHELL_OPT_ARG_RAW` argument and parsed by that library, so every field
+  shape works without codegen walking fields. Codegen emits one
+  `PB_TF_DEFINE` per message with at least one field into
+  `<prefix>_interface.c`, and a `PB_TF_DECLARE` into the header. Needs no
+  companion Kconfig beyond `CBPRINTF_FULL_INTEGRAL` for fields wider than
+  32 bits; see `docs/adr/0001-zephlet-frontends.md` for why
+  `SHELL_WILDCARD` is *not* one of them.
 
 ## Naming
 

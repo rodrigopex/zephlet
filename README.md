@@ -18,6 +18,13 @@ manifest:
       revision: main
       path: modules/lib/zephlet
       west-commands: west/west-commands.yml
+
+    # Only needed with CONFIG_ZEPHLETS_SHELL=y — see Dependencies. Drop
+    # this entry if you are not enabling the shell frontend.
+    - name: zephyr-nanopb-textformat
+      url: https://codeberg.org/rodrigopex/zephyr-nanopb-textformat
+      revision: v0.4.0
+      path: modules/lib/zephyr-nanopb-textformat
   self:
     path: app
 ```
@@ -151,6 +158,28 @@ Public surface (see [`zephlet_coord.h`](zephlet_coord.h)):
 
 - Zephyr RTOS (with `zbus`, `nanopb` modules).
 - Python packages: `proto-schema-parser`, `jinja2`, `copier`.
+- [`zephyr-nanopb-textformat`](https://codeberg.org/rodrigopex/zephyr-nanopb-textformat)
+  — **only with `CONFIG_ZEPHLETS_SHELL=y`**, which `select`s it. The shell
+  frontend takes each RPC's request as a protobuf text-format message and
+  hands parsing and printing to this library, so every field shape works
+  (`optional`, `repeated`, submessage, oneof, nested) without codegen
+  walking fields.
+
+  It must be in *your* west manifest: if it is absent the `select` has no
+  symbol to resolve and the frontend has no `nanopb_textformat.h` to
+  include. Nothing else in the infra needs it, so a project with the shell
+  frontend off can leave it out entirely.
+
+  **Pin a tag.** The API is pre-1.0 and has already moved: v0.3.0 dropped
+  the trailing `flags` argument from `pb_tf_parse()` / `pb_tf_print()` in
+  favour of Kconfig options, and split `PB_TF_NOINIT` out as
+  `pb_tf_merge()`. Tested here against **v0.4.0**.
+
+  Its `docs/shell-integration.md` covers the application-side settings a
+  console needs — chiefly `CONFIG_CBPRINTF_FULL_INTEGRAL=y` for fields
+  wider than 32 bits, and larger `CONFIG_SHELL_CMD_BUFF_SIZE` /
+  `CONFIG_SHELL_BACKEND_SERIAL_RX_RING_BUFFER_SIZE` for a wide message,
+  since naming every field makes text format verbose.
 
 ## Example app
 
