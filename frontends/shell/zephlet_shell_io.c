@@ -1,4 +1,4 @@
-#include "zephlet.pb.h"
+#include <zephyr/sys/util.h>
 
 #include "zephlet_shell_io.h"
 
@@ -11,14 +11,6 @@
  * characters go and how a failure is worded.
  */
 
-/* Text-format descriptor for the one shared zephlet.proto message that
- * reaches the shell: Lifecycle.Status, the response of start/stop/
- * get_status on every zephlet. Defined here rather than by codegen
- * because codegen runs once per zephlet and would emit a duplicate
- * symbol for each; the shared proto belongs to the infra, so the infra
- * defines it once. `Empty` has no fields and needs no descriptor. */
-PB_TF_DEFINE(LIFECYCLE_STATUS, lifecycle_status_t);
-
 int zlet_shell_out(int c, void *ctx)
 {
 	const struct shell *sh = ctx;
@@ -29,6 +21,18 @@ int zlet_shell_out(int c, void *ctx)
 	shell_fprintf(sh, SHELL_NORMAL, "%c", (char)c);
 
 	return c;
+}
+
+void zlet_shell_print_msg(const struct shell *sh, const struct pb_tf_msg *tf, const void *msg)
+{
+	(void)pb_tf_print(tf, msg, zlet_shell_out, (void *)sh);
+
+	/* Compact prints one line and no terminator, so the output would run
+	 * into the next prompt. Multi-line already ends in a newline. The
+	 * unused branch compiles out -- the style is a Kconfig choice. */
+	if (IS_ENABLED(CONFIG_NANOPB_TEXTFORMAT_PRINT_COMPACT)) {
+		shell_fprintf(sh, SHELL_NORMAL, "\n");
+	}
 }
 
 void zlet_shell_report_tf_err(const struct shell *sh, const char *rpc, enum pb_tf_err err,
