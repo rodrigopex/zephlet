@@ -173,8 +173,9 @@ about the tools rather than about the design:
 
 So parsing and printing move to
 [zephyr-nanopb-textformat](https://codeberg.org/rodrigopex/zephyr-nanopb-textformat)
-(pinned at v0.5.0, where output style is a Kconfig choice rather than a
-per-call flag argument and either direction can be configured out),
+(pinned at v0.7.0, where each print style is a named wrapper, every
+function returns `int` Zephyr-style, and either direction can be
+configured out),
 which resolves both: it builds a companion descriptor tree from
 `<MSG>_FIELDLIST` at compile time, keeping the names, and walks it
 **iteratively** with an explicit frame array. RPC arguments become

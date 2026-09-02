@@ -1,5 +1,3 @@
-#include <zephyr/sys/util.h>
-
 #include "zephlet_shell_io.h"
 
 /**
@@ -25,17 +23,16 @@ int zlet_shell_out(int c, void *ctx)
 
 void zlet_shell_print_msg(const struct shell *sh, const struct pb_tf_msg *tf, const void *msg)
 {
-	(void)pb_tf_print(tf, msg, zlet_shell_out, (void *)sh);
+	(void)pb_tf_print_compact(tf, msg, zlet_shell_out, (void *)sh);
 
-	/* Compact prints one line and no terminator, so the output would run
-	 * into the next prompt. Multi-line already ends in a newline. The
-	 * unused branch compiles out -- the style is a Kconfig choice. */
-	if (IS_ENABLED(CONFIG_NANOPB_TEXTFORMAT_PRINT_COMPACT)) {
-		shell_fprintf(sh, SHELL_NORMAL, "\n");
-	}
+	/* Compact prints one line and no terminator of its own, so without
+	 * this the response runs into the next prompt. Naming the style at the
+	 * call site rather than reading a Kconfig choice is why this is now a
+	 * plain statement: there is no other style to be wrong about. */
+	shell_fprintf(sh, SHELL_NORMAL, "\n");
 }
 
-void zlet_shell_report_tf_err(const struct shell *sh, const char *rpc, enum pb_tf_err err,
+void zlet_shell_report_tf_err(const struct shell *sh, const char *rpc, int err,
 			      const struct pb_tf_status *status)
 {
 	if (status->field != NULL) {

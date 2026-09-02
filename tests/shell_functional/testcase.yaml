@@ -54,18 +54,6 @@ tests:
       pytest_dut_scope: module
       pytest_root:
         - "pytest/test_field_shapes.py"
-  zephlet.shell_functional.smoke_compact:
-    # The same smoke case with the library's compact print style. The style
-    # is a build-time choice and the two frame differently -- compact emits
-    # one line and no terminator -- so a frontend that relied on
-    # multi-line's trailing newline ran its output into the next prompt.
-    # Nothing caught that until this configuration existed.
-    extra_configs:
-      - CONFIG_NANOPB_TEXTFORMAT_PRINT_COMPACT=y
-    harness_config:
-      pytest_dut_scope: module
-      pytest_root:
-        - "pytest/test_smoke.py"
   zephlet.shell_functional.typelab_types:
     # Full-type-coverage RPC round-trip over the real shell, using
     # typelab_bench (zephlets/typelab/) — one set_X/get_X pair per

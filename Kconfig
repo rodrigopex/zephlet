@@ -245,8 +245,10 @@ config ZEPHLETS_SHELL
       field shape works — optional, repeated, submessage, nested. (The
       library also handles oneof, but zephlet's own proto contract still
       says no oneofs; see CLAUDE.md.)
-      Output style is that library's own Kconfig choice; multi-line is its
-      default, which is what a console wants.
+      Responses print compact -- one line -- which is the shortest form that
+      is still valid standalone text format, so a `get_config` response can
+      be pasted straight back into a `config` call. Since v0.7.0 the style
+      is named at the call site rather than chosen in Kconfig.
 
       Selects both halves of the library: an RPC's request is parsed and
       its response printed. NANOPB_TEXTFORMAT_PRINT carries the

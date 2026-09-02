@@ -18,14 +18,12 @@ def test_get_status_round_trip(dut: DeviceAdapter, shell: Shell):
 	# the infra defines by hand in zephlet_textformat.c rather than through
 	# codegen — so this also covers that one descriptor.
 	#
-	# Both assertions hold under either print style: multi-line puts each
-	# field on its own line, compact joins them with ", ", and either way
-	# these are substrings. This suite runs in both configurations.
-	assert "is_running: false" in out, out
-	assert "is_ready: true" in out, out
+	# The frontend prints compact, so both fields land on one line joined
+	# by ", ". Asserted as one string rather than two substrings, so a
+	# regression to multi-line would fail here rather than pass silently.
+	assert "is_running: false, is_ready: true" in out, out
 
-	# The output must be terminated whatever the style. Compact emits no
-	# trailing newline of its own, so the frontend adds one; without it the
-	# response runs into the next prompt and this line comes back with the
-	# echoed command glued to it.
+	# Compact emits no trailing newline of its own, so the frontend adds
+	# one. Without it the response runs into the next prompt and this line
+	# comes back with the echoed command glued to it.
 	assert not out.rstrip("\r\n").endswith("$"), out
