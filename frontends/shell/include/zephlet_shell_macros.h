@@ -79,7 +79,7 @@
 			shell_error(sh, "%s: %d", #_name, rc);                                     \
 			return rc;                                                                 \
 		}                                                                                  \
-		(void)pb_tf_print(&_resp_lc##_t_tf, &resp, zlet_shell_out, (void *)sh);            \
+		zlet_shell_print_msg(sh, &_resp_lc##_t_tf, &resp);                                 \
 		return 0;                                                                          \
 	}
 
@@ -135,7 +135,7 @@
 			shell_error(sh, "%s: %d", #_name, rc);                                     \
 			return rc;                                                                 \
 		}                                                                                  \
-		(void)pb_tf_print(&_resp_lc##_t_tf, &resp, zlet_shell_out, (void *)sh);            \
+		zlet_shell_print_msg(sh, &_resp_lc##_t_tf, &resp);                                 \
 		return 0;                                                                          \
 	}
 

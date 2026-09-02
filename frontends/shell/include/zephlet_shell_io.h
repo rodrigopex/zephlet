@@ -10,9 +10,9 @@
 
 #include <zephyr/shell/shell.h>
 
-/* Shared zephlet.proto descriptor, defined in zephlet_shell_io.c — see
- * there for why it is not emitted by codegen. */
-PB_TF_DECLARE(lifecycle_status_t);
+/* Brings PB_TF_DECLARE(lifecycle_status_t) — the shared zephlet.proto
+ * descriptor, which start/stop/get_status responses print through. */
+#include "zephlet_textformat.h"
 
 /**
  * @brief cbprintf_cb that writes one character to a shell instance.
@@ -29,6 +29,23 @@ PB_TF_DECLARE(lifecycle_status_t);
  * @return @p c, as cbprintf_cb requires.
  */
 int zlet_shell_out(int c, void *ctx);
+
+/**
+ * @brief Print @p msg on @p sh, terminated, whatever the print style is.
+ *
+ * The style is a build-time choice in the library and the two directions
+ * frame differently: multi-line terminates its last field with a newline,
+ * compact emits one line and no terminator. A handler that just called
+ * pb_tf_print() would therefore run its output into the next prompt under
+ * CONFIG_NANOPB_TEXTFORMAT_PRINT_COMPACT. Keeping that knowledge here
+ * rather than in the generated handler macros means there is one place to
+ * be wrong.
+ *
+ * @param sh  shell to print on.
+ * @param tf  descriptor from PB_TF_DEFINE.
+ * @param msg the struct to print.
+ */
+void zlet_shell_print_msg(const struct shell *sh, const struct pb_tf_msg *tf, const void *msg);
 
 /**
  * @brief Report a text-format parse failure on @p sh.
