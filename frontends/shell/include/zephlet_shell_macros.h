@@ -160,6 +160,24 @@
  * handler the untouched remainder of the command line at `argv[mandatory]`.
  * `mandatory` is 1 (the RPC name alone), so that is `argv[1]`.
  *
+ * `mandatory = 1` is also what makes CONFIG_SHELL_WILDCARD harmless here,
+ * which is worth stating because the library's own docs advise turning it
+ * off whenever a command takes a raw argument. `active_cmd_prepare()` sets
+ * `args_left = mandatory - 1` for a raw command (zephyr shell.c:589), so at
+ * 1 the parse loop's `args_left > 0` condition fails immediately: nothing
+ * after the RPC name is tokenised, and `z_shell_wildcard_process()` is only
+ * ever called on tokens the loop walks. `z_shell_wildcard_finalize()`, the
+ * step that rewrites `cmd_buff` and would destroy the message, runs only
+ * when a *command-name* token matched a wildcard.
+ *
+ * That immunity is specific to `mandatory = 1`. At 2 or more the loop runs
+ * another iteration and wildcard-processes a tokenised argument, which can
+ * set `wildcard_found` and trigger the rewrite — so the library's warning
+ * is right in general, just not for this shape. Verified by building with
+ * CONFIG_SHELL_WILDCARD=y and round-tripping `*` and `?` through string,
+ * bytes and repeated-string values, including a wildcard in the instance
+ * name position.
+ *
  * The help string names the request message rather than listing fields:
  * fields are the library's business now, and `<message>` is the honest
  * summary of what the command accepts.

@@ -1,5 +1,4 @@
 #include <zephyr/shell/shell.h>
-#include <zephyr/sys/util.h>
 
 /**
  * @file
@@ -14,17 +13,5 @@
  * this mirrors the in-tree `kernel`/`thread` shell commands
  * (zephyr/subsys/shell/modules/kernel_service/).
  */
-/* Every RPC leaf takes its text-format message as a SHELL_OPT_ARG_RAW
- * argument. Wildcard expansion rewrites `cmd_buff` before any handler
- * runs, so a `*` or `?` anywhere in that argument — including inside a
- * quoted string value, which the shell has no reason to treat as quoted —
- * silently replaces it with text the user never typed. There is no
- * handler-side defence: by the time the handler is called, the damage is
- * done. Kconfig `select` cannot force a symbol off, so it is asserted
- * here instead. */
-BUILD_ASSERT(!IS_ENABLED(CONFIG_SHELL_WILDCARD),
-	     "CONFIG_ZEPHLETS_SHELL requires CONFIG_SHELL_WILDCARD=n: wildcard expansion "
-	     "corrupts an RPC's raw text-format argument before the handler sees it.");
-
 SHELL_SUBCMD_SET_CREATE(zlet_shell_root_cmds, (zlet));
 SHELL_CMD_REGISTER(zlet, &zlet_shell_root_cmds, "Invoke a zephlet instance's RPC.", NULL);

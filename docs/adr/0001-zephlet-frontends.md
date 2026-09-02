@@ -197,14 +197,31 @@ narrowing C cast with no range check, so a value past a field's width
 truncated silently; every numeric write now dispatches on the field's own
 `data_size`, read from the descriptor.
 
-Two integration details are load-bearing rather than stylistic, and both
-are enforced rather than documented:
+One integration detail is load-bearing rather than stylistic: every RPC
+leaf is registered `SHELL_OPT_ARG_RAW`. Rejoining `argv` is broken three
+ways, all silent: `CONFIG_SHELL_ARGC_MAX` (default 20) makes the shell drop
+tokens past the cap, `z_shell_make_argv()` collapses whitespace and strips
+quotes and backslashes, and an escape like `\x0F` would lose its backslash
+before the handler ran.
 
-- Every RPC leaf is registered `SHELL_OPT_ARG_RAW`. Rejoining `argv`
-  is broken three ways, all silent: `CONFIG_SHELL_ARGC_MAX` (default 20)
-  makes the shell drop tokens past the cap, `z_shell_make_argv()`
-  collapses whitespace and strips quotes and backslashes, and an escape
-  like `\x0F` would lose its backslash before the handler ran.
-- `CONFIG_SHELL_WILDCARD=n`, because wildcard expansion rewrites
-  `cmd_buff` before any handler runs. Kconfig `select` cannot force a
-  symbol off, so `zephlet_shell_root.c` carries a `BUILD_ASSERT`.
+`CONFIG_SHELL_WILDCARD` needs no attention, which is worth recording
+because the library's own docs advise disabling it whenever a command takes
+a raw argument. `active_cmd_prepare()` sets `args_left = mandatory - 1` for
+a raw command (`zephyr/subsys/shell/shell.c:589`), so at `mandatory = 1`
+the parse loop stops the moment the RPC leaf is found: nothing after the
+RPC name is tokenised, and only tokens the loop walks reach
+`z_shell_wildcard_process()`. The rewrite that would destroy a message,
+`z_shell_wildcard_finalize()`, runs only when a *command-name* token
+matched a wildcard.
+
+That immunity belongs to `mandatory = 1` specifically. At 2 or more the
+loop runs another iteration over a tokenised argument, which can set
+`wildcard_found` and trigger the rewrite — so the library's advice is sound
+in general and simply does not bind here. An earlier revision of this work
+enforced the setting with a `BUILD_ASSERT`; that broke
+`coap_functional.dual_frontend`, which enables the shell without it, and
+was removed once building with `CONFIG_SHELL_WILDCARD=y` showed `*` and `?`
+round-tripping intact through string, bytes and repeated-string values,
+including a wildcard in the instance-name position. Requiring a Kconfig
+symbol of every consumer is a real ergonomic cost, and this one bought
+nothing.

@@ -236,15 +236,16 @@ config ZEPHLETS_SHELL
       Parsing and printing are done by zephyr-nanopb-textformat, so every
       field shape works — optional, repeated, submessage, oneof, nested.
 
-      Requires CONFIG_SHELL_WILDCARD=n. Each RPC's message arrives as a
-      SHELL_OPT_ARG_RAW argument, and wildcard expansion rewrites the
-      command buffer before the handler runs, corrupting it silently.
-      Kconfig cannot force a symbol off, so this is a BUILD_ASSERT.
-
       Set CONFIG_CBPRINTF_FULL_INTEGRAL=y if any exposed message has a
       64-bit field, or it will print wrongly rather than imprecisely.
-      A long message may also need CONFIG_SHELL_CMD_BUFF_SIZE raised
-      above its 256-byte default, which caps the whole command line.
+
+      Naming every field makes text format verbose, so a wide message can
+      outgrow two buffers that default smaller than you would guess:
+      CONFIG_SHELL_CMD_BUFF_SIZE (256) caps the whole command line, and on
+      the serial backend CONFIG_SHELL_BACKEND_SERIAL_RX_RING_BUFFER_SIZE
+      (64) caps how much can arrive before the shell drains it -- which
+      bites when a line is pasted rather than typed, and truncates it
+      mid-parse rather than reporting anything.
 
 config ZEPHLETS_SHELL_CMD_TIMEOUT_MS
     int "Timeout for publishing a shell-originated call onto the command channel (ms)"
