@@ -222,6 +222,14 @@ config ZEPHLETS_SHELL
     bool "Static shell frontend for zephlets"
     select SHELL
     select NANOPB_TEXTFORMAT
+    # Both halves, explicitly: an RPC's request is parsed and its response
+    # is printed, so this frontend needs each direction. They default y, but
+    # since v0.5.0 either can be configured out, and the library guards its
+    # declarations on them -- so relying on the default would turn a
+    # deliberate `=n` into a compile error inside generated handler macros
+    # rather than an unmet Kconfig dependency here.
+    select NANOPB_TEXTFORMAT_PARSE
+    select NANOPB_TEXTFORMAT_PRINT
     help
       Expose every ZLET_SHELL_INSTANCE()'d instance's RPCs under one
       `zlet` shell root command, entirely via compile-time-generated
@@ -239,6 +247,11 @@ config ZEPHLETS_SHELL
       says no oneofs; see CLAUDE.md.)
       Output style is that library's own Kconfig choice; multi-line is its
       default, which is what a console wants.
+
+      Selects both halves of the library: an RPC's request is parsed and
+      its response printed. NANOPB_TEXTFORMAT_PRINT carries the
+      CBPRINTF_COMPLETE dependency -- the printer escapes non-printable
+      bytes as three-digit octal and CBPRINTF_NANO has no %o conversion.
 
       Set CONFIG_CBPRINTF_FULL_INTEGRAL=y if any exposed message has a
       field wider than 32 bits. Narrower ones do not need it, and such a
