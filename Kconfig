@@ -234,7 +234,9 @@ config ZEPHLETS_SHELL
         zlet ui_a   config tags: [1,2,3], origin {x: 7, y: 0}
 
       Parsing and printing are done by zephyr-nanopb-textformat, so every
-      field shape works — optional, repeated, submessage, oneof, nested.
+      field shape works — optional, repeated, submessage, nested. (The
+      library also handles oneof, but zephlet's own proto contract still
+      says no oneofs; see CLAUDE.md.)
       Output style is that library's own Kconfig choice; multi-line is its
       default, which is what a console wants.
 

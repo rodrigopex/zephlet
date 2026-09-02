@@ -4,8 +4,9 @@
  * zephyr-nanopb-textformat. Nothing here walks a message's fields: the
  * library builds a descriptor tree from nanopb's own `<MSG>_FIELDLIST`
  * at compile time and walks it iteratively, so every field shape works —
- * optional, repeated, submessage, oneof, nested — without this header
- * knowing anything about them.
+ * optional, repeated, submessage, nested — without this header knowing
+ * anything about them. (The library handles oneof too; zephlet's proto
+ * contract does not currently sanction one, so it is untested here.)
  *
  * What remains macro-generated is the part that is genuinely per-instance:
  * one handler and one subcommand entry per (instance x RPC), driven by

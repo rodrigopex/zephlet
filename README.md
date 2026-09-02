@@ -86,6 +86,7 @@ my_zephlet_start(&my_instance, &st, K_MSEC(500));
 - **Non-singleton**: multiple instances per type coexist; each has its own channel pair and data.
 - **Weak handler overrides**: generator emits `__weak int <type>_<cmd>_impl(...)` returning `-ENOSYS`; user provides strong overrides in `<prefix>.c`.
 - **Coordinators** (optional, `CONFIG_ZEPHLETS_COORD=y`): multi-step flows with workqueue dispatch + bounded zbus-event awaits. Sits above the per-zephlet command/events surface — see [Coordinators](#coordinators) below.
+- **Frontends** (optional): expose the same command surface over a transport, with no change to domain code — each hooks itself in from `ZEPHLET_NEW` via a per-type macro. Shell (`CONFIG_ZEPHLETS_SHELL=y`, see [Shell frontend](#shell-frontend)) and CoAP (`CONFIG_ZEPHLETS_COAP=y`, per-service proto opt-in). Rationale in [ADR-0001](docs/adr/0001-zephlet-frontends.md).
 
 ## Adapters
 
@@ -146,6 +147,105 @@ Public surface (see [`zephlet_coord.h`](zephlet_coord.h)):
 | `zephlet_coord_resolve(c)` | Finalise an await; idempotent against the timeout path. |
 | `zephlet_coord_done(c)` | Mark the flow idle. |
 
+## Shell frontend
+
+`CONFIG_ZEPHLETS_SHELL=y` puts every instance's RPCs under one `zlet` root
+command. No app code: `ZEPHLET_NEW(...)` already expands the per-type hook that
+registers them. Needs the library in your manifest — see [Dependencies](#dependencies).
+
+An RPC takes its request as a protobuf **text-format** message:
+
+```
+uart:~$ zlet <TAB>                                    # one entry per instance
+uart:~$ zlet tick_fast config duration_ms: 100, period_ms: 10
+duration_ms: 100
+period_ms: 10
+uart:~$ zlet tick_fast get_config
+duration_ms: 100
+period_ms: 10
+```
+
+Fields are named, so order is free and any subset works. Anything omitted reads
+back as zero — the parser clears the message before writing into it.
+
+Every field shape works, including ones a positional grammar cannot express:
+
+```
+zlet ui_a config opt_scalar: 0                        # optional: present, zero
+zlet ui_a config tags: [1, 2, 3]                      # repeated
+zlet ui_a config origin {x: 7, y: -3}                 # submessage; colon optional
+zlet ui_a config path: [{x: 1}, {x: 2}]               # repeated submessage
+zlet ui_a config deep {d2 {d3 {v: 42}}}               # nesting
+zlet ui_a config name: "hi there"                     # a value with a space
+zlet ui_a config blob: "\x0F\x0Ahello\x1E"             # mixed binary and text
+```
+
+### Absent is not zero
+
+The one thing that surprises people. An `optional` field, an unset submessage
+and an empty `repeated` field print **nothing** — they are absent, which text
+format expresses by omission. An implicit-presence scalar always prints, zero
+included. So a freshly zeroed message shows only its implicit-presence fields,
+and `opt_scalar: 0` appears only once something has set it. That distinction is
+the reason to declare a field `optional` at all, and there is no flag to
+override it: emitting an absent field would produce text that re-parses into a
+different struct.
+
+### Input and output spellings differ, deliberately
+
+Round-trip holds at the *value* level, not the text level:
+
+| | Accepted | Printed |
+|---|---|---|
+| Repeated | `tags: [1, 2]` or `tags: 1 tags: 2` | `tags: 1` / `tags: 2`, one per element |
+| Bytes | `"\x0F\x0A"`, `\NNN`, `\uXXXX` | three-digit octal: `"\017\012"` |
+| Submessage | `origin {x: 1}` on one line | an indented block |
+
+The printer avoids `\xHH` because a hex escape runs on: `\x0` followed by `a`
+reads back as the single byte `0x0A`, while three octal digits cannot.
+
+### Errors
+
+Failures carry a byte offset and, when a field was in scope, its name:
+
+```
+uart:~$ zlet tick_fast config duration_ms: -1
+config: at offset 14: value out of range in field 'duration_ms'
+uart:~$ zlet tick_fast config nope: 1
+config: at offset 0: no such field
+```
+
+A rejected message never reaches the zephlet. The parser writes decoded bytes
+straight into the destination with no scratch buffer, so a failed parse can
+leave partial bytes behind; the generated handler dispatches only on success.
+
+### What to watch for
+
+- **Don't quote the whole argument.** It arrives as one `SHELL_OPT_ARG_RAW`
+  argument, so quotes are no longer stripped: `config '{a: 1}'` feeds the `'`
+  to the parser. Quote *values*, not the argument.
+- **`CONFIG_CBPRINTF_FULL_INTEGRAL=y`** if any exposed message has a field
+  wider than 32 bits, or such a field reports `PB_TF_ERR_UNSUPPORTED`.
+- **Two buffers default smaller than you would guess.** Naming every field
+  makes text format verbose: `CONFIG_SHELL_CMD_BUFF_SIZE` (256) caps the whole
+  line, and on the serial backend
+  `CONFIG_SHELL_BACKEND_SERIAL_RX_RING_BUFFER_SIZE` (64) caps how much can
+  arrive before the shell drains it — which truncates a *pasted* line
+  mid-parse, silently, while typing the same line by hand works.
+- **`CONFIG_SHELL_WILDCARD` needs no attention.** An RPC's raw argument is
+  never tokenised, so `*` and `?` inside a value survive intact. See
+  [`docs/adr/0001-zephlet-frontends.md`](docs/adr/0001-zephlet-frontends.md).
+- Enum values are numeric in both directions, not by name.
+
+### Cost
+
+Measured on `mps2/an385` at `-Os`: ~5.1 KB for the library, plus
+`12 x (fields + 1) + 12` bytes and the field-name strings per message
+descriptor — 1068 B across 23 messages in the example app. No static RAM;
+~400 B of stack per call. Descriptors are emitted for every message in a proto
+that has at least one field, since one reachable only as a submessage still
+needs one.
+
 ## West commands
 
 | Command | Purpose |
@@ -162,8 +262,8 @@ Public surface (see [`zephlet_coord.h`](zephlet_coord.h)):
   — **only with `CONFIG_ZEPHLETS_SHELL=y`**, which `select`s it. The shell
   frontend takes each RPC's request as a protobuf text-format message and
   hands parsing and printing to this library, so every field shape works
-  (`optional`, `repeated`, submessage, oneof, nested) without codegen
-  walking fields.
+  (`optional`, `repeated`, submessage, nested) without codegen walking
+  fields.
 
   It must be in *your* west manifest: if it is absent the `select` has no
   symbol to resolve and the frontend has no `nanopb_textformat.h` to
