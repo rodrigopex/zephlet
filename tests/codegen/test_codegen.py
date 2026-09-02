@@ -375,6 +375,61 @@ service NestApi {
 	assert source.count("PB_TF_DEFINE(NEST_CONFIG, nest_config_t);") == 1
 
 
+def test_textformat_descriptor_emitted_for_oneof_only_message(tmp_path):
+	"""A message whose every field sits in a `oneof` still needs a
+	descriptor.
+
+	`proto_schema_parser` nests oneof members inside a OneOf element rather
+	than listing them as direct children of the message, so a scan for
+	direct Field children sees such a message as empty -- while nanopb emits
+	an ordinary FIELDLIST for it. Skipping it leaves `<msg>_t_tf` undefined,
+	which surfaces as a link error either from a handler that uses the
+	message as an RPC request or from a parent's `extern`, not as anything
+	that names the cause."""
+	proto = tmp_path / "zlet_oneof.proto"
+	proto.write_text("""
+syntax = "proto3";
+import "nanopb.proto";
+import "zephlet.proto";
+option (nanopb_fileopt).long_names = false;
+
+message Oneof {
+  message Config {
+    oneof choice {
+      uint32 c_num = 1;
+      string c_str = 2 [(nanopb).max_size = 8];
+    }
+  }
+  message Mixed {
+    uint32 keep = 1;
+    oneof pick { uint32 p_num = 2; }
+  }
+  message Wrapper {
+    message Inner { uint32 x = 1; }
+  }
+  message Events { int32 timestamp = 1; }
+}
+
+service OneofApi {
+  rpc start      (Empty)        returns (Lifecycle.Status);
+  rpc stop       (Empty)        returns (Lifecycle.Status);
+  rpc get_status (Empty)        returns (Lifecycle.Status);
+  rpc config     (Oneof.Config) returns (Oneof.Config);
+  rpc get_config (Empty)        returns (Oneof.Config);
+}
+""")
+	_run_codegen(proto, tmp_path, type_name="oneof", prefix="zlet_oneof")
+	source = (tmp_path / "zlet_oneof_interface.c").read_text()
+
+	# Fields live only in a oneof -- and this one is an RPC request/response.
+	assert "PB_TF_DEFINE(ONEOF_CONFIG, oneof_config_t);" in source
+	# A oneof alongside an ordinary field must not double-count either.
+	assert source.count("PB_TF_DEFINE(ONEOF_MIXED, oneof_mixed_t);") == 1
+	# Genuinely field-less messages are still skipped; the nested one is not.
+	assert "PB_TF_DEFINE(ONEOF_WRAPPER, oneof_wrapper_t);" not in source
+	assert "PB_TF_DEFINE(ONEOF_WRAPPER_INNER, oneof_wrapper_inner_t);" in source
+
+
 def test_discoverable_missing_method_is_rejected(tmp_path):
 	"""Codegen must surface a diagnostic naming the missing base methods
 	and exit non-zero rather than emit a half-broken interface."""
