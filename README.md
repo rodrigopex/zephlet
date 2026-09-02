@@ -15,7 +15,7 @@ manifest:
   projects:
     - name: zephlet
       url: https://github.com/rodrigopex/zephlet
-      revision: main
+      revision: v0.3.4
       path: modules/lib/zephlet
       west-commands: west/west-commands.yml
 
@@ -256,6 +256,27 @@ needs one.
 | `west zephlet new [-o <dir>] [-n -d -a] [--prefix STR] [--no-module]` | Copier scaffold. Destination = `$PWD` unless `-o`. `--prefix` overrides the default `zlet_` (`""` drops it); `--no-module` skips the tests folder and `zephyr/module.yml`. |
 | `west zephlet new-adapter` | Prints the v0.3 recipe. No codegen. |
 | `west zephlet gen <zephlet_dir>` | Regenerate `<prefix>_interface.{h,c}` from its proto. |
+
+## Releases
+
+Two version numbers appear in this repo and they mean different things.
+
+**`v0.3` is the architecture generation** — the contract described in
+[CLAUDE.md](CLAUDE.md): two channels per instance, `ZEPHLET_NEW`, weak handler
+overrides, no `ZephletResult`. That is what "the v0.3 contract" refers to
+throughout the docs, and it has not changed since v0.3.0.
+
+**The third component is the release counter** within that generation. Pin a
+tag rather than `main`, so a `west update` cannot move the framework under you.
+
+| Tag | |
+|---|---|
+| **`v0.3.4`** | The `zlet` shell frontend — see [Shell frontend](#shell-frontend). Adds a *conditional* dependency: `CONFIG_ZEPHLETS_SHELL=y` needs `zephyr-nanopb-textformat` in your manifest. **Breaking** for anyone on the earlier frontend: RPC arguments were positional and are now named text format. |
+| `v0.3.3` | CoAP frontend maturation — optional DTLS-PSK, service start on L4 connectivity rather than at boot, the Observe registration gate, a `CONFIG_ZEPHLETS_COAP=n` footprint gate. Also codegen build-ordering fixes and a coordinator lost-wakeup fix. |
+| `v0.3.2` | Configurable codegen prefix, optional module scaffold. |
+
+Each tag carries an annotated message with the detail; `git show v0.3.4` is the
+authority over this table.
 
 ## Dependencies
 

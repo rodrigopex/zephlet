@@ -1,5 +1,11 @@
 # Zephlet Infrastructure v0.3
 
+**`v0.3` here is the architecture generation, not a release tag.** It names the
+contract below — two channels per instance, `ZEPHLET_NEW`, weak handler
+overrides — and has not changed since the v0.3.0 tag. Releases within it are
+`v0.3.x`; current is **`v0.3.4`** (the `zlet` shell frontend; `v0.3.3` was CoAP
+frontend maturation). Consumers pin a tag — see README's Releases section.
+
 Ports+Adapters on Zephyr/zbus. Zephlets=domain logic (no direct deps). Adapters=plain user C composed from a framework-level observer primitive. Instances are non-singleton; multiple per type.
 
 ## Model
