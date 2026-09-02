@@ -41,6 +41,11 @@ if(CONFIG_ZEPHLETS)
     zephyr_library_sources("${SHARED_ZEPHLET_DIR}/zephlet.c")
     zephyr_library_sources_ifdef(CONFIG_ZEPHLETS_COORD
         "${SHARED_ZEPHLET_DIR}/zephlet_coord.c")
+    # Descriptors for the shared zephlet.proto messages. Gated on the
+    # library rather than on a frontend: printing a proto struct is useful
+    # anywhere, application logging included.
+    zephyr_library_sources_ifdef(CONFIG_NANOPB_TEXTFORMAT
+        "${SHARED_ZEPHLET_DIR}/zephlet_textformat.c")
     zephyr_include_directories(.)
     zephyr_linker_sources(DATA_SECTIONS zephlet_iterables.ld)
 

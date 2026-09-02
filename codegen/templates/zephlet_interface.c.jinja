@@ -22,12 +22,17 @@ LOG_MODULE_REGISTER({{ prefix }}, CONFIG_ZEPHLET_{{ type_upper }}_LOG_LEVEL);
  *
  * Defined here (one translation unit) and declared in the header, because
  * the handlers that reference them are generated at the ZEPHLET_NEW() call
- * site in user code. Costs flash only: the descriptors are const. */
-#if defined(CONFIG_ZEPHLETS_SHELL)
+ * site in user code. Costs flash only: the descriptors are const.
+ *
+ * Gated on the library, not on any frontend: printing a proto struct as
+ * text format is useful anywhere it is available -- application logging
+ * as much as a shell -- and an app should not have to enable a frontend
+ * to get it. */
+#if defined(CONFIG_NANOPB_TEXTFORMAT)
 {% for m in tf_messages %}
 PB_TF_DEFINE({{ m.uc }}, {{ m.lc }}_t);
 {% endfor %}
-#endif /* CONFIG_ZEPHLETS_SHELL */
+#endif /* CONFIG_NANOPB_TEXTFORMAT */
 
 /* ----- Weak default handlers (overridden in user source) -------------- */
 

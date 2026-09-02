@@ -299,20 +299,33 @@ def test_textformat_descriptors_emitted_per_message(tmp_path):
 	assert "PB_TF_DECLARE(tick_config_t);" in header
 	assert "PB_TF_DECLARE(tick_events_t);" in header
 
+	# Declared under the library's own guard, so application code can print
+	# a message without enabling a frontend.
+	h_start = header.index("#if defined(CONFIG_NANOPB_TEXTFORMAT)")
+	h_end = header.index("#endif /* CONFIG_NANOPB_TEXTFORMAT */")
+	assert "PB_TF_DECLARE(tick_config_t);" in header[h_start:h_end]
+
 	# Definitions belong to exactly one TU; the header only declares.
 	assert "PB_TF_DEFINE(" not in header
 	assert "PB_TF_DECLARE(" not in source
 
 
-def test_textformat_descriptors_gated_on_shell(tmp_path):
+def test_textformat_descriptors_gated_on_the_library(tmp_path):
 	"""The descriptors cost flash, so they are compiled only when the
-	shell frontend is on. Nothing else consumes them today."""
+	library is available -- but on the library, not on any frontend.
+
+	Printing a proto struct as text format is useful wherever it can be
+	done, application logging as much as a shell, so an app should not have
+	to enable a frontend to get a descriptor for its own messages."""
 	_run_codegen(_FIXTURES / "tick_no_opt.proto", tmp_path)
 	source = (tmp_path / "zlet_tick_interface.c").read_text()
 
-	start = source.index("#if defined(CONFIG_ZEPHLETS_SHELL)")
-	end = source.index("#endif /* CONFIG_ZEPHLETS_SHELL */")
+	start = source.index("#if defined(CONFIG_NANOPB_TEXTFORMAT)")
+	end = source.index("#endif /* CONFIG_NANOPB_TEXTFORMAT */")
 	block = source[start:end]
+
+	# Not gated on the shell frontend, which is only one consumer.
+	assert "CONFIG_ZEPHLETS_SHELL" not in block
 
 	assert "PB_TF_DEFINE(TICK_CONFIG, tick_config_t);" in block
 	assert "PB_TF_DEFINE(TICK_EVENTS, tick_events_t);" in block
