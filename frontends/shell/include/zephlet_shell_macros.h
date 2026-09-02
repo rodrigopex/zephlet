@@ -78,8 +78,7 @@
 			shell_error(sh, "%s: %d", #_name, rc);                                     \
 			return rc;                                                                 \
 		}                                                                                  \
-		(void)pb_tf_print(&_resp_lc##_t_tf, &resp, zlet_shell_out, (void *)sh,             \
-				  PB_TF_MULTILINE);                                                \
+		(void)pb_tf_print(&_resp_lc##_t_tf, &resp, zlet_shell_out, (void *)sh);            \
 		return 0;                                                                          \
 	}
 
@@ -96,7 +95,7 @@
 			shell_error(sh, "%s: expected a text-format message", #_name);             \
 			return -EINVAL;                                                            \
 		}                                                                                  \
-		terr = pb_tf_parse(&_req_lc##_t_tf, &req, argv[1], 0U, &st);                       \
+		terr = pb_tf_parse(&_req_lc##_t_tf, &req, argv[1], &st);                           \
 		if (terr != PB_TF_OK) {                                                            \
 			zlet_shell_report_tf_err(sh, #_name, terr, &st);                           \
 			return -EINVAL;                                                            \
@@ -124,7 +123,7 @@
 			shell_error(sh, "%s: expected a text-format message", #_name);             \
 			return -EINVAL;                                                            \
 		}                                                                                  \
-		terr = pb_tf_parse(&_req_lc##_t_tf, &req, argv[1], 0U, &st);                       \
+		terr = pb_tf_parse(&_req_lc##_t_tf, &req, argv[1], &st);                           \
 		if (terr != PB_TF_OK) {                                                            \
 			zlet_shell_report_tf_err(sh, #_name, terr, &st);                           \
 			return -EINVAL;                                                            \
@@ -135,8 +134,7 @@
 			shell_error(sh, "%s: %d", #_name, rc);                                     \
 			return rc;                                                                 \
 		}                                                                                  \
-		(void)pb_tf_print(&_resp_lc##_t_tf, &resp, zlet_shell_out, (void *)sh,             \
-				  PB_TF_MULTILINE);                                                \
+		(void)pb_tf_print(&_resp_lc##_t_tf, &resp, zlet_shell_out, (void *)sh);            \
 		return 0;                                                                          \
 	}
 

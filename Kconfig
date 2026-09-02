@@ -235,9 +235,12 @@ config ZEPHLETS_SHELL
 
       Parsing and printing are done by zephyr-nanopb-textformat, so every
       field shape works — optional, repeated, submessage, oneof, nested.
+      Output style is that library's own Kconfig choice; multi-line is its
+      default, which is what a console wants.
 
       Set CONFIG_CBPRINTF_FULL_INTEGRAL=y if any exposed message has a
-      64-bit field, or it will print wrongly rather than imprecisely.
+      field wider than 32 bits. Narrower ones do not need it, and such a
+      field reports PB_TF_ERR_UNSUPPORTED rather than printing wrongly.
 
       Naming every field makes text format verbose, so a wide message can
       outgrow two buffers that default smaller than you would guess:
@@ -246,6 +249,13 @@ config ZEPHLETS_SHELL
       (64) caps how much can arrive before the shell drains it -- which
       bites when a line is pasted rather than typed, and truncates it
       mid-parse rather than reporting anything.
+
+      Both are application choices rather than library requirements, and
+      the right sizes depend on your widest message; the library's own
+      docs/shell-integration.md explains each. CONFIG_SHELL_WILDCARD needs
+      no attention -- a zephlet RPC's raw argument is never tokenised, so
+      wildcard expansion cannot reach it (see
+      docs/adr/0001-zephlet-frontends.md).
 
 config ZEPHLETS_SHELL_CMD_TIMEOUT_MS
     int "Timeout for publishing a shell-originated call onto the command channel (ms)"
