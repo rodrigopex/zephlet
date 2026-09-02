@@ -23,7 +23,7 @@ manifest:
     # this entry if you are not enabling the shell frontend.
     - name: zephyr-nanopb-textformat
       url: https://codeberg.org/rodrigopex/zephyr-nanopb-textformat
-      revision: v0.4.0
+      revision: v0.5.0
       path: modules/lib/zephyr-nanopb-textformat
   self:
     path: app
@@ -270,10 +270,17 @@ needs one.
   include. Nothing else in the infra needs it, so a project with the shell
   frontend off can leave it out entirely.
 
+  `CONFIG_ZEPHLETS_SHELL` selects both halves of it —
+  `NANOPB_TEXTFORMAT_PARSE` and `NANOPB_TEXTFORMAT_PRINT` — since an RPC's
+  request is parsed and its response printed. Since v0.5.0 either can be
+  configured out, and the library guards its declarations on them, so
+  selecting both keeps a deliberate `=n` an unmet Kconfig dependency
+  rather than a compile error inside a generated handler.
+
   **Pin a tag.** The API is pre-1.0 and has already moved: v0.3.0 dropped
   the trailing `flags` argument from `pb_tf_parse()` / `pb_tf_print()` in
   favour of Kconfig options, and split `PB_TF_NOINIT` out as
-  `pb_tf_merge()`. Tested here against **v0.4.0**.
+  `pb_tf_merge()`. Tested here against **v0.5.0**.
 
   Its `docs/shell-integration.md` covers the application-side settings a
   console needs — chiefly `CONFIG_CBPRINTF_FULL_INTEGRAL=y` for fields

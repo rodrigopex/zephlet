@@ -163,7 +163,9 @@ Single script `codegen/generate_zephlet.py` parses the `.proto` service block, c
   **`select`s `NANOPB_TEXTFORMAT`, so the app's west manifest must carry
   [`zephyr-nanopb-textformat`](https://codeberg.org/rodrigopex/zephyr-nanopb-textformat)**
   (pin a tag — pre-1.0, API already moved at v0.3.0; tested against
-  v0.4.0). An RPC takes its request as a protobuf text-format message
+  v0.5.0). Selects both `NANOPB_TEXTFORMAT_PARSE` and
+  `NANOPB_TEXTFORMAT_PRINT`: requests are parsed, responses printed, and
+  since v0.5.0 either half can be configured out. An RPC takes its request as a protobuf text-format message
   (`zlet tick_a config duration_ms: 100, period_ms: 10`), delivered as one
   `SHELL_OPT_ARG_RAW` argument and parsed by that library, so every field
   shape works without codegen walking fields. Codegen emits one
