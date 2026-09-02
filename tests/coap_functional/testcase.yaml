@@ -44,11 +44,6 @@ tests:
     extra_configs:
       - CONFIG_ZEPHLETS_SHELL=y
       - CONFIG_UART_NATIVE_PTY_0_ON_STDINOUT=y
-      # Every rpc takes its request as one SHELL_OPT_ARG_RAW argument, and
-      # wildcard expansion rewrites the command buffer before the handler
-      # runs. zephlet_shell_root.c BUILD_ASSERTs on this rather than
-      # letting a `*` in a message corrupt it silently.
-      - CONFIG_SHELL_WILDCARD=n
     harness_config:
       pytest_root:
         - "pytest/test_dual_frontend.py"
