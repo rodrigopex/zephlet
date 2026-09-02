@@ -179,6 +179,27 @@ def message_c_name(type_ref: str, owning_type: str) -> str:
     return camel_to_snake(type_ref)
 
 
+def _message_has_field(message) -> bool:
+    """
+    True if @p message declares at least one field of its own.
+
+    Counts oneof members: `proto_schema_parser` nests them inside a OneOf
+    element rather than listing them as direct children, so a message whose
+    every field sits in a oneof looks empty to a naive scan while nanopb emits
+    an ordinary FIELDLIST for it. Nested messages are not counted -- each gets
+    its own descriptor.
+    """
+    for elem in message.elements:
+        kind = elem.__class__.__name__
+        if kind == "Field":
+            return True
+        if kind == "OneOf" and any(inner.__class__.__name__ == "Field"
+                                   for inner in elem.elements):
+            return True
+
+    return False
+
+
 def collect_tf_messages(tree) -> list[dict]:
     """
     Every message declared in the proto that carries at least one field,
@@ -191,9 +212,13 @@ def collect_tf_messages(tree) -> list[dict]:
     submessage must also be defined or the link fails. Walking the whole file
     guarantees that closure without a reachability pass.
 
-    Field-less messages are skipped -- nanopb still emits a struct and an empty
-    FIELDLIST for a bare namespace wrapper like `message Typelab { ... }`, and a
-    zero-field descriptor would cost flash for nothing.
+    Messages with no fields at all are skipped -- nanopb still emits a struct
+    and an empty FIELDLIST for a bare namespace wrapper like
+    `message Typelab { ... }`, and a zero-field descriptor would cost flash for
+    nothing. "No fields" counts oneof members, which the AST nests one level
+    down inside a OneOf element: a message whose fields all live in a oneof has
+    a perfectly ordinary FIELDLIST, and skipping it would leave `<msg>_t_tf`
+    undefined at link time.
 
     Nested messages flatten to `parent_child`, matching nanopb under
     `long_names = false`: `Typelab.Config` -> `typelab_config`, whose FIELDLIST
@@ -210,9 +235,7 @@ def collect_tf_messages(tree) -> list[dict]:
         for inner in elem.elements:
             walk(inner, chain)
 
-        has_field = any(e.__class__.__name__ == "Field"
-                        for e in elem.elements)
-        if has_field:
+        if _message_has_field(elem):
             lc = "_".join(chain)
             out.append({"uc": lc.upper(), "lc": lc})
 
