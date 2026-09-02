@@ -107,6 +107,9 @@ service TickApi {
 - `method_id` allocated in declaration order, starting at 1; slot 0 reserved.
 - `option (nanopb_fileopt).long_names = false;` — required; generator assumes `Parent.Child → parent_child` snake-cased names.
 - No oneofs. No `ZephletResult`, `Invoke`, `Report`, `has_result`, `extends_base` — all gone in v0.3.
+  The shell frontend's descriptor emission does handle a oneof-only message (codegen counts oneof
+  members, which the proto AST nests one level down), so lifting this would not silently break the
+  link — but no oneof is exercised end to end, so treat the constraint as standing until it is.
 - Streaming methods rejected by the generator.
 - Shared `zephlet.proto` supplies `Empty` and `Lifecycle.Status`.
 
