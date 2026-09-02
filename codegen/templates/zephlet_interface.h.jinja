@@ -90,18 +90,21 @@ extern const struct zephlet_api {{ type_snake }}_api;
  * hook is gated purely by CONFIG_ZEPHLETS_SHELL, not by an included
  * override header, so a plain #if/#else suffices here (no #ifndef
  * fallback needed, unlike CoAP above). */
-#if defined(CONFIG_ZEPHLETS_SHELL)
-#include <nanopb_textformat.h>
-
-#include "zephlet_shell_macros.h"
-
 /* Text-format descriptors for every message in this proto carrying at least
  * one field. Defined once in {{ prefix }}_interface.c; declared here because
- * the shell handlers that reference them are generated at the ZEPHLET_NEW()
- * call site, in a different translation unit. */
+ * whatever references them -- a generated shell handler at the ZEPHLET_NEW()
+ * call site, or application code printing a config -- lives in a different
+ * translation unit. Gated on the library rather than on a frontend. */
+#if defined(CONFIG_NANOPB_TEXTFORMAT)
+#include <nanopb_textformat.h>
+
 {% for m in tf_messages %}
 PB_TF_DECLARE({{ m.lc }}_t);
 {% endfor %}
+#endif /* CONFIG_NANOPB_TEXTFORMAT */
+
+#if defined(CONFIG_ZEPHLETS_SHELL)
+#include "zephlet_shell_macros.h"
 
 #define _ZLET_SHELL_HOOK_{{ type_snake }}(_name) ZLET_SHELL_INSTANCE({{ type_snake }}, _name)
 #else
