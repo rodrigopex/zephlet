@@ -1,7 +1,7 @@
 > **Superseded.** This is the v1 design, in which the frontend parsed RPC
 > arguments itself through a macro framework. Parsing and printing now
 > belong to
-> [zephyr-nanopb-textformat](https://codeberg.org/rodrigopex/zephyr-nanopb-textformat),
+> [zephyr-nanopb-textformat](https://github.com/rodrigopex/zephyr-nanopb-textformat),
 > and RPC arguments are protobuf text format. Sections 2 and 3 below
 > describe code that no longer exists (`zephlet_shell_value.{c,h}`, the
 > `ZLET_SHELL_PARSE_*`/`PRINT_*` families, `ZLET_SHELL_FIELD_COUNT`,

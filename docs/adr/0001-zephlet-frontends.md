@@ -172,7 +172,7 @@ about the tools rather than about the design:
   `PARSE_FIELD_D0/D1/D2/…` ladders with a hard cap.
 
 So parsing and printing move to
-[zephyr-nanopb-textformat](https://codeberg.org/rodrigopex/zephyr-nanopb-textformat)
+[zephyr-nanopb-textformat](https://github.com/rodrigopex/zephyr-nanopb-textformat)
 (pinned at v0.7.0, where each print style is a named wrapper, every
 function returns `int` Zephyr-style, and either direction can be
 configured out),

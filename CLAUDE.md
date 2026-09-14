@@ -167,7 +167,7 @@ Single script `codegen/generate_zephlet.py` parses the `.proto` service block, c
   RPCs under one `zlet` root command, via the per-type
   `_ZLET_SHELL_HOOK_<type>` hook that `ZEPHLET_NEW` expands; no app code.
   **`select`s `NANOPB_TEXTFORMAT`, so the app's west manifest must carry
-  [`zephyr-nanopb-textformat`](https://codeberg.org/rodrigopex/zephyr-nanopb-textformat)**
+  [`zephyr-nanopb-textformat`](https://github.com/rodrigopex/zephyr-nanopb-textformat)**
   (pin a tag — pre-1.0, API has already moved twice: v0.3.0 replaced the
   per-call `flags` with Kconfig options, v0.7.0 replaced those with named
   wrappers and made every function return `int`. Tested against v0.7.0.)

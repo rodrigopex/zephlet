@@ -22,7 +22,7 @@ manifest:
     # Only needed with CONFIG_ZEPHLETS_SHELL=y — see Dependencies. Drop
     # this entry if you are not enabling the shell frontend.
     - name: zephyr-nanopb-textformat
-      url: https://codeberg.org/rodrigopex/zephyr-nanopb-textformat
+      url: https://github.com/rodrigopex/zephyr-nanopb-textformat
       revision: v0.7.0
       path: modules/lib/zephyr-nanopb-textformat
   self:
@@ -282,7 +282,7 @@ authority over this table.
 
 - Zephyr RTOS (with `zbus`, `nanopb` modules).
 - Python packages: `proto-schema-parser`, `jinja2`, `copier`.
-- [`zephyr-nanopb-textformat`](https://codeberg.org/rodrigopex/zephyr-nanopb-textformat)
+- [`zephyr-nanopb-textformat`](https://github.com/rodrigopex/zephyr-nanopb-textformat)
   — **only with `CONFIG_ZEPHLETS_SHELL=y`**, which `select`s it. The shell
   frontend takes each RPC's request as a protobuf text-format message and
   hands parsing and printing to this library, so every field shape works
