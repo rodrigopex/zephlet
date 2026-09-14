@@ -235,9 +235,8 @@ def collect_tf_messages(tree) -> list[dict]:
         for inner in elem.elements:
             walk(inner, chain)
 
-        if _message_has_field(elem):
-            lc = "_".join(chain)
-            out.append({"uc": lc.upper(), "lc": lc})
+        lc = "_".join(chain)
+        out.append({"uc": lc.upper(), "lc": lc})
 
     for elem in tree.file_elements:
         walk(elem, [])
