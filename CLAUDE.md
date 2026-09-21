@@ -170,7 +170,10 @@ Single script `codegen/generate_zephlet.py` parses the `.proto` service block, c
   [`zephyr-nanopb-textformat`](https://github.com/rodrigopex/zephyr-nanopb-textformat)**
   (pin a tag — pre-1.0, API has already moved twice: v0.3.0 replaced the
   per-call `flags` with Kconfig options, v0.7.0 replaced those with named
-  wrappers and made every function return `int`. Tested against v0.7.0.)
+  wrappers and made every function return `int`, and v0.8.0 changed what
+  the printer emits -- repeated fields fold into `[a, b]`, and multi-line
+  is fit-or-expand rather than one field per line. Tested against
+  v0.8.1.)
   Selects both `NANOPB_TEXTFORMAT_PARSE` and `NANOPB_TEXTFORMAT_PRINT`:
   requests are parsed, responses printed, and since v0.5.0 either half can
   be configured out. A response prints twice — an indented block via

@@ -15,8 +15,9 @@ covered separately in test_typelab_types.py.
 
 Note where input and output spellings differ on purpose:
 
-  * repeated fields accept `[a, b]` but always print as repetition,
-    one `name: value` per element;
+  * repeated fields accept either `[a, b]` or a repeated name, and
+    always print as a bracket list -- so the list form round-trips
+    textually and the repetition form does not;
   * bytes accept `\\xH[H]` escapes but always print three-digit octal,
     because a hex escape runs on whenever the next byte is also a hex
     digit while three octal digits cannot.
@@ -84,20 +85,17 @@ def test_repeated_scalar_list_form(dut: DeviceAdapter, shell: Shell):
 	assert shell.wait_for_prompt(), "shell prompt never appeared"
 
 	out = _set(shell, "rep_scalar: [1, 2, 3]")
-	for want in ("rep_scalar: 1", "rep_scalar: 2", "rep_scalar: 3"):
-		assert want in out, out
-	assert "[" not in out, out
+	assert "rep_scalar: [1, 2, 3]" in out, out
 
 
 def test_repeated_scalar_repetition_form(dut: DeviceAdapter, shell: Shell):
-	"""Either a list or a repeated field name; both append. This is also
-	the form the printer emits, so it round-trips textually where the
-	list form does not."""
+	"""Either a list or a repeated field name; both append. The printer
+	emits the list form, so this input spelling is accepted but not the
+	one that comes back."""
 	assert shell.wait_for_prompt(), "shell prompt never appeared"
 
 	out = _set(shell, "rep_scalar: 1 rep_scalar: 2 rep_scalar: 3")
-	for want in ("rep_scalar: 1", "rep_scalar: 2", "rep_scalar: 3"):
-		assert want in out, out
+	assert "rep_scalar: [1, 2, 3]" in out, out
 
 
 def test_repeated_scalar_past_max_count_is_rejected(dut: DeviceAdapter, shell: Shell):
@@ -176,7 +174,7 @@ def test_repeated_submessage(dut: DeviceAdapter, shell: Shell):
 	assert shell.wait_for_prompt(), "shell prompt never appeared"
 
 	out = _set(shell, "rep_msg: [{a: 1, b: 2}, {a: 3, b: 4}]")
-	for want in ("a: 1", "b: 2", "a: 3", "b: 4"):
+	for want in ("{a: 1, b: 2},", "{a: 3, b: 4}"):
 		assert want in out, out
 
 
@@ -232,8 +230,7 @@ def test_repeated_string(dut: DeviceAdapter, shell: Shell):
 	assert shell.wait_for_prompt(), "shell prompt never appeared"
 
 	out = _set(shell, 'rep_string: ["one", "two"]')
-	assert 'rep_string: "one"' in out, out
-	assert 'rep_string: "two"' in out, out
+	assert 'rep_string: ["one", "two"]' in out, out
 
 
 def test_optional_bytes_mixed_escapes_and_ascii(dut: DeviceAdapter, shell: Shell):
@@ -251,8 +248,7 @@ def test_repeated_bytes(dut: DeviceAdapter, shell: Shell):
 	assert shell.wait_for_prompt(), "shell prompt never appeared"
 
 	out = _set(shell, r'rep_bytes: ["\xDE\xAD", "\xBE\xEF"]')
-	assert r'rep_bytes: "\336\255"' in out, out
-	assert r'rep_bytes: "\276\357"' in out, out
+	assert r'rep_bytes: ["\336\255", "\276\357"]' in out, out
 
 
 # ----- nesting depth --------------------------------------------------
@@ -287,19 +283,22 @@ def test_all_shapes_in_one_message_round_trip(dut: DeviceAdapter, shell: Shell):
 		"deep {d2 {d3 {v: 11}}}"
 	)
 
+	# Spelled as they now print: scalars, strings and bytes fold into
+	# bracket lists, a narrow leaf submessage stays inline, and a
+	# repeated submessage still takes one element per line.
 	expected = (
 		"plain_scalar: 1",
 		"opt_scalar: 2",
-		"rep_scalar: 3",
-		"rep_scalar: 4",
-		"b: -6",
-		"b: -8",
+		"rep_scalar: [3, 4]",
+		"sing_msg {a: 5, b: -6}",
+		"opt_msg {a: 7, b: -8}",
+		"{a: 9, b: 0},",
+		"{a: 10, b: 0}",
 		'opt_string: "s"',
-		'rep_string: "t"',
-		'rep_string: "u"',
+		'rep_string: ["t", "u"]',
 		r'opt_bytes: "\252"',
-		r'rep_bytes: "\273"',
-		"v: 11",
+		r'rep_bytes: ["\273"]',
+		"d3 {v: 11}",
 	)
 
 	out = _set(shell, msg)

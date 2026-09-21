@@ -230,6 +230,15 @@ config ZEPHLETS_SHELL
     # rather than an unmet Kconfig dependency here.
     select NANOPB_TEXTFORMAT_PARSE
     select NANOPB_TEXTFORMAT_PRINT
+    # The readable block is the whole reason this frontend prints
+    # multi-line, and the library made its fit-or-expand pass optional in
+    # v0.8.1 -- so pin it here rather than inherit a default that can move
+    # underneath us. Conditional because ZEPHLETS_SHELL_PRINT_COMPACT never
+    # emits a block, and the pass costs about 1050 B of flash and 190 B of
+    # stack that such a build would spend on nothing. Bracket lists are not
+    # affected either way: a repeated field prints as "tags: [1, 2]" even
+    # with the pass out of the build.
+    select NANOPB_TEXTFORMAT_PRINT_FIT if !ZEPHLETS_SHELL_PRINT_COMPACT
     help
       Expose every ZLET_SHELL_INSTANCE()'d instance's RPCs under one
       `zlet` shell root command, entirely via compile-time-generated
