@@ -245,10 +245,12 @@ config ZEPHLETS_SHELL
       field shape works — optional, repeated, submessage, nested. (The
       library also handles oneof, but zephlet's own proto contract still
       says no oneofs; see CLAUDE.md.)
-      Responses print compact -- one line -- which is the shortest form that
-      is still valid standalone text format, so a `get_config` response can
-      be pasted straight back into a `config` call. Since v0.7.0 the style
-      is named at the call site rather than chosen in Kconfig.
+
+      A response prints as a readable indented block followed by a
+      compact line prefixed with the command that writes it back, so it
+      can be copied, edited and pasted. The choice below selects either
+      form on its own instead, and ZEPHLETS_SHELL_PRINT_RUNTIME allows
+      switching between them from the console.
 
       Selects both halves of the library: an RPC's request is parsed and
       its response printed. NANOPB_TEXTFORMAT_PRINT carries the
@@ -287,6 +289,73 @@ config ZEPHLETS_SHELL_CMD_TIMEOUT_MS
       progress. Longer than CoAP's default (see
       ZEPHLETS_COAP_CMD_TIMEOUT_MS) since a human at a console is far
       more timeout-tolerant than a network client.
+
+choice
+    prompt "What a zlet command prints for an RPC response"
+    default ZEPHLETS_SHELL_PRINT_BOTH
+    depends on ZEPHLETS_SHELL
+    help
+      Picks which of the two response forms a `zlet` command emits, and
+      is the value ZEPHLETS_SHELL_PRINT_RUNTIME starts from.
+
+      The two forms answer different questions and neither answers both.
+      A readable block indents each submessage and puts one field per
+      line, so where an element starts and finishes is visible; it is
+      valid text format, but it cannot be pasted into the shell, which
+      submits a command on every newline. A compact line is the shortest
+      form that is still valid standalone text format, so it pastes back
+      into the RPC that writes the message -- at the cost of wrapping
+      mid-token once it outgrows the terminal.
+
+config ZEPHLETS_SHELL_PRINT_BOTH
+    bool "Readable block, then a pasteable command line"
+    help
+      Print the readable block, a blank line, then the compact form
+      prefixed with the command that writes it back:
+
+        zlet <instance> <rpc> <message>
+
+      Read the block, copy the last line, edit a value, paste it. Costs
+      one extra walk of the message and roughly doubles the output per
+      call. The prefix is omitted when no RPC in the service accepts
+      that response's type, as for the Lifecycle.Status returned by
+      start, stop and get_status.
+
+config ZEPHLETS_SHELL_PRINT_PRETTY
+    bool "Readable block only"
+    help
+      Print only the readable block. Half the output of
+      ZEPHLETS_SHELL_PRINT_BOTH, and the right choice when responses are
+      read rather than edited, or when console bandwidth is tight enough
+      that a duplicate of every message is not worth paying for.
+
+config ZEPHLETS_SHELL_PRINT_COMPACT
+    bool "One compact line only"
+    help
+      Print only the compact line, as releases before this option did.
+      Smallest output and no second walk of the message. Keep this when
+      something parses the console rather than reads it, since the
+      readable block's line breaks would have to be reassembled.
+
+endchoice
+
+config ZEPHLETS_SHELL_PRINT_RUNTIME
+    bool "Change the response form at run time"
+    depends on ZEPHLETS_SHELL
+    default y
+    help
+      Register the `zlet_fmt` command, which reports the current
+      response form and switches it for subsequent calls:
+
+        zlet_fmt                      report the current form
+        zlet_fmt both|pretty|compact   switch
+
+      Useful when the same firmware is read interactively and scraped by
+      a script, since the choice above is otherwise fixed at build time.
+
+      Turning this off makes the form a compile-time constant, so the
+      unselected print paths fold away and the command itself is not
+      compiled in.
 
 module = ZEPHLET
 module-str = zephlet

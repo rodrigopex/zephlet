@@ -219,7 +219,8 @@ def test_shell_methods_emitted_for_every_rpc(tmp_path):
 	per-proto), with one X() row per RPC in declaration order, the
 	uppercase _FIELDLIST macro name for Empty request/response
 	messages resolved to EMPTY (not the blank req_c_name), and the
-	correct 4-shape call_shape token."""
+	correct 4-shape call_shape token, and the paste RPC each response
+	can be written back through."""
 	_run_codegen(_FIXTURES / "tick_no_opt.proto", tmp_path)
 	header = (tmp_path / "zlet_tick_interface.h").read_text()
 
@@ -227,15 +228,67 @@ def test_shell_methods_emitted_for_every_rpc(tmp_path):
 	assert "#define _ZLET_SHELL_METHODS_APPLY_tick(_instance, X)" in header
 
 	# start/stop/get_status/dump_state-less base set: Empty req, non-Empty resp.
-	assert "X(start, empty, EMPTY, lifecycle_status, LIFECYCLE_STATUS, EMPTY_RESP)" in header
+	assert "X(start, empty, EMPTY, lifecycle_status, LIFECYCLE_STATUS, EMPTY_RESP, NULL)" in header
 	# config: non-Empty req and resp.
-	assert "X(config, tick_config, TICK_CONFIG, tick_config, TICK_CONFIG, REQ_RESP)" in header
+	assert 'X(config, tick_config, TICK_CONFIG, tick_config, TICK_CONFIG, REQ_RESP, "config")' in header
 	# get_config: Empty req, non-Empty resp.
-	assert "X(get_config, empty, EMPTY, tick_config, TICK_CONFIG, EMPTY_RESP)" in header
+	assert 'X(get_config, empty, EMPTY, tick_config, TICK_CONFIG, EMPTY_RESP, "config")' in header
 
 	# The _APPLY rows carry the same tuples with the type baked in
 	# literally as the first field (not forwarded as a macro parameter).
-	assert "X(tick, _instance, config, tick_config, TICK_CONFIG, tick_config, TICK_CONFIG, REQ_RESP)" in header
+	assert 'X(tick, _instance, config, tick_config, TICK_CONFIG, tick_config, TICK_CONFIG, REQ_RESP, "config")' in header
+
+
+def test_shell_paste_rpc_resolves_writer_by_type(tmp_path):
+	"""Each row's last column names the RPC that accepts that row's
+	response as its request, so a printed response can carry the command
+	line that writes it back. A reader RPC cannot name its own writer;
+	codegen can, because it holds every request and response type at once.
+
+	Three cases in one service: a differently-named pair, where only the
+	type matches; an RPC that both takes and returns a type, which is its
+	own writer; and a response type no RPC accepts, which has no command to
+	name and resolves to NULL."""
+	proto = tmp_path / "zlet_pair.proto"
+	proto.write_text("""
+syntax = "proto3";
+import "nanopb.proto";
+import "zephlet.proto";
+option (nanopb_fileopt).long_names = false;
+
+message Pair {
+  message Config { uint32 a = 1; }
+  message Shapes { uint32 b = 1; }
+  message Events { int32 timestamp = 1; }
+}
+
+service PairApi {
+  rpc start      (Empty)       returns (Lifecycle.Status);
+  rpc stop       (Empty)       returns (Lifecycle.Status);
+  rpc get_status (Empty)       returns (Lifecycle.Status);
+  rpc config     (Pair.Config) returns (Pair.Config);
+  rpc get_config (Empty)       returns (Pair.Config);
+  rpc set_shapes (Pair.Shapes) returns (Pair.Shapes);
+  rpc get_shapes (Empty)       returns (Pair.Shapes);
+}
+""")
+	_run_codegen(proto, tmp_path, type_name="pair", prefix="zlet_pair")
+	header = (tmp_path / "zlet_pair_interface.h").read_text()
+
+	# Matched on type, not on a get_/set_ name convention.
+	assert 'X(get_shapes, empty, EMPTY, pair_shapes, PAIR_SHAPES, EMPTY_RESP, "set_shapes")' in header
+	assert 'X(set_shapes, pair_shapes, PAIR_SHAPES, pair_shapes, PAIR_SHAPES, REQ_RESP, "set_shapes")' in header
+
+	# An RPC that both takes and returns a type is its own writer, which is
+	# the right answer: `zlet <inst> config <msg>` is what you paste back.
+	assert 'X(config, pair_config, PAIR_CONFIG, pair_config, PAIR_CONFIG, REQ_RESP, "config")' in header
+	assert 'X(get_config, empty, EMPTY, pair_config, PAIR_CONFIG, EMPTY_RESP, "config")' in header
+
+	# Nothing in the service accepts Lifecycle.Status as a request, so the
+	# lifecycle RPCs print their response with no command prefix.
+	for rpc in ("start", "stop", "get_status"):
+		assert (f"X({rpc}, empty, EMPTY, lifecycle_status, LIFECYCLE_STATUS, "
+			"EMPTY_RESP, NULL)") in header
 
 
 def test_shell_methods_invariant_across_coap_opt_in(tmp_path):

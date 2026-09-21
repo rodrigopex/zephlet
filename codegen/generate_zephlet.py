@@ -362,6 +362,26 @@ def parse_proto(proto_path: str) -> dict:
         print(f"{proto_path}: service block has no rpc methods", file=sys.stderr)
         sys.exit(1)
 
+    # Resolve, per RPC, the RPC that *writes* the message this one returns, so
+    # the shell frontend can print a pasteable command line beneath a response.
+    # A reader such as get_config has no way to name its own setter; codegen
+    # does, because every method's request and response type is already in this
+    # one list. First match in declaration order wins, which makes an RPC that
+    # both takes and returns a type (config) resolve to itself -- the correct
+    # answer, since `zlet <inst> config <msg>` is exactly what you paste back.
+    for cmd in commands:
+        paste_rpc = None
+        if cmd["resp_c_name"]:
+            for other in commands:
+                if other["req_c_name"] == cmd["resp_c_name"]:
+                    paste_rpc = other["name"]
+                    break
+        # Emitted as a C token so the template pastes it verbatim: a string
+        # literal, or NULL when nothing accepts this response's type --
+        # start/stop/get_status all return Lifecycle.Status, which no RPC
+        # takes as a request, so those print no command prefix.
+        cmd["shell_paste_rpc"] = f'"{paste_rpc}"' if paste_rpc else "NULL"
+
     base_method_names = load_base_method_names()
     declared = {c["name"] for c in commands}
 

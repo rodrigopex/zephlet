@@ -54,6 +54,15 @@ tests:
       pytest_dut_scope: module
       pytest_root:
         - "pytest/test_field_shapes.py"
+  zephlet.shell_functional.print_form:
+    # The two response forms and the `zlet_fmt` selector: that both print
+    # by default, that the printed command line is accepted verbatim when
+    # fed back, and that a response no RPC accepts prints unprefixed
+    # without being dropped.
+    harness_config:
+      pytest_dut_scope: module
+      pytest_root:
+        - "pytest/test_print_form.py"
   zephlet.shell_functional.typelab_types:
     # Full-type-coverage RPC round-trip over the real shell, using
     # typelab_bench (zephlets/typelab/) — one set_X/get_X pair per
