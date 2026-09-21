@@ -23,7 +23,7 @@ manifest:
     # this entry if you are not enabling the shell frontend.
     - name: zephyr-nanopb-textformat
       url: https://github.com/rodrigopex/zephyr-nanopb-textformat
-      revision: v0.7.0
+      revision: v0.8.1
       path: modules/lib/zephyr-nanopb-textformat
   self:
     path: app
@@ -197,6 +197,33 @@ zlet tick_fast config duration_ms: 100, period_ms: 10
 `zlet_fmt` is a root command rather than a `zlet` subcommand, because `zlet`'s
 subcommands are the instance names and an instance could otherwise shadow it.
 
+A nested message is where the block earns its place. The library keeps a
+narrow submessage inline and breaks a wide or submessage-bearing one apart, so
+structure shows without the output turning into one field per line:
+
+```
+uart:~$ zlet typelab_bench get_shapes
+plain_scalar: 1
+rep_scalar: [3, 4]
+sing_msg {a: 5, b: -6}
+rep_msg: [
+  {a: 9, b: 0},
+  {a: 10, b: 0}
+]
+deep {
+  d2 {
+    d3 {v: 11}
+  }
+}
+
+zlet typelab_bench set_shapes plain_scalar: 1, rep_scalar: [3, 4], sing_msg {a: 5, b: -6}, rep_msg: [{a: 9, b: 0}, {a: 10, b: 0}], deep {d2 {d3 {v: 11}}}
+```
+
+`sing_msg` and `d3` stay inline because they are narrow leaves; `rep_msg` and
+`deep` break because a repeated submessage and a submessage-bearing type always
+do, however narrow the value. `CONFIG_NANOPB_TEXTFORMAT_PRINT_FIT_WIDTH` (64)
+sets the width, and the frontend pins `PRINT_FIT` on wherever it prints a block.
+
 Fields are named, so order is free and any subset works. Anything omitted reads
 back as zero — the parser clears the message before writing into it.
 
@@ -336,8 +363,11 @@ authority over this table.
   out as `pb_tf_merge()`. v0.7.0 then replaced those Kconfig options with
   named wrappers — `pb_tf_print_compact()`, `pb_tf_print_buf_multiline()`
   and so on — dropped the `pb_tf_*_t` typedefs, and made every function
-  return `int` Zephyr-style: 0, or a negated `enum pb_tf_err`.
-  Tested here against **v0.7.0**.
+  return `int` Zephyr-style: 0, or a negated `enum pb_tf_err`. v0.8.0
+  changed what the printer *emits* without touching the API: a repeated
+  field folds into `tags: [1, 2]`, and the multi-line styles keep a
+  narrow submessage on one line instead of breaking every one apart.
+  Tested here against **v0.8.1**.
 
   Its `docs/shell-integration.md` covers the application-side settings a
   console needs — chiefly `CONFIG_CBPRINTF_FULL_INTEGRAL=y` for fields
