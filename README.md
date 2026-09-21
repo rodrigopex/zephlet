@@ -158,15 +158,44 @@ An RPC takes its request as a protobuf **text-format** message:
 ```
 uart:~$ zlet <TAB>                                    # one entry per instance
 uart:~$ zlet tick_fast config duration_ms: 100, period_ms: 10
-duration_ms: 100, period_ms: 10
-uart:~$ zlet tick_fast get_config
-duration_ms: 100, period_ms: 10
+duration_ms: 100
+period_ms: 10
+
+zlet tick_fast config duration_ms: 100, period_ms: 10
 ```
 
-Responses print compact — one line, the shortest form that is still valid
-standalone text format, so `get_config` output pastes straight back into a
-`config` call. The frontend names that style at the call site
-(`pb_tf_print_compact()`); it is not a build option.
+A response prints **twice**: an indented block to read, then the compact form
+prefixed with the command that writes it back. Copy that last line, change a
+value, paste it.
+
+Both forms are valid text format, but only one of them is useful for each job.
+The block indents each submessage and puts one field per line, so where an
+element starts and finishes stays visible however deep the message nests — yet
+it cannot be pasted into the shell, which submits a command on every newline.
+The compact form is the shortest valid standalone text format and pastes back
+intact, but wraps mid-token once it outgrows the terminal. Printing both is
+what makes a nested response readable *and* editable.
+
+The command prefix is resolved by codegen, by matching a response's type against
+every RPC's request type — so `get_config` names `config`, and a `get_shapes` /
+`set_shapes` pair is matched on type rather than on any naming convention. A
+response nothing accepts as a request prints with no prefix, which is the case
+for the `Lifecycle.Status` returned by `start`, `stop` and `get_status`.
+
+`CONFIG_ZEPHLETS_SHELL_PRINT_BOTH` is the default; `_PRETTY` and `_COMPACT`
+select one form on its own. With `CONFIG_ZEPHLETS_SHELL_PRINT_RUNTIME=y` (also
+the default) the `zlet_fmt` command switches between them live:
+
+```
+uart:~$ zlet_fmt                                      # report the current form
+both
+uart:~$ zlet_fmt compact                              # just the pasteable line
+uart:~$ zlet tick_fast get_config
+zlet tick_fast config duration_ms: 100, period_ms: 10
+```
+
+`zlet_fmt` is a root command rather than a `zlet` subcommand, because `zlet`'s
+subcommands are the instance names and an instance could otherwise shadow it.
 
 Fields are named, so order is free and any subset works. Anything omitted reads
 back as zero — the parser clears the message before writing into it.

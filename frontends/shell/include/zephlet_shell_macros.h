@@ -46,10 +46,17 @@
  *
  * `pb_tf_parse()` zeroes the message before writing into it, so the
  * request locals below need no initialiser of their own.
+ *
+ * `_paste` names the RPC that accepts this one's response as its request,
+ * so a printed response can carry the command line that writes it back.
+ * Codegen resolves it by matching response type against request type
+ * across the service and emits NULL when nothing matches, which is why
+ * the two response-bearing shapes can pass it straight through without
+ * inspecting it.
  */
 
 #define ZLET_SHELL_DEFINE_METHOD_EMPTY_EMPTY(_type, _instance, _name, _req_lc, _req_uc, _resp_lc,  \
-					     _resp_uc)                                             \
+					     _resp_uc, _paste)                                     \
 	static int zlet_shell_##_instance##_##_name##_cmd(const struct shell *sh, size_t argc,     \
 							  char **argv)                             \
 	{                                                                                          \
@@ -65,7 +72,7 @@
 	}
 
 #define ZLET_SHELL_DEFINE_METHOD_EMPTY_RESP(_type, _instance, _name, _req_lc, _req_uc, _resp_lc,   \
-					    _resp_uc)                                              \
+					    _resp_uc, _paste)                                      \
 	static int zlet_shell_##_instance##_##_name##_cmd(const struct shell *sh, size_t argc,     \
 							  char **argv)                             \
 	{                                                                                          \
@@ -79,12 +86,12 @@
 			shell_error(sh, "%s: %d", #_name, rc);                                     \
 			return rc;                                                                 \
 		}                                                                                  \
-		zlet_shell_print_msg(sh, &_resp_lc##_t_tf, &resp);                                 \
+		zlet_shell_print_msg(sh, &_resp_lc##_t_tf, &resp, #_instance, _paste);             \
 		return 0;                                                                          \
 	}
 
 #define ZLET_SHELL_DEFINE_METHOD_REQ_EMPTY(_type, _instance, _name, _req_lc, _req_uc, _resp_lc,    \
-					   _resp_uc)                                               \
+					   _resp_uc, _paste)                                       \
 	static int zlet_shell_##_instance##_##_name##_cmd(const struct shell *sh, size_t argc,     \
 							  char **argv)                             \
 	{                                                                                          \
@@ -111,7 +118,7 @@
 	}
 
 #define ZLET_SHELL_DEFINE_METHOD_REQ_RESP(_type, _instance, _name, _req_lc, _req_uc, _resp_lc,     \
-					  _resp_uc)                                                \
+					  _resp_uc, _paste)                                        \
 	static int zlet_shell_##_instance##_##_name##_cmd(const struct shell *sh, size_t argc,     \
 							  char **argv)                             \
 	{                                                                                          \
@@ -135,14 +142,14 @@
 			shell_error(sh, "%s: %d", #_name, rc);                                     \
 			return rc;                                                                 \
 		}                                                                                  \
-		zlet_shell_print_msg(sh, &_resp_lc##_t_tf, &resp);                                 \
+		zlet_shell_print_msg(sh, &_resp_lc##_t_tf, &resp, #_instance, _paste);             \
 		return 0;                                                                          \
 	}
 
 #define ZLET_SHELL_DEFINE_METHOD(_type, _instance, _name, _req_lc, _req_uc, _resp_lc, _resp_uc,    \
-				 _shape)                                                           \
+				 _shape, _paste)                                                   \
 	ZLET_SHELL_DEFINE_METHOD_##_shape(_type, _instance, _name, _req_lc, _req_uc, _resp_lc,     \
-					  _resp_uc)
+					  _resp_uc, _paste)
 
 /* ----- Per-instance subcommand entry ------------------------------------
  *
@@ -182,7 +189,7 @@
  * summary of what the command accepts.
  */
 #define ZLET_SHELL_SUBCMD_ENTRY(_type, _instance, _name, _req_lc, _req_uc, _resp_lc, _resp_uc,     \
-				_shape)                                                            \
+				_shape, _paste)                                                    \
 	SHELL_CMD_ARG(_name, NULL, "<text-format " #_req_lc ">",                                   \
 		      zlet_shell_##_instance##_##_name##_cmd, 1, SHELL_OPT_ARG_RAW),
 

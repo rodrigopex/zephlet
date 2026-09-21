@@ -173,8 +173,15 @@ Single script `codegen/generate_zephlet.py` parses the `.proto` service block, c
   wrappers and made every function return `int`. Tested against v0.7.0.)
   Selects both `NANOPB_TEXTFORMAT_PARSE` and `NANOPB_TEXTFORMAT_PRINT`:
   requests are parsed, responses printed, and since v0.5.0 either half can
-  be configured out. Responses print via `pb_tf_print_compact()` — one
-  line, re-parseable, so `get_config` output pastes back into `config`. An RPC takes its request as a protobuf text-format message
+  be configured out. A response prints twice — an indented block via
+  `pb_tf_print_multiline()`, then the compact form prefixed with the
+  command that writes it back (`zlet <inst> <rpc> <msg>`), so a nested
+  response is readable *and* still pasteable. The prefix comes from
+  codegen matching a response's type against every RPC's request type;
+  `NULL`, hence no prefix, when nothing accepts that type
+  (`Lifecycle.Status`). `ZEPHLETS_SHELL_PRINT_{BOTH,PRETTY,COMPACT}`
+  picks the default form and `zlet_fmt` switches it at run time when
+  `ZEPHLETS_SHELL_PRINT_RUNTIME=y`. An RPC takes its request as a protobuf text-format message
   (`zlet tick_a config duration_ms: 100, period_ms: 10`), delivered as one
   `SHELL_OPT_ARG_RAW` argument and parsed by that library, so every field
   shape works without codegen walking fields. Codegen emits one
