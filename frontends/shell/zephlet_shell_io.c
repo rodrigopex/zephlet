@@ -98,6 +98,30 @@ void zlet_shell_print_msg(const struct shell *sh, const struct pb_tf_msg *tf, co
 	shell_fprintf(sh, SHELL_NORMAL, "\n");
 }
 
+void zlet_shell_print_template(const struct shell *sh, const char *instance, const char *rpc,
+			       const char *request)
+{
+	/*
+	 * The whole command, not just the message, so the line is complete in
+	 * the same way a successful response's pasteable line is -- copy it,
+	 * replace the placeholders, run it. Nothing to retype.
+	 *
+	 * Printed through shell_print() rather than carried in the command's
+	 * help string, because help goes through formatted_text_print(), which
+	 * wraps long text with a hanging indent -- emitting real newlines and
+	 * indent spaces that a copy then picks up, so a wrapped help line
+	 * cannot be pasted back. Ordinary output is not wrapped by the shell at
+	 * all, so however long this is it stays one logical line that the
+	 * terminal soft-wraps and the clipboard keeps intact.
+	 *
+	 * The label gets its own line for the same reason: on the template's
+	 * line, selecting the line would copy the label with it.
+	 */
+	shell_print(sh, "");
+	shell_print(sh, "Tip: copy the line below and replace each <...>");
+	shell_print(sh, "zlet %s %s %s", instance, rpc, request);
+}
+
 void zlet_shell_report_tf_err(const struct shell *sh, const char *rpc, int err,
 			      const struct pb_tf_status *status)
 {

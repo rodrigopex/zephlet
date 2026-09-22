@@ -106,6 +106,193 @@ def detect_coap_discoverable_opt_in(tree) -> bool:
 _BASE_METHODS_CACHE: list[str] | None = None
 
 
+_SHARED_ELEMENTS_CACHE = None
+
+_OPT_MAX_SIZE = "(nanopb).max_size"
+_OPT_MAX_COUNT = "(nanopb).max_count"
+_OPT_FIXED_LENGTH = "(nanopb).fixed_length"
+
+# Deep enough for any hand-written proto; present only to stop a runaway walk.
+# proto permits a mutually recursive message reference and nanopb rejects it
+# under STATIC allocation for having infinite size -- but codegen runs before
+# nanopb does, so without a guard this would recurse forever on a proto that
+# was never going to build.
+_HELP_MAX_DEPTH = 8
+
+
+def load_shared_elements():
+    """File elements of the shared `zephlet.proto`, parsed once.
+
+    Needed because a response type is frequently `Lifecycle.Status`, which
+    lives there rather than in the per-zephlet proto -- so the help text for
+    `get_status` cannot be rendered from the per-zephlet file alone.
+    """
+    global _SHARED_ELEMENTS_CACHE
+    if _SHARED_ELEMENTS_CACHE is not None:
+        return _SHARED_ELEMENTS_CACHE
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    zephlet_proto = os.path.normpath(
+        os.path.join(script_dir, os.pardir, "zephlet.proto"))
+    with open(zephlet_proto, encoding="utf-8") as f:
+        _SHARED_ELEMENTS_CACHE = Parser().parse(f.read()).file_elements
+
+    return _SHARED_ELEMENTS_CACHE
+
+
+def build_type_index(*element_lists):
+    """Map every message and enum name to its AST node.
+
+    Indexed under both the qualified (`Typelab.Inner`) and bare (`Inner`)
+    name, because `long_names = false` means a field's type reference can be
+    spelled either way. A qualified entry wins if both exist, so a nested name
+    cannot be shadowed by an unrelated top-level one.
+    """
+    index = {}
+
+    def walk(elements, prefix):
+        for element in elements:
+            kind = element.__class__.__name__
+            if kind not in ("Message", "Enum"):
+                continue
+            qualified = f"{prefix}.{element.name}" if prefix else element.name
+            index[qualified] = (kind, element)
+            index.setdefault(element.name, (kind, element))
+            if kind == "Message":
+                walk(element.elements, qualified)
+
+    for elements in element_lists:
+        walk(elements, "")
+
+    return index
+
+
+def _message_fields(message):
+    """Every field of a message, with oneof members flattened in.
+
+    A oneof nests its members one level down in the AST, so a walk that only
+    looked at `Field` children would drop them silently -- the field would
+    just be missing from the help with nothing failing. They are rendered
+    flat; only one can actually be set, which the proto contract makes moot
+    since it sanctions no oneofs.
+    """
+    fields = []
+    for element in message.elements:
+        kind = element.__class__.__name__
+        if kind == "Field":
+            fields.append(element)
+        elif kind == "OneOf":
+            fields.extend(e for e in element.elements
+                          if e.__class__.__name__ == "Field")
+
+    return fields
+
+
+def _field_options(field):
+    return {o.name: o.value for o in (getattr(field, "options", None) or [])}
+
+
+def _continuation(options):
+    """The `<...max N>` element that marks a list as repeatable.
+
+    The bound rides here rather than on the element placeholder so that a
+    repeated *submessage* can carry it too: a submessage's value is `{...}`,
+    not `<...>`, so there is nowhere inside it to put a bound without leaking
+    decoration into the syntax and breaking the paste-back property.
+    """
+    max_count = options.get(_OPT_MAX_COUNT)
+
+    return f", <...max {max_count}>" if max_count is not None else ", <...>"
+
+
+def _placeholder(field, kind, node, options, optional):
+    """The `<...>` body: `type[:size][ fixed][?]`, decoration included.
+
+    Everything a reader must not retype lives inside the angle brackets, so
+    the single rule "replace each `<...>`" leaves text the parser accepts.
+    """
+    if kind == "Enum":
+        values = "|".join(
+            str(v.number) for v in node.elements
+            if v.__class__.__name__ == "EnumValue")
+        body = f"{field.type} {values}" if values else field.type
+    else:
+        max_size = options.get(_OPT_MAX_SIZE)
+        body = f"{field.type}:{max_size}" if max_size is not None else field.type
+
+    if options.get(_OPT_FIXED_LENGTH):
+        body += " fixed"
+
+    # Only scalars carry `?`. A submessage has no placeholder to put it in.
+    if optional:
+        body += "?"
+
+    return body
+
+
+def render_message_help(message, index, depth=0):
+    """A message rendered as the text-format template a reader can fill in."""
+    parts = []
+
+    for field in _message_fields(message):
+        options = _field_options(field)
+        cardinality = str(getattr(field, "cardinality", "") or "").upper()
+        repeated = "REPEATED" in cardinality
+        optional = "OPTIONAL" in cardinality
+
+        entry = index.get(field.type) or index.get(field.type.split(".")[-1])
+        kind = entry[0] if entry is not None else None
+
+        if kind == "Message":
+            if depth >= _HELP_MAX_DEPTH:
+                body = "..."
+            else:
+                body = render_message_help(entry[1], index, depth + 1)
+            if repeated:
+                parts.append(
+                    f"{field.name}: [{{{body}}}{_continuation(options)}]")
+            else:
+                parts.append(f"{field.name} {{{body}}}")
+            continue
+
+        holder = _placeholder(field, kind, entry[1] if entry else None,
+                              options, optional and not repeated)
+        if repeated:
+            parts.append(f"{field.name}: [<{holder}>{_continuation(options)}]")
+        else:
+            parts.append(f"{field.name}: <{holder}>")
+
+    return ", ".join(parts)
+
+
+def _c_string_escape(text: str) -> str:
+    return text.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _shell_help(input_type: str, output_type: str, index) -> str:
+    """The subcommand help string for one RPC, ready to be quoted.
+
+    A request is rendered as a template to fill in. An RPC with no request
+    shows its response instead. One with neither shows `(empty)`, naming
+    the `Empty` message it actually declares rather than describing the
+    absence in prose.
+    """
+    if input_type != "Empty":
+        entry = index.get(input_type) or index.get(input_type.split(".")[-1])
+        if entry is not None:
+            return _c_string_escape(render_message_help(entry[1], index))
+        return f"<text-format {input_type}>"
+
+    if output_type == "Empty":
+        return "(empty)"
+
+    entry = index.get(output_type) or index.get(output_type.split(".")[-1])
+    if entry is None:
+        return "(empty)"
+
+    return "-> " + _c_string_escape(render_message_help(entry[1], index))
+
+
 def load_base_method_names() -> list[str]:
     """
     Parse the shared `zephlet.proto` once per invocation and return the
@@ -288,6 +475,10 @@ def parse_proto(proto_path: str) -> dict:
 
     owning_type = owning_msg.name
 
+    # Spans the shared proto too, because a response is frequently
+    # Lifecycle.Status, which is declared there rather than here.
+    type_index = build_type_index(tree.file_elements, load_shared_elements())
+
     # Locate the service block. Exactly one service expected.
     service = None
     for elem in tree.file_elements:
@@ -349,6 +540,14 @@ def parse_proto(proto_path: str) -> dict:
             # Which of the 4 wrapper call shapes this RPC needs — decided
             # here (codegen already knows req/resp_is_empty) so the shell
             # macro framework never has to infer it from a name match.
+            # Help text for the shell subcommand entry: the request
+            # rendered as a fillable text-format template. An RPC that
+            # takes no request shows its response instead, prefixed `->`
+            # -- that is the only thing such an RPC can usefully say, and
+            # it is what four lines per instance used to waste on
+            # `<text-format empty>`. An RPC with neither shows `(empty)`.
+            "shell_help": _shell_help(
+                input_type, output_type, type_index),
             "shell_call_shape": (
                 "EMPTY_EMPTY" if (input_type == "Empty" and output_type == "Empty") else
                 "EMPTY_RESP" if input_type == "Empty" else
