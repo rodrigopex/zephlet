@@ -1,4 +1,5 @@
-"""The two response forms, and the `zlet_fmt` command that selects them.
+"""How the shell presents a message: the two response forms, the `zlet_fmt`
+command that selects them, and the request template in each RPC's help.
 
 A response prints twice by default: an indented block to read, then the
 compact form prefixed with the command that writes it back. Both are valid
@@ -121,3 +122,103 @@ def test_fmt_reports_current_form_and_rejects_unknown(dut: DeviceAdapter, shell:
 	# An unknown form must not silently leave the previous one in place.
 	assert "expected one of" in _fmt(shell, "bogus")
 	assert "both" in _out(shell, "zlet_fmt")
+
+
+# ----- the help template ----------------------------------------------
+
+
+def test_help_lists_the_request_as_a_template(dut: DeviceAdapter, shell: Shell):
+	"""Listing an instance shows each RPC's request spelled as text format
+	with `<type>` placeholders, so the line is a template to fill in rather
+	than the name of a C struct."""
+	assert shell.wait_for_prompt(), "shell prompt never appeared"
+
+	out = _out(shell, "zlet tick_fast")
+
+	assert "duration_ms: <uint32>, period_ms: <uint32>" in out, out
+	# The old form named the struct and nothing else.
+	assert "<text-format" not in out, out
+
+
+def test_help_shows_the_response_when_there_is_no_request(dut: DeviceAdapter,
+							  shell: Shell):
+	"""`get_status` takes nothing, so naming its request was useless. It
+	describes its response instead -- and Lifecycle.Status comes from the
+	shared zephlet.proto, so this covers codegen resolving a type declared
+	outside the per-zephlet file."""
+	assert shell.wait_for_prompt(), "shell prompt never appeared"
+
+	out = _out(shell, "zlet tick_fast")
+
+	assert "-> is_running: <bool>, is_ready: <bool>" in out, out
+	assert "-> duration_ms: <uint32>, period_ms: <uint32>" in out, out
+
+
+def test_help_template_round_trips_when_filled_in(dut: DeviceAdapter, shell: Shell):
+	"""The point of the placeholders: substitute them and the line is a
+	working command. Done here by hand for `config`, which is what a reader
+	does with it."""
+	assert shell.wait_for_prompt(), "shell prompt never appeared"
+
+	assert "duration_ms: <uint32>, period_ms: <uint32>" in _out(shell, "zlet tick_fast")
+
+	_fmt(shell, "pretty")
+	out = _out(shell, "zlet tick_fast config duration_ms: 700, period_ms: 70")
+	for bad in ("syntax error", "no such field", "wrong value type"):
+		assert bad not in out, out
+	assert any(ln.strip() == "duration_ms: 700" for ln in out.splitlines()), out
+
+
+# ----- the copyable template on failure --------------------------------
+
+_TICK_TMPL = "zlet tick_fast config duration_ms: <uint32>, period_ms: <uint32>"
+
+
+def test_missing_request_prints_a_copyable_template(dut: DeviceAdapter, shell: Shell):
+	"""Asking for nothing is the clearest way of asking what to type, so
+	the shape is printed there.
+
+	It carries the `zlet <instance> <rpc>` prefix, so it has the same shape
+	as the pasteable line a successful response prints -- placeholders where
+	that one has values -- and nothing needs retyping.
+
+	The template must stand alone on its line: with the label on the same
+	line, selecting the line would copy the label too, which is the whole
+	failure mode this replaced."""
+	assert shell.wait_for_prompt(), "shell prompt never appeared"
+
+	out = _out(shell, "zlet tick_fast config")
+
+	assert "expected a text-format message" in out, out
+	assert "Tip:" in out, out
+	assert any(ln.strip() == _TICK_TMPL for ln in out.splitlines()), out
+
+
+def test_malformed_request_prints_the_template_too(dut: DeviceAdapter, shell: Shell):
+	"""A typo is when the shape is most wanted, so the error carries it."""
+	assert shell.wait_for_prompt(), "shell prompt never appeared"
+
+	out = _out(shell, "zlet tick_fast config duration_ms: x")
+
+	assert "syntax error" in out, out
+	assert any(ln.strip() == _TICK_TMPL for ln in out.splitlines()), out
+
+
+def test_the_printed_template_parses_once_filled_in(dut: DeviceAdapter, shell: Shell):
+	"""Pins the advice the tip gives: take the printed line, substitute the
+	placeholders, and it must run. Built here by doing exactly that to the
+	line the tip emits, so the two cannot drift apart -- if the template
+	ever stopped being a valid command, the tip would be telling people to
+	do something broken."""
+	assert shell.wait_for_prompt(), "shell prompt never appeared"
+
+	printed = next(ln.strip() for ln in _out(shell, "zlet tick_fast config").splitlines()
+		       if ln.strip() == _TICK_TMPL)
+	filled = printed.replace("<uint32>", "800", 1).replace("<uint32>", "80", 1)
+
+	_fmt(shell, "pretty")
+	out = _out(shell, filled)
+
+	for bad in ("syntax error", "no such field", "wrong value type"):
+		assert bad not in out, out
+	assert any(ln.strip() == "duration_ms: 800" for ln in out.splitlines()), out

@@ -56,7 +56,7 @@
  */
 
 #define ZLET_SHELL_DEFINE_METHOD_EMPTY_EMPTY(_type, _instance, _name, _req_lc, _req_uc, _resp_lc,  \
-					     _resp_uc, _paste)                                     \
+					     _resp_uc, _paste, _help)                              \
 	static int zlet_shell_##_instance##_##_name##_cmd(const struct shell *sh, size_t argc,     \
 							  char **argv)                             \
 	{                                                                                          \
@@ -72,7 +72,7 @@
 	}
 
 #define ZLET_SHELL_DEFINE_METHOD_EMPTY_RESP(_type, _instance, _name, _req_lc, _req_uc, _resp_lc,   \
-					    _resp_uc, _paste)                                      \
+					    _resp_uc, _paste, _help)                               \
 	static int zlet_shell_##_instance##_##_name##_cmd(const struct shell *sh, size_t argc,     \
 							  char **argv)                             \
 	{                                                                                          \
@@ -91,7 +91,7 @@
 	}
 
 #define ZLET_SHELL_DEFINE_METHOD_REQ_EMPTY(_type, _instance, _name, _req_lc, _req_uc, _resp_lc,    \
-					   _resp_uc, _paste)                                       \
+					   _resp_uc, _paste, _help)                                \
 	static int zlet_shell_##_instance##_##_name##_cmd(const struct shell *sh, size_t argc,     \
 							  char **argv)                             \
 	{                                                                                          \
@@ -101,11 +101,13 @@
 		int rc;                                                                            \
 		if (argc < 2) {                                                                    \
 			shell_error(sh, "%s: expected a text-format message", #_name);             \
+			zlet_shell_print_template(sh, #_instance, #_name, _help);                  \
 			return -EINVAL;                                                            \
 		}                                                                                  \
 		terr = pb_tf_parse(&_req_lc##_t_tf, &req, argv[1], &st);                           \
 		if (terr != PB_TF_OK) {                                                            \
 			zlet_shell_report_tf_err(sh, #_name, terr, &st);                           \
+			zlet_shell_print_template(sh, #_instance, #_name, _help);                  \
 			return -EINVAL;                                                            \
 		}                                                                                  \
 		rc = _type##_##_name(&(_instance), &req,                                           \
@@ -118,7 +120,7 @@
 	}
 
 #define ZLET_SHELL_DEFINE_METHOD_REQ_RESP(_type, _instance, _name, _req_lc, _req_uc, _resp_lc,     \
-					  _resp_uc, _paste)                                        \
+					  _resp_uc, _paste, _help)                                 \
 	static int zlet_shell_##_instance##_##_name##_cmd(const struct shell *sh, size_t argc,     \
 							  char **argv)                             \
 	{                                                                                          \
@@ -129,11 +131,13 @@
 		int rc;                                                                            \
 		if (argc < 2) {                                                                    \
 			shell_error(sh, "%s: expected a text-format message", #_name);             \
+			zlet_shell_print_template(sh, #_instance, #_name, _help);                  \
 			return -EINVAL;                                                            \
 		}                                                                                  \
 		terr = pb_tf_parse(&_req_lc##_t_tf, &req, argv[1], &st);                           \
 		if (terr != PB_TF_OK) {                                                            \
 			zlet_shell_report_tf_err(sh, #_name, terr, &st);                           \
+			zlet_shell_print_template(sh, #_instance, #_name, _help);                  \
 			return -EINVAL;                                                            \
 		}                                                                                  \
 		rc = _type##_##_name(&(_instance), &req, &resp,                                    \
@@ -147,9 +151,9 @@
 	}
 
 #define ZLET_SHELL_DEFINE_METHOD(_type, _instance, _name, _req_lc, _req_uc, _resp_lc, _resp_uc,    \
-				 _shape, _paste)                                                   \
+				 _shape, _paste, _help)                                            \
 	ZLET_SHELL_DEFINE_METHOD_##_shape(_type, _instance, _name, _req_lc, _req_uc, _resp_lc,     \
-					  _resp_uc, _paste)
+					  _resp_uc, _paste, _help)
 
 /* ----- Per-instance subcommand entry ------------------------------------
  *
@@ -184,14 +188,25 @@
  * bytes and repeated-string values, including a wildcard in the instance
  * name position.
  *
- * The help string names the request message rather than listing fields:
- * fields are the library's business now, and `<message>` is the honest
- * summary of what the command accepts.
+ * `_help` is the request rendered by codegen as a text-format template:
+ * every field, with each value replaced by a `<type>` placeholder that
+ * carries its own constraints -- `<string:16>`, `<uint32?>`, a list's
+ * bound on a `<...max N>` continuation element. Replace each `<...>`, or
+ * delete `, <...>` comma and all, and the result is text the parser
+ * accepts. An RPC that takes no request shows its response instead,
+ * prefixed `->`.
+ *
+ * The same string is printed by zlet_shell_print_template() when a
+ * request is missing or will not parse. That is where a copyable
+ * template has to come from: the help string is word-wrapped with a
+ * hanging indent by the shell's own help printer, so anything copied out
+ * of a wrapped help line carries real newlines and the shell then
+ * submits one command per line. Ordinary output is never wrapped.
  */
 #define ZLET_SHELL_SUBCMD_ENTRY(_type, _instance, _name, _req_lc, _req_uc, _resp_lc, _resp_uc,     \
-				_shape, _paste)                                                    \
-	SHELL_CMD_ARG(_name, NULL, "<text-format " #_req_lc ">",                                   \
-		      zlet_shell_##_instance##_##_name##_cmd, 1, SHELL_OPT_ARG_RAW),
+				_shape, _paste, _help)                                             \
+	SHELL_CMD_ARG(_name, NULL, _help, zlet_shell_##_instance##_##_name##_cmd, 1,               \
+		      SHELL_OPT_ARG_RAW),
 
 /* ----- Per-instance registration ----------------------------------------
  *

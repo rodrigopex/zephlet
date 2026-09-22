@@ -22,6 +22,7 @@ Coverage:
 from __future__ import annotations
 
 import importlib.util
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -228,15 +229,15 @@ def test_shell_methods_emitted_for_every_rpc(tmp_path):
 	assert "#define _ZLET_SHELL_METHODS_APPLY_tick(_instance, X)" in header
 
 	# start/stop/get_status/dump_state-less base set: Empty req, non-Empty resp.
-	assert "X(start, empty, EMPTY, lifecycle_status, LIFECYCLE_STATUS, EMPTY_RESP, NULL)" in header
+	assert "X(start, empty, EMPTY, lifecycle_status, LIFECYCLE_STATUS, EMPTY_RESP, NULL," in header
 	# config: non-Empty req and resp.
-	assert 'X(config, tick_config, TICK_CONFIG, tick_config, TICK_CONFIG, REQ_RESP, "config")' in header
+	assert 'X(config, tick_config, TICK_CONFIG, tick_config, TICK_CONFIG, REQ_RESP, "config",' in header
 	# get_config: Empty req, non-Empty resp.
-	assert 'X(get_config, empty, EMPTY, tick_config, TICK_CONFIG, EMPTY_RESP, "config")' in header
+	assert 'X(get_config, empty, EMPTY, tick_config, TICK_CONFIG, EMPTY_RESP, "config",' in header
 
 	# The _APPLY rows carry the same tuples with the type baked in
 	# literally as the first field (not forwarded as a macro parameter).
-	assert 'X(tick, _instance, config, tick_config, TICK_CONFIG, tick_config, TICK_CONFIG, REQ_RESP, "config")' in header
+	assert 'X(tick, _instance, config, tick_config, TICK_CONFIG, tick_config, TICK_CONFIG, REQ_RESP, "config",' in header
 
 
 def test_shell_paste_rpc_resolves_writer_by_type(tmp_path):
@@ -276,19 +277,143 @@ service PairApi {
 	header = (tmp_path / "zlet_pair_interface.h").read_text()
 
 	# Matched on type, not on a get_/set_ name convention.
-	assert 'X(get_shapes, empty, EMPTY, pair_shapes, PAIR_SHAPES, EMPTY_RESP, "set_shapes")' in header
-	assert 'X(set_shapes, pair_shapes, PAIR_SHAPES, pair_shapes, PAIR_SHAPES, REQ_RESP, "set_shapes")' in header
+	assert 'X(get_shapes, empty, EMPTY, pair_shapes, PAIR_SHAPES, EMPTY_RESP, "set_shapes",' in header
+	assert 'X(set_shapes, pair_shapes, PAIR_SHAPES, pair_shapes, PAIR_SHAPES, REQ_RESP, "set_shapes",' in header
 
 	# An RPC that both takes and returns a type is its own writer, which is
 	# the right answer: `zlet <inst> config <msg>` is what you paste back.
-	assert 'X(config, pair_config, PAIR_CONFIG, pair_config, PAIR_CONFIG, REQ_RESP, "config")' in header
-	assert 'X(get_config, empty, EMPTY, pair_config, PAIR_CONFIG, EMPTY_RESP, "config")' in header
+	assert 'X(config, pair_config, PAIR_CONFIG, pair_config, PAIR_CONFIG, REQ_RESP, "config",' in header
+	assert 'X(get_config, empty, EMPTY, pair_config, PAIR_CONFIG, EMPTY_RESP, "config",' in header
 
 	# Nothing in the service accepts Lifecycle.Status as a request, so the
 	# lifecycle RPCs print their response with no command prefix.
 	for rpc in ("start", "stop", "get_status"):
 		assert (f"X({rpc}, empty, EMPTY, lifecycle_status, LIFECYCLE_STATUS, "
-			"EMPTY_RESP, NULL)") in header
+			"EMPTY_RESP, NULL,") in header
+
+
+def test_shell_help_renders_the_request_as_a_template(tmp_path):
+	"""The subcommand help is the request spelled as text format with each
+	value replaced by a `<type>` placeholder, so it doubles as a template:
+	replace every `<...>`, or delete `, <...>` comma and all, and what is
+	left is text the parser accepts.
+
+	Every constraint lives *inside* the angle brackets. That is what keeps
+	the one rule true -- decoration outside them (`opt_scalar?:` or
+	`[<uint32> x4]`) would have to be deleted rather than replaced, and
+	protobuf's own parser rejects both spellings."""
+	_run_codegen(_FIXTURES / "tick_no_opt.proto", tmp_path)
+	header = (tmp_path / "zlet_tick_interface.h").read_text()
+
+	assert '"duration_ms: <uint32>, period_ms: <uint32>"' in header
+
+	# An RPC with no request describes its response instead, prefixed `->`.
+	# Lifecycle.Status comes from the shared zephlet.proto, so this also
+	# covers the type index spanning both files.
+	assert '"-> is_running: <bool>, is_ready: <bool>"' in header
+	assert '"-> duration_ms: <uint32>, period_ms: <uint32>"' in header
+
+	# The old help literal named the C struct and nothing else.
+	assert '"<text-format' not in header
+
+
+def test_shell_help_is_empty_for_an_rpc_with_neither_side(tmp_path):
+	"""An RPC that takes nothing and returns nothing has no shape to show,
+	so it names the `Empty` message it declares rather than describing the
+	absence in prose."""
+	proto = tmp_path / "zlet_void.proto"
+	proto.write_text("""
+syntax = "proto3";
+import "nanopb.proto";
+import "zephlet.proto";
+option (nanopb_fileopt).long_names = false;
+
+message Void {
+  message Config { uint32 a = 1; }
+  message Events { int32 timestamp = 1; }
+}
+
+service VoidApi {
+  rpc start      (Empty)       returns (Lifecycle.Status);
+  rpc stop       (Empty)       returns (Lifecycle.Status);
+  rpc get_status (Empty)       returns (Lifecycle.Status);
+  rpc config     (Void.Config) returns (Void.Config);
+  rpc get_config (Empty)       returns (Void.Config);
+  rpc ping       (Empty)       returns (Empty);
+}
+""")
+	_run_codegen(proto, tmp_path, type_name="void", prefix="zlet_void")
+	header = (tmp_path / "zlet_void_interface.h").read_text()
+
+	assert '"(empty)"' in header
+	assert "(no request)" not in header
+
+
+def test_shell_help_carries_every_constraint_inside_the_brackets(tmp_path):
+	"""max_size, max_count, fixed_length, enum values and optionality all
+	render, and all of them inside a `<...>`.
+
+	The final assertion is the invariant that keeps the help pasteable: with
+	every placeholder removed, nothing decorative is left behind. A future
+	marker added outside the brackets fails here rather than silently
+	breaking copy-paste."""
+	proto = tmp_path / "zlet_shapes.proto"
+	proto.write_text("""
+syntax = "proto3";
+import "nanopb.proto";
+import "zephlet.proto";
+option (nanopb_fileopt).long_names = false;
+
+enum Flag {
+  FLAG_OFF = 0;
+  FLAG_ON = 1;
+}
+
+message Shapes {
+  message Inner { uint32 a = 1; int32 b = 2; }
+  message Config {
+    optional uint32 opt = 1;
+    repeated uint32 rep = 2 [(nanopb).max_count = 4];
+    optional string name = 3 [(nanopb).max_size = 12];
+    bytes tag = 4 [(nanopb).max_size = 4, (nanopb).fixed_length = true];
+    Flag flag = 5;
+    Inner one = 6;
+    repeated Inner many = 7 [(nanopb).max_count = 3];
+  }
+  message Events { int32 timestamp = 1; }
+}
+
+service ShapesApi {
+  rpc start      (Empty)         returns (Lifecycle.Status);
+  rpc stop       (Empty)         returns (Lifecycle.Status);
+  rpc get_status (Empty)         returns (Lifecycle.Status);
+  rpc config     (Shapes.Config) returns (Shapes.Config);
+  rpc get_config (Empty)         returns (Shapes.Config);
+}
+""")
+	_run_codegen(proto, tmp_path, type_name="shapes", prefix="zlet_shapes")
+	header = (tmp_path / "zlet_shapes_interface.h").read_text()
+
+	expected = (
+		"opt: <uint32?>",                       # optional
+		"rep: [<uint32>, <...max 4>]",          # max_count on the continuation
+		"name: <string:12?>",                   # max_size and optional together
+		"tag: <bytes:4 fixed>",                 # fixed_length
+		"flag: <Flag 0|1>",                     # declared enum type and values
+		"one {a: <uint32>, b: <int32>}",        # submessage expanded inline
+		"many: [{a: <uint32>, b: <int32>}, <...max 3>]",
+	)
+	for want in expected:
+		assert want in header, f"{want!r} missing from:\n{header}"
+
+	# The invariant: no decoration survives outside a placeholder.
+	row = next(line for line in header.splitlines()
+		   if "X(shapes, _instance, config," in line)
+	help_text = row.split('", "')[-1].rstrip('") \\')
+	stripped = re.sub(r"<[^>]*>", "", help_text)
+	for leaked in ("?", "max ", ":1", ":4", "|"):
+		assert leaked not in stripped, (
+			f"{leaked!r} leaked outside a placeholder: {stripped!r}")
 
 
 def test_shell_methods_invariant_across_coap_opt_in(tmp_path):

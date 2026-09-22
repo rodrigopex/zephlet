@@ -42,13 +42,15 @@ extern const struct zephlet_api {{ type_snake }}_api;
  * the shell macros never infer it from a name match. `paste rpc` names
  * the RPC that accepts this one's response as its request, so a response
  * can print the command line that writes it back; NULL when no RPC takes
- * that type.
+ * that type. `help` is the request rendered as a text-format template
+ * for the shell's subcommand listing -- or, for an RPC that takes no
+ * request, its response prefixed `->`.
  *
  * Always emitted — a compile-time table, never a function call, so it
  * costs nothing unless ZLET_SHELL_INSTANCE() is used. */
 #define {{ type_upper }}_SHELL_METHODS(X) \
 {% for cmd in commands %}
-	X({{ cmd.name }}, {{ cmd.req_shell_lc }}, {{ cmd.req_shell_uc }}, {{ cmd.resp_shell_lc }}, {{ cmd.resp_shell_uc }}, {{ cmd.shell_call_shape }}, {{ cmd.shell_paste_rpc }}){% if not loop.last %} \{% endif %}
+	X({{ cmd.name }}, {{ cmd.req_shell_lc }}, {{ cmd.req_shell_uc }}, {{ cmd.resp_shell_lc }}, {{ cmd.resp_shell_uc }}, {{ cmd.shell_call_shape }}, {{ cmd.shell_paste_rpc }}, "{{ cmd.shell_help }}"){% if not loop.last %} \{% endif %}
 
 {% endfor %}
 /* Same rows, with the zephlet type baked in literally as each row's
@@ -59,7 +61,7 @@ extern const struct zephlet_api {{ type_snake }}_api;
  * ZLET_SHELL_INSTANCE() in zephlet_shell_macros.h. */
 #define _ZLET_SHELL_METHODS_APPLY_{{ type_snake }}(_instance, X) \
 {% for cmd in commands %}
-	X({{ type_snake }}, _instance, {{ cmd.name }}, {{ cmd.req_shell_lc }}, {{ cmd.req_shell_uc }}, {{ cmd.resp_shell_lc }}, {{ cmd.resp_shell_uc }}, {{ cmd.shell_call_shape }}, {{ cmd.shell_paste_rpc }}){% if not loop.last %} \{% endif %}
+	X({{ type_snake }}, _instance, {{ cmd.name }}, {{ cmd.req_shell_lc }}, {{ cmd.req_shell_uc }}, {{ cmd.resp_shell_lc }}, {{ cmd.resp_shell_uc }}, {{ cmd.shell_call_shape }}, {{ cmd.shell_paste_rpc }}, "{{ cmd.shell_help }}"){% if not loop.last %} \{% endif %}
 
 {% endfor %}
 

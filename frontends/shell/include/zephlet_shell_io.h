@@ -56,6 +56,26 @@ void zlet_shell_print_msg(const struct shell *sh, const struct pb_tf_msg *tf, co
 			  const char *instance, const char *paste_rpc);
 
 /**
+ * @brief Print the whole command as a fillable, copyable template.
+ *
+ * Emitted after a missing or unparseable request, so the shape is shown
+ * exactly when it is needed. Carries the `zlet <instance> <rpc>` prefix for
+ * the same reason a successful response's pasteable line does: the copied
+ * line is then a complete command, with nothing left to retype.
+ *
+ * Deliberately not part of the command's help string. Help is word-wrapped
+ * with a hanging indent, which puts real newlines into anything copied out
+ * of it; ordinary output is never wrapped, so this stays one line.
+ *
+ * @param sh       shell to print on.
+ * @param instance instance name, as registered under the `zlet` root.
+ * @param rpc      the RPC that just failed, so the line re-runs it.
+ * @param request  the request template codegen rendered for this RPC.
+ */
+void zlet_shell_print_template(const struct shell *sh, const char *instance, const char *rpc,
+			       const char *request);
+
+/**
  * @brief Report a text-format parse failure on @p sh.
  *
  * The library's strerror() names only the fault, so the offset and the
