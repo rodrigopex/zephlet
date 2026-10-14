@@ -57,3 +57,4 @@ endif()
 
 add_subdirectory_ifdef(CONFIG_ZEPHLETS_COAP "${SHARED_ZEPHLET_DIR}/frontends/coap")
 add_subdirectory_ifdef(CONFIG_ZEPHLETS_SHELL "${SHARED_ZEPHLET_DIR}/frontends/shell")
+add_subdirectory_ifdef(CONFIG_ZEPHLETS_LUA "${SHARED_ZEPHLET_DIR}/frontends/lua")

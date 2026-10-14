@@ -366,6 +366,96 @@ config ZEPHLETS_SHELL_PRINT_RUNTIME
       unselected print paths fold away and the command itself is not
       compiled in.
 
+config ZEPHLETS_LUA
+    bool "Lua frontend for zephlets"
+    # LUA_ASYNC comes from the lua_zephyr module; without that module in the
+    # workspace this option cannot be enabled, and nothing Lua is built.
+    depends on LUA_ASYNC
+    # The frontend's own tasks ship as Lua source.
+    depends on !LUA_PRECOMPILE_ONLY
+    select LUA_LIB_BASE
+    # Descriptors only: field names and exact value types for the
+    # nanopb <-> Lua table conversion. Neither the parser nor the printer is
+    # used.
+    select NANOPB_TEXTFORMAT
+    help
+      Expose every zephlet instance to a Lua script through the `zephlets`
+      Lua module. The application passes the script to zephlet_lua_run()
+      from main(). The script reaches instances by name, calls their
+      commands as methods, and connects handlers to their events:
+
+        local z = require("zephlets")
+        z.tick_fast.events:connect(function(ev, meta)
+            z.ui_main:blink(100)
+        end)
+
+      Events are copied on the system workqueue into fixed staging slots
+      and handed to the handlers by one persistent zephyr.async task on the
+      thread that runs the script. No Lua runs in zbus listener context.
+
+if ZEPHLETS_LUA
+
+config ZEPHLETS_LUA_HEAP_SIZE
+    int "Lua heap size (bytes)"
+    default 32768
+    help
+      Size of the heap the Lua state allocates from: the script, its
+      tables, and the queued event tables of the Lua-heap FIFO.
+
+config ZEPHLETS_LUA_SLOT_SIZE
+    int "Staging slot payload size (bytes)"
+    default 64
+    range 4 4096
+    help
+      Payload size of one staging slot. Every zephlet type's events struct
+      must fit; a type whose struct is larger fails the build with a
+      message naming it.
+
+config ZEPHLETS_LUA_STAGING_DEPTH
+    int "Staging slots"
+    default 8
+    range 1 1024
+    help
+      Events held between the forwarding listener (system workqueue) and
+      the Lua thread. Costs SLOT_SIZE plus 8 bytes of RAM each. When every
+      slot is taken a new event is dropped, counted in z.stats() and
+      reported to the next handler call of its source as meta.dropped.
+
+config ZEPHLETS_LUA_FIFO_DEPTH
+    int "Lua-heap event FIFO depth"
+    default 32
+    range 1 1024
+    help
+      Events converted to Lua tables and waiting for the dispatcher. They
+      live on the Lua heap, so a handler that parks (async.sleep) does not
+      stall staging. When the FIFO is full a new event is dropped and
+      counted, as for staging.
+
+config ZEPHLETS_LUA_SCRATCH_SIZE
+    int "Command request/response buffer size (bytes)"
+    default 256
+    help
+      Size of each of the two static buffers that hold a command's
+      request and response structs while it runs. A type whose structs do
+      not fit fails the build with a message naming the RPC.
+
+config ZEPHLETS_LUA_POLL_MS
+    int "Doorbell poll period (ms)"
+    default 1000
+    range 0 3600000
+    help
+      Longest time a staged event can wait unnoticed when its doorbell
+      could not be published (zbus message pool exhausted), counted as
+      doorbell_fail in z.stats(). The internal tasks wake this often while
+      idle. 0 disables the poll and the tasks wait for a doorbell only.
+
+config MAIN_STACK_SIZE
+    # zephlet_lua_run() runs the Lua VM, and every command's handler, on
+    # the calling thread's stack.
+    default 8192
+
+endif # ZEPHLETS_LUA
+
 module = ZEPHLET
 module-str = zephlet
 source "subsys/logging/Kconfig.template.log_config"
