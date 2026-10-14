@@ -442,9 +442,9 @@ for _t in ("int32", "sint32", "sfixed32", "uint32", "fixed32",
            "int64", "sint64", "sfixed64", "uint64", "fixed64"):
     _LUA_SCALAR_TYPES[_t] = "integer"
 
-# Names the Lua frontend already gives an instance's own fields; an enum of
-# the same name could never be reached through `inst.<Enum>`.
-_LUA_RESERVED_INSTANCE_KEYS = {"events"}
+# Members the Lua frontend gives every instance itself; an rpc or enum of the
+# same name could never be reached through `inst:<rpc>` / `inst.<Enum>`.
+_LUA_RESERVED_INSTANCE_KEYS = {"add_policy"}
 
 
 def collect_qualified_names(*element_lists) -> dict:
@@ -741,6 +741,12 @@ def parse_proto(proto_path: str) -> dict:
                               if cmd["resp_c_name"] in tf_names else "NULL")
         cmd["lua_req_class"] = lua_class(input_type)
         cmd["lua_resp_class"] = lua_class(output_type)
+
+    reserved_rpcs = sorted(declared & _LUA_RESERVED_INSTANCE_KEYS)
+    if reserved_rpcs:
+        print(f"{proto_path}: rpc '{reserved_rpcs[0]}' collides with the Lua "
+              "frontend's own instance method of that name.", file=sys.stderr)
+        sys.exit(1)
 
     enums = collect_enums(tree)
     seen = {}

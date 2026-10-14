@@ -19,7 +19,7 @@ struct pb_tf_msg;
 /** Thread that owns the Lua state; set once by zephlet_lua_coordinate(). */
 extern k_tid_t zlet_lua_owner;
 
-/** Non-zero once the main chunk has returned and connections are frozen. */
+/** Non-zero once the main chunk has returned and policies are frozen. */
 extern atomic_t zlet_lua_sealed;
 
 /** Raise a Lua error unless called on the owner thread. */

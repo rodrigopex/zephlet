@@ -4,7 +4,8 @@
  *   z.<instance>                    instance object, looked up in the
  *                                   zephlet_lua_instance section on first use
  *   inst:<rpc>([req,] timeout_ms)   command, through the generated typed wrapper
- *   inst.events:connect(fn)         static connection; only before the seal
+ *   inst:add_policy(fn)             handler for the instance's events; only
+ *                                   before the seal
  *   inst.<Enum>.<VALUE>             proto enum constants
  *   z.stats(), z.FOREVER
  *
@@ -28,7 +29,6 @@
 LOG_MODULE_DECLARE(zlet_lua);
 
 #define INSTANCE_MT_PREFIX "zephlets.instance."
-#define EVENTS_MT          "zephlets.events"
 
 /* Registry keys. */
 static const char cache_key;    /* name -> instance object */
@@ -42,10 +42,6 @@ static uint8_t resp_buf[CONFIG_ZEPHLETS_LUA_SCRATCH_SIZE] __aligned(8);
 k_tid_t zlet_lua_owner;
 
 struct instance_ud {
-	struct zephlet_lua_instance *inst;
-};
-
-struct events_ud {
 	struct zephlet_lua_instance *inst;
 };
 
@@ -262,23 +258,31 @@ void zlet_lua_push_handlers(lua_State *L, size_t idx)
 	lua_remove(L, -2);
 }
 
-static int l_connect(lua_State *L)
+/* Upvalue 1: the type's instance metatable. */
+static int l_add_policy(lua_State *L)
 {
-	struct events_ud *ev = luaL_checkudata(L, 1, EVENTS_MT);
-	size_t idx = zlet_lua_instance_index(ev->inst);
+	struct instance_ud *self = lua_touserdata(L, 1);
+	size_t idx;
 
 	zlet_lua_check_owner(L);
+	if ((self == NULL) || !lua_getmetatable(L, 1) ||
+	    !lua_rawequal(L, -1, lua_upvalueindex(1))) {
+		return luaL_error(L, "add_policy: call it as a method, inst:add_policy(fn)");
+	}
+	lua_pop(L, 1);
+
 	if (atomic_get(&zlet_lua_sealed) != 0) {
 		return luaL_error(L,
-				  "%s.events:connect: connections are fixed once the script's "
-				  "main chunk has returned",
-				  ev->inst->z->name);
+				  "%s:add_policy: policies are fixed once the script's main chunk "
+				  "has returned",
+				  self->inst->z->name);
 	}
 	luaL_checktype(L, 2, LUA_TFUNCTION);
 	if (lua_gettop(L) != 2) {
-		return luaL_error(L, "%s.events:connect: expected one handler", ev->inst->z->name);
+		return luaL_error(L, "%s:add_policy: expected one function", self->inst->z->name);
 	}
 
+	idx = zlet_lua_instance_index(self->inst);
 	lua_rawgetp(L, LUA_REGISTRYINDEX, &handlers_key);
 	if (lua_rawgeti(L, -1, (lua_Integer)idx + 1) == LUA_TNIL) {
 		lua_pop(L, 1);
@@ -290,36 +294,6 @@ static int l_connect(lua_State *L)
 	lua_rawseti(L, -2, (lua_Integer)lua_rawlen(L, -2) + 1);
 
 	return 0;
-}
-
-static void push_events(lua_State *L, int self_idx, struct zephlet_lua_instance *inst)
-{
-	self_idx = lua_absindex(L, self_idx);
-	if (lua_getiuservalue(L, self_idx, 1) != LUA_TNIL) {
-		return;
-	}
-	lua_pop(L, 1);
-
-	struct events_ud *ev = lua_newuserdatauv(L, sizeof(*ev), 0);
-
-	ev->inst = inst;
-	if (luaL_newmetatable(L, EVENTS_MT)) {
-		static const luaL_Reg methods[] = {
-			{"connect", l_connect},
-			{NULL, NULL},
-		};
-
-		luaL_newlib(L, methods);
-		lua_setfield(L, -2, "__index");
-		lua_pushcfunction(L, l_readonly);
-		lua_setfield(L, -2, "__newindex");
-		lua_pushboolean(L, 0);
-		lua_setfield(L, -2, "__metatable");
-	}
-	lua_setmetatable(L, -2);
-
-	lua_pushvalue(L, -1);
-	lua_setiuservalue(L, self_idx, 1);
 }
 
 /* ----- Instances -------------------------------------------------------- */
@@ -335,11 +309,6 @@ static int l_instance_index(lua_State *L)
 		return 1;
 	}
 	lua_pop(L, 1);
-
-	if ((key != NULL) && (strcmp(key, "events") == 0)) {
-		push_events(L, 1, self->inst);
-		return 1;
-	}
 
 	return luaL_error(L, "zephlets: %s (%s) has no field '%s'", self->inst->z->name,
 			  self->inst->type->name, (key != NULL) ? key : "?");
@@ -380,7 +349,10 @@ static void push_type_metatable(lua_State *L, const struct zephlet_lua_type *typ
 	lua_remove(L, -2);
 
 	/* Member table, shared by every instance of the type. */
-	lua_createtable(L, 0, type->num_methods + type->num_enums);
+	lua_createtable(L, 0, 1 + type->num_methods + type->num_enums);
+	lua_pushvalue(L, -2); /* the metatable */
+	lua_pushcclosure(L, l_add_policy, 1);
+	lua_setfield(L, -2, "add_policy");
 	for (uint16_t i = 0U; i < type->num_methods; i++) {
 		lua_pushlightuserdata(L, (void *)&type->methods[i]);
 		lua_pushvalue(L, -3); /* the metatable */
@@ -418,7 +390,7 @@ void zlet_lua_push_instance(lua_State *L, struct zephlet_lua_instance *inst)
 	}
 	lua_pop(L, 1);
 
-	struct instance_ud *self = lua_newuserdatauv(L, sizeof(*self), 1);
+	struct instance_ud *self = lua_newuserdatauv(L, sizeof(*self), 0);
 
 	self->inst = inst;
 	push_type_metatable(L, inst->type);

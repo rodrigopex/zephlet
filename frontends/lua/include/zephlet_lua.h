@@ -7,11 +7,11 @@
  *
  * The application hands a Lua script to zephlet_lua_coordinate() from main().
  * The script reaches instances by name as fields of the module, calls their
- * commands with `:` syntax, and connects handlers to their events:
+ * commands with `:` syntax, and adds policies -- handlers -- for their events:
  *
  * @code{.lua}
  * local z = require("zephlets")
- * z.tick_fast.events:connect(function(ev, meta) z.ui_main:blink(100) end)
+ * z.tick_fast:add_policy(function(ev, meta) z.ui_main:blink(100) end)
  * @endcode
  *
  * Nothing here needs Lua headers: generated code and application code include
@@ -141,7 +141,7 @@ void zephlet_lua_stage(struct zephlet_lua_instance *inst, const void *ev, size_t
  * @brief Run a Lua script against the zephlet instances. Call from main().
  *
  * Creates the Lua state on its own heap, runs the script's main chunk -- which
- * connects handlers and may call commands -- then seals the connections and
+ * adds policies and may call commands -- then seals the policies and
  * enters the zephyr.async loop. If the chunk returns a function, that function
  * runs as one more task. Does not return while the script runs.
  *

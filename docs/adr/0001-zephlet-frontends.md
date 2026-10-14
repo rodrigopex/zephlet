@@ -250,11 +250,11 @@ Four decisions are specific to it:
   listener therefore copies into fixed C staging slots and rings a data-less
   doorbell channel, which is the only thing `zephyr.async` awaits. Two Lua
   tasks drain staging into a Lua-heap FIFO. One persistent dispatcher
-  coroutine runs the handlers.
-- **Connections are static.** They are declared in the script's main chunk
-  and sealed when it returns. Instances without handlers are then filtered in
-  the listener, which bounds the cost of the frontend to the sources the
-  script actually uses.
+  coroutine runs the policies.
+- **Policies are static.** They are added (`inst:add_policy(fn)`) in the
+  script's main chunk and sealed when it returns. Instances without one are
+  then filtered in the listener, which bounds the cost of the frontend to the
+  sources the script actually uses.
 - **Instance names for LuaLS come from the ELF.** Codegen runs per type and
   never sees instances. The hook names each instance record
   `__zlet_lua__<type>__<instance>`, and a post-build step reads those symbols

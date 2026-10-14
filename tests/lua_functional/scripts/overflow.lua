@@ -22,7 +22,7 @@ end
 
 local seen = {}
 
-z.probe_a.events:connect(function(ev, meta)
+z.probe_a:add_policy(function(ev, meta)
 	seen[#seen + 1] = {seq = ev.seq, dropped = meta.dropped}
 end)
 

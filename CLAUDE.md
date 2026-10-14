@@ -206,8 +206,8 @@ Single script `codegen/generate_zephlet.py` parses the `.proto` service block, c
   `luaz_add_bytecode_file()` (the prelude too, via a `cmake_language(DEFER)`
   call, since lua_zephyr is processed after this module) and calls
   `zephlet_lua_coordinate(ZEPHLET_LUA_SCRIPT(app))` from `main()`; the
-  main chunk connects, the seal freezes connections, then the `zephyr.async`
-  loop runs the pump + dispatcher tasks. Tests: `tests/lua_functional`
+  main chunk adds policies (`inst:add_policy(fn)`), the seal freezes them,
+  then the `zephyr.async` loop runs the pump + dispatcher tasks. Tests: `tests/lua_functional`
   (console harness, native_sim).
 
 ## Naming

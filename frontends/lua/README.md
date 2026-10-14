@@ -12,11 +12,11 @@ local tick      = z.tick_timer_based_impl
 local tampering = z.tampering_emul_impl
 local ui        = z.ui_fake_impl
 
-tick.events:connect(function(ev, meta)
+tick:add_policy(function(ev, meta)
     ui:blink(100)
 end)
 
-tampering.events:connect(function(ev, meta)
+tampering:add_policy(function(ev, meta)
     if ev.proximity_tamper_detected then
         ui:blink(100)
     end
@@ -80,7 +80,7 @@ name in an iterable section; the application declares no list of them.
 | `z.<instance>` | The instance object. An unknown name raises an error. |
 | `inst:<rpc>(timeout_ms)` | A command whose request is `Empty`. |
 | `inst:<rpc>(req, timeout_ms)` | A command with a request table. |
-| `inst.events:connect(fn)` | Calls `fn(ev, meta)` for every event of `inst`. |
+| `inst:add_policy(fn)` | Adds a policy: `fn(ev, meta)` runs for every event of `inst`. |
 | `inst.<Enum>.<VALUE>` | Proto enum constants, read-only. Proto names are kept verbatim. |
 | `z.FOREVER` | `-1`, the `timeout_ms` that means `K_FOREVER`. |
 | `z.stats()` | Per-instance counters, keyed by instance name. |
@@ -142,42 +142,44 @@ the same caveat. The field's own range is checked exactly: `-2^63` fits an
 `int64` and `2^63` a `uint64`, while `2^64`, infinities and NaN are rejected.
 `double` fields carry float precision.
 
-### Events and connections
+### Events and policies
 
 ```lua
-tick.events:connect(function(ev, meta)
+tick:add_policy(function(ev, meta)
     -- ev:   the event table, e.g. ev.timestamp
     -- meta: {source = <instance>, name = "tick_timer_based_impl",
     --        seq = <per-instance number>, dropped = <events lost before this one>}
 end)
 ```
 
-- **Connections are static.** `connect` works only while the script's main
-  chunk runs. Once the chunk returns the connections are sealed, and a later
-  `connect` raises an error. An instance may have any number of handlers.
-  They run in connect order, and the handler lists live on the Lua heap.
-- **One persistent coroutine** runs every handler of every instance. No
-  coroutine is created per event. Handlers run one at a time, in the order the
+- **Policies are static.** `add_policy` works only while the script's main
+  chunk runs. Once the chunk returns the policies are sealed, and a later
+  `add_policy` raises an error. An instance may have any number of policies.
+  They run in the order they were added, and the lists live on the Lua heap.
+  `add_policy` is a member of every instance, so codegen rejects an rpc or
+  enum of that name.
+- **One persistent coroutine** runs every policy of every instance. No
+  coroutine is created per event. Policies run one at a time, in the order the
   events were emitted.
-- **A handler may park**, for example in `require("zephyr.async").sleep(ms)`.
+- **A policy may park**, for example in `require("zephyr.async").sleep(ms)`.
   It is never resumed with anything other than its own reply; that is
   `zephyr.async`'s tagged-yield guarantee. While it is parked, later events
   wait in the FIFO and are handled in order afterwards. Do not call
-  `coroutine.yield()` directly in a handler: an untagged yield ends the
+  `coroutine.yield()` directly in a policy: an untagged yield ends the
   dispatcher task.
-- **A handler that raises** has its error and traceback logged, and its
-  instance's `handler_err` counter goes up. The remaining handlers, and later
+- **A policy that raises** has its error and traceback logged, and its
+  instance's `handler_err` counter goes up. The remaining policies, and later
   events, still run.
 - **Events emitted before the seal**, for example during boot or from the
   main chunk itself, are kept in staging, as far as its depth allows. After
-  the seal they go to the instances that have handlers. Staged events from
-  instances with no handler are discarded without being counted as drops.
+  the seal they go to the instances that have policies. Staged events from
+  instances with none are discarded without being counted as drops.
   After the seal, those instances' events are filtered out in the listener.
 
 ### The main chunk and the async main
 
 The main chunk runs **synchronously, before the scheduler starts**. It can
-`require`, call commands and `connect`, but `zephyr.async` is not available
+`require`, call commands and `add_policy`, but `zephyr.async` is not available
 yet. To run background work, return a function from the chunk. It becomes one
 more task when the loop starts:
 
@@ -212,7 +214,7 @@ zephlet emit ─► chan_<inst>_events
                                                                              │
                 ┌───────────────── zephyr.async loop, owner thread ──────────┘
                 ▼
-     pump task ── drain ──► Lua-heap FIFO ──► dispatcher task ──► handler(ev, meta)
+     pump task ── drain ──► Lua-heap FIFO ──► dispatcher task ──► policy(ev, meta)
 ```
 
 - **No Lua runs in zbus listener context.** The forwarding listener, emitted
@@ -228,7 +230,7 @@ zephlet emit ─► chan_<inst>_events
 - **Two internal tasks.** Both the pump and the dispatcher drain staging into
   the Lua-heap FIFO, converting each event to a table with its source's
   descriptor. The pump exists so that staging keeps emptying while the
-  dispatcher is parked inside a handler. The dispatcher is the one persistent
+  dispatcher is parked inside a policy. The dispatcher is the one persistent
   application coroutine.
 - **The scheduler never holds pointers into event buffers.** The listener
   copies, and the drain copies again into a table. The zbus buffer is released
@@ -240,8 +242,8 @@ zephlet emit ─► chan_<inst>_events
    From then on their events are staged.
 2. `zephlet_lua_coordinate()`, called from `main()`, creates the Lua state and
    registers `zephlets`.
-3. The main chunk runs: connections, plus any setup commands.
-4. The seal freezes the handler lists and marks the connected instances.
+3. The main chunk runs: policies, plus any setup commands.
+4. The seal freezes the policies and marks the instances that have one.
 5. The `zephyr.async` loop starts the pump, the dispatcher and the optional
    async main.
 
@@ -249,7 +251,7 @@ zephlet emit ─► chan_<inst>_events
 
 | Kconfig | Default | Cost and effect |
 |---|---|---|
-| `ZEPHLETS_LUA_HEAP_SIZE` | 32768 | Static RAM for the Lua heap: the script, the queued event tables and handler lists. |
+| `ZEPHLETS_LUA_HEAP_SIZE` | 32768 | Static RAM for the Lua heap: the script, the queued event tables and policy lists. |
 | `ZEPHLETS_LUA_SLOT_SIZE` | 64 | Payload of one staging slot. Every events struct must fit, which is checked at build time. |
 | `ZEPHLETS_LUA_STAGING_DEPTH` | 8 | Staging slots. Static RAM is `(SLOT_SIZE + 8) × DEPTH`. |
 | `ZEPHLETS_LUA_FIFO_DEPTH` | 32 | Events queued as Lua tables. Costs 6 B of static RAM each, plus each queued table on the Lua heap. |
@@ -296,7 +298,7 @@ Each build writes `build/zephlets_lua/`:
   `zephlets.Stats`, `pb.Lifecycle.Status`).
 - `<prefix>_lua_meta.lua`, one per zephlet type, generated from its proto:
   message classes with optional/repeated markers, `---@enum`, the instance
-  class with every command's signature, and a typed `events:connect`.
+  class with every command's signature, and a typed `add_policy`.
 - `zephlets_instances.lua`: the `zephlets` module with one field per instance.
   Codegen never sees instance names, which exist only in `ZEPHLET_NEW(...)`
   calls, so this file is written *after the link*. The per-instance record's
@@ -328,8 +330,7 @@ warning on a misspelled name.
 - 32-bit Lua numbers; see [Messages as tables](#messages-as-tables).
 - Pointer- and callback-allocated nanopb fields, and `FIXARRAY` fields, are
   not converted. They are the same shapes nanopb-textformat skips.
-- `coroutine.yield()` called directly in a handler ends the dispatcher. Park
+- `coroutine.yield()` called directly in a policy ends the dispatcher. Park
   with `zephyr.async` calls instead.
-- lua_zephyr pins an unreleased Lua 5.5.0 development tree (MIT). The
-  lua_zephyr repository has no LICENSE file yet, although its README states
-  Apache-2.0.
+- lua_zephyr pins Lua 5.5.0 (MIT), the `v5.5.0` release tag. The lua_zephyr
+  repository has no LICENSE file yet, although its README states Apache-2.0.

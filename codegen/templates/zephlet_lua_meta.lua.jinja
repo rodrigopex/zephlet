@@ -19,20 +19,16 @@ local _{{ type_snake }}_enum_{{ loop.index0 }} = {
 {% endfor %}
 
 {% endfor %}
----@class zephlets.{{ type_snake }}.EventSource
-local _{{ type_snake }}_events = {}
-
----Register a handler for every event of this instance. Startup only: calling
----it after the script's main chunk returns raises an error.
----@param handler fun(ev: {{ lua_events_class }}, meta: zephlets.EventMeta)
-function _{{ type_snake }}_events:connect(handler) end
-
 ---@class zephlets.{{ type_snake }}
----@field events zephlets.{{ type_snake }}.EventSource
 {% for enum in enums %}
 ---@field {{ enum.name }} pb.{{ enum.qualified }}
 {% endfor %}
 local _{{ type_snake }} = {}
+
+---Add a policy: a handler run for every event of this instance. Startup
+---only: calling it after the script's main chunk returns raises an error.
+---@param policy fun(ev: {{ lua_events_class }}, meta: zephlets.EventMeta)
+function _{{ type_snake }}:add_policy(policy) end
 
 {% for cmd in commands %}
 {% if not cmd.req_is_empty %}

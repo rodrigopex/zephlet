@@ -4,5 +4,5 @@
 
 local z = require("zephlets")
 
-z.probe_a.events:connect(function() end)
+z.probe_a:add_policy(function() end)
 error("the script failed during startup")

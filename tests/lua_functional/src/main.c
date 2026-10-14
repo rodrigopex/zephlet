@@ -10,7 +10,7 @@
  * @brief Host app for the Lua functional twister target.
  *
  * Three `probe` instances: probe_a and probe_b are the event sources the
- * suites connect to, probe_idle is never connected. main() hands the suite
+ * suites add policies to, probe_idle never gets one. main() hands the suite
  * chosen by CONFIG_TEST_LUA_SUITE to zephlet_lua_coordinate(); a second
  * thread then tries to start the frontend again, which must be refused.
  */

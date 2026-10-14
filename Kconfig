@@ -384,10 +384,10 @@ config ZEPHLETS_LUA
       option to a Lua script through the `zephlets` Lua module. The application embeds its script as bytecode with
       luaz_add_bytecode_file() and passes it to zephlet_lua_coordinate()
       from main(). The script reaches instances by name, calls their
-      commands as methods, and connects handlers to their events:
+      commands as methods, and adds policies -- handlers -- for their events:
 
         local z = require("zephlets")
-        z.tick_fast.events:connect(function(ev, meta)
+        z.tick_fast:add_policy(function(ev, meta)
             z.ui_main:blink(100)
         end)
 

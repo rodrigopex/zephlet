@@ -1,7 +1,7 @@
 -- Lua frontend: the main suite.
 --
 -- The main chunk runs before the scheduler starts, so it covers discovery,
--- commands, argument checking and connections; the event checks run in the
+-- commands, argument checking and policies; the event checks run in the
 -- async main this chunk returns, after the seal.
 
 local coroutine = require("coroutine")
@@ -242,9 +242,10 @@ raises(function() a:config({inner = 3}, 100) end, "field 'inner': expected table
 raises(function() a:config({inner = {c = 1}}, 100) end, "unknown field 'c'", "nested unknown field")
 raises(function() a:config({blob = string.rep("x", 9)}, 100) end, "bytes longer than 8", "bytes too long")
 raises(function() a:config({enabled = 1}, 100) end, "expected boolean", "bool type")
-raises(function() a.events:connect(1) end, "function expected", "connect needs a function")
+raises(function() a:add_policy(1) end, "function expected", "add_policy needs a function")
+raises(function() a.add_policy(print) end, "call it as a method", "add_policy needs : syntax")
 
--- Connections ------------------------------------------------------------
+-- Policies ---------------------------------------------------------------
 
 -- Emitted before the seal: staged, and delivered once dispatch starts.
 a:burst({count = 1, value = 1}, 100)
@@ -266,8 +267,8 @@ local function record(tag)
 	end
 end
 
-a.events:connect(record("a1"))
-a.events:connect(function(ev, meta)
+a:add_policy(record("a1"))
+a:add_policy(function(ev, meta)
 	in_handler = true
 	if ev.value == 9 then
 		-- Park the dispatcher; events keep arriving meanwhile.
@@ -276,10 +277,10 @@ a.events:connect(function(ev, meta)
 	in_handler = false
 	log[#log + 1] = string.format("a2:%d:%d:%s", ev.seq, meta.dropped, tostring(ev.alarm))
 end)
-b.events:connect(function(ev)
+b:add_policy(function(ev)
 	error("boom " .. ev.seq)
 end)
-b.events:connect(record("b2"))
+b:add_policy(record("b2"))
 
 -- The async main ---------------------------------------------------------
 
@@ -296,7 +297,7 @@ return function()
 		check(false, "timed out waiting for " .. what)
 	end
 
-	raises(function() a.events:connect(print) end, "connections are fixed", "connect after the seal")
+	raises(function() a:add_policy(print) end, "policies are fixed", "add_policy after the seal")
 
 	wait_for(2, "the event emitted before the seal")
 	eq(log[1], "a1:probe_a:1", "pre-seal event, first handler")
@@ -325,13 +326,13 @@ return function()
 	eq(log[10], "a2:4:0:false", "first event after the park")
 	eq(log[14], "a2:6:0:false", "last event behind the park")
 
-	-- A source nothing connects to is filtered, not counted as dropped.
+	-- A source with no policy is filtered, not counted as dropped.
 	idle:burst({count = 3, value = 0}, 100)
 	async.sleep(20)
 	local s = z.stats().probe_idle
-	eq(s.emitted, 3, "unconnected source still counts emits")
-	eq(s.delivered, 0, "unconnected source is not delivered")
-	eq(s.staged_drop + s.fifo_drop, 0, "unconnected events are not drops")
+	eq(s.emitted, 3, "source without policy still counts emits")
+	eq(s.delivered, 0, "source without policy is not delivered")
+	eq(s.staged_drop + s.fifo_drop, 0, "events without policy are not drops")
 
 	print(string.format("lua suite basic: %d passed, %d failed", passed, failed))
 end

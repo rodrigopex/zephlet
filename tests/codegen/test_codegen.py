@@ -737,7 +737,8 @@ def test_lua_meta_annotates_every_shape(tmp_path):
 	assert "---@field unit pb.Gauge.Unit" in meta
 	assert "---@field label string" in meta
 	assert "---@field Unit pb.Gauge.Unit" in meta
-	assert "---@param handler fun(ev: pb.Gauge.Events, meta: zephlets.EventMeta)" in meta
+	assert "---@param policy fun(ev: pb.Gauge.Events, meta: zephlets.EventMeta)" in meta
+	assert "function _gauge:add_policy(policy) end" in meta
 	assert "function _gauge:config(req, timeout_ms) end" in meta
 	assert "function _gauge:reset(timeout_ms) end" in meta
 	assert "---@return pb.Lifecycle.Status|nil resp" in meta
@@ -753,12 +754,14 @@ def test_lua_bindings_leave_interface_c_untouched(tmp_path):
 
 @pytest.mark.parametrize("clash, needle", [
 	("rpc Unit (Empty) returns (Empty);", "collides"),
+	("rpc add_policy (Empty) returns (Empty);", "own instance method"),
 	("rpc noop (Empty) returns (Empty);\n}\nmessage Other { enum Unit { U = 0; } }\n//",
 	 "share the name"),
 ])
-def test_lua_enum_name_clash_is_rejected(tmp_path, clash, needle):
-	"""Enums are reached by bare name on each instance, so an enum named like
-	an rpc, or two enums sharing a name, could not both be reached."""
+def test_lua_name_clash_is_rejected(tmp_path, clash, needle):
+	"""Enums and rpcs share each instance's namespace with add_policy, so an
+	enum named like an rpc, two enums sharing a name, or an rpc named
+	add_policy could not all be reached."""
 	text = _LUA_PROTO.replace("rpc put        (Gauge.Config) returns (Empty);",
 				  "rpc put        (Gauge.Config) returns (Empty);\n  " + clash)
 	proto = tmp_path / "zlet_gauge.proto"

@@ -3,9 +3,9 @@
  *
  * Order, all on the calling thread:
  *   1. Lua state on the frontend's own heap; `zephlets` in package preload.
- *   2. The script's main chunk, synchronously: it connects handlers and may call
+ *   2. The script's main chunk, synchronously: it adds policies and may call
  *      commands. zephyr.async is not available yet.
- *   3. Seal: handler lists freeze, and only connected instances keep staging.
+ *   3. Seal: policies freeze, and only instances with one keep staging.
  *   4. zephyr.async loop with the pump and dispatcher tasks, plus the function
  *      the chunk returned, if any.
  *
