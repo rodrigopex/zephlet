@@ -63,12 +63,41 @@ void zlet_lua_push_handlers(lua_State *L, size_t idx);
 /** Push the table of internal functions the prelude's tasks call. */
 void zlet_lua_push_core(lua_State *L);
 
+/**
+ * Move every staged event to its consumers: the policy FIFO and the queues of
+ * the tasks awaiting its source.
+ */
+void zlet_lua_drain(lua_State *L);
+
+/** Fold the drops of staging's start-up overwrites into staged_drop. At seal. */
+void zlet_lua_fold_preseal_drops(void);
+
+/**
+ * The frontend has stopped: stop staging, and empty it, so the listeners return
+ * at once from then on.
+ */
+void zlet_lua_shutdown(void);
+
+/** Count a dropped event of @p inst in @p counter; logs, rate-limited. */
+void zlet_lua_count_drop(struct zephlet_lua_instance *inst, atomic_t *counter, const char *why);
+
+/* zephlet_lua_await.c */
+
+/**
+ * Queue the event table at the top of the stack, without popping it, for every
+ * task awaiting the instance at @p idx. Never allocates.
+ */
+void zlet_lua_await_route(lua_State *L, size_t idx, uint32_t seq);
+
+/** Add the await functions to the core table at the top of the stack. */
+void zlet_lua_await_core(lua_State *L);
+
 /* zephlet_lua_coordinate.c */
 
 /**
  * Registry key of the table the prelude returned: its tasks, `pump` and
  * `dispatch`, and the Lua functions behind `inst:await()` and
- * `zephlets.await_any()`.
+ * `zephlets.await_any()`, which park the calling task.
  */
 extern const char zlet_lua_prelude_key;
 

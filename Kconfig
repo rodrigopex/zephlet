@@ -457,6 +457,27 @@ config ZEPHLETS_LUA_SCRATCH_SIZE
       request and response structs while it runs. A type whose structs do
       not fit fails the build with a message naming the RPC.
 
+config ZEPHLETS_LUA_GC_PAUSE
+    int "Lua GC pause (%)"
+    default 100
+    range 0 1000
+    help
+      How far the Lua heap may grow, relative to what the last collection
+      kept, before the next collection cycle starts. Lua's own default,
+      250, lets a 20 KB working set grow to 50 KB, past the default heap
+      size, so collection then only happens when an allocation fails. 100
+      starts a new cycle as soon as the previous one ends: less memory,
+      more collector work.
+
+config ZEPHLETS_LUA_GC_IDLE_STEP
+    bool "Lua GC step when idle"
+    default y
+    help
+      Run one basic incremental GC step each time the policy dispatcher
+      finds no event left. The Lua collector only advances when something
+      allocates, so without this the garbage of the last burst stays on
+      the heap until the next one.
+
 config ZEPHLETS_LUA_POLL_MS
     int "Doorbell poll period (ms)"
     default 1000

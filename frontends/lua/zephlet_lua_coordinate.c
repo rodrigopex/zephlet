@@ -168,10 +168,19 @@ int zephlet_lua_coordinate(const char *buf, size_t len, const char *chunkname)
 		zlet_lua_shutdown();
 		return -ENOMEM;
 	}
-	luaz_openlibs(L);
-	zlet_lua_register(L);
+	(void)lua_gc(L, LUA_GCPARAM, LUA_GCPPAUSE, CONFIG_ZEPHLETS_LUA_GC_PAUSE);
 
-	rc = run(L, buf, len, chunkname);
+	lua_pushcfunction(L, start);
+	lua_pushlightuserdata(L, &args);
+	rc = lua_pcall(L, 1, 0, 0);
+	if (rc != LUA_OK) {
+		LOG_ERR("start: %s", lua_tostring(L, -1));
+		rc = (rc == LUA_ERRMEM) ? -ENOMEM : -EFAULT;
+	} else {
+		rc = args.rc;
+	}
+	/* Whatever stopped it, nothing will empty staging again. */
+	zlet_lua_shutdown();
 	lua_close(L);
 
 	return rc;

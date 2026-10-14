@@ -304,23 +304,37 @@ zephlet emit ─► chan_<inst>_events
   dispatcher is the one persistent policy coroutine.
 - **Awaiting tasks wait on the doorbell too.** `await` drains, takes from the
   task's queues, and otherwise parks in `chan:await` on the doorbell, waking
-  up for every doorbell and at least every `POLL_MS`. That is all built from
-  the public `zephyr.async` API, in the frontend's prelude. lua_zephyr is not
-  modified.
+  up for every doorbell and at least every `POLL_MS`. The queues and routing
+  are C (`zephlet_lua_await.c`); only the loop that parks is Lua, in the
+  prelude, since only Lua code can park a `zephyr.async` task. It is all
+  built from the public `zephyr.async` API: lua_zephyr is not modified.
 - **The scheduler never holds pointers into event buffers.** The listener
-  copies, and the drain copies again into a table. The zbus buffer is released
+  copies, and the drain copies again into the event object. The zbus buffer is released
   as soon as the listener returns.
 
 ### Initialisation order
 
-1. The zephlet SYS_INIT walker initialises the instances (APPLICATION level).
-   From then on their events are staged.
-2. `zephlet_lua_coordinate()`, called from `main()`, creates the Lua state and
-   registers `zephlets`.
-3. The main chunk runs: policies, plus any setup commands.
-4. The seal freezes the policies and marks the instances that have one.
-5. The `zephyr.async` loop starts the pump, the dispatcher and the optional
-   async main. From here on, tasks can await instances.
+```mermaid
+sequenceDiagram
+    participant init as SYS_INIT walker
+    participant main as main()
+    participant fe as zephlet_lua_coordinate()
+    participant lua as main chunk
+    participant loop as zephyr.async loop
+
+    init->>init: initialise the instances (APPLICATION level)
+    Note over init: from here on their events are staged
+    main->>fe: call, after the app's C setup
+    fe->>fe: Lua state, libraries, zephlets module, prelude
+    fe->>lua: run synchronously
+    lua->>lua: add_policy(), setup commands
+    lua-->>fe: nil, or the async main
+    fe->>fe: seal: policies freeze, instances with one are marked
+    fe->>loop: start the pump, the dispatcher and the async main
+    Note over loop: from here on, tasks can await instances
+    loop-->>fe: returns only on a fault
+    fe-->>main: error code; the frontend stays stopped
+```
 
 ## Limits and memory
 
@@ -332,8 +346,28 @@ zephlet emit ─► chan_<inst>_events
 | `ZEPHLETS_LUA_FIFO_DEPTH` | 32 | Events queued as Lua tables. Costs 6 B of static RAM each, plus each queued table on the Lua heap. |
 | `ZEPHLETS_LUA_AWAIT_DEPTH` | 8 | Events kept per awaiting task and instance, on the Lua heap. |
 | `ZEPHLETS_LUA_SCRATCH_SIZE` | 256 | Two static buffers for a command's request and response. Every RPC must fit, which is checked at build time. |
+| `ZEPHLETS_LUA_GC_PAUSE` | 100 | Heap growth, in % of what the last collection kept, before the next cycle starts. Lua's default of 250 only collects when an allocation fails on a heap this size. |
+| `ZEPHLETS_LUA_GC_IDLE_STEP` | y | One GC step each time the dispatcher runs out of events, so a burst's garbage does not stay on the heap. |
 | `ZEPHLETS_LUA_POLL_MS` | 1000 | How long an event can wait unnoticed after a refused doorbell. `0` turns the poll off. |
 | `MAIN_STACK_SIZE` | 8192 (overridden) | The Lua VM and every command's handler run on this stack. |
+
+**Heap budget.** Measured on mps2/an385 with the example application (three
+instances, two policies, an async main), after a full collection:
+
+| | Live |
+|---|---|
+| Empty Lua state | 3.1 KB |
+| `base` library and preload entries | 1.6 KB |
+| Frontend: registry tables and prelude | 3.1 KB |
+| `app.lua` code | 2.8 KB |
+| Its main chunk: module, instances, type metatables, `string`, policies | 3.5 KB |
+| `zephyr.async` running: scheduler state, the tasks, doorbell ring | 5.3 KB |
+| **Total** | **19.5 KB**, 22.2 KB peak |
+
+The figures are `sys_heap` bytes, chunk overhead included. The last row
+includes the task that took the readings. Every task
+coroutine costs about 1 KB, and the scheduler state grows with
+`LUA_ASYNC_MAX_TASKS` × `LUA_ASYNC_MAX_CHANNELS`.
 
 Each instance also has one record in RAM (flags, counters, last sequence
 number) and one async listener.

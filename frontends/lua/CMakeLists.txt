@@ -1,6 +1,7 @@
 if(CONFIG_ZEPHLETS_LUA)
     zephyr_library_named(zephlet_lua_frontend)
     zephyr_library_sources(
+        zephlet_lua_await.c
         zephlet_lua_events.c
         zephlet_lua_module.c
         zephlet_lua_pb.c
