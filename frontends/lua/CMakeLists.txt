@@ -21,4 +21,14 @@ if(CONFIG_ZEPHLETS_LUA)
     generate_inc_file_for_target(zephlet_lua_frontend
         "${CMAKE_CURRENT_SOURCE_DIR}/zephlet_lua_prelude.lua"
         "${_zlet_lua_gen}/zephlet_lua_prelude.inc")
+
+    # LuaLS: after the link, read the instance records' symbols back from
+    # the ELF and gather every type's annotations into one directory.
+    set_property(GLOBAL APPEND PROPERTY extra_post_build_commands
+        COMMAND ${PYTHON_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/zephlet_lua_instances.py"
+            --elf "${ZEPHYR_BINARY_DIR}/${KERNEL_ELF_NAME}"
+            --meta-dir "${CMAKE_BINARY_DIR}/modules"
+            --base "${CMAKE_CURRENT_SOURCE_DIR}/luals/zephlets_base.lua"
+            --out "${CMAKE_BINARY_DIR}/zephlets_lua")
 endif()

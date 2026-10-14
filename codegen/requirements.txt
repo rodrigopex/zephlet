@@ -5,3 +5,5 @@ pkl-python>=0.1.0
 copier>=9.0.0
 tree-sitter>=0.23.0
 tree-sitter-c>=0.21.0
+# The Lua frontend's post-build LuaLS step reads the ELF
+pyelftools>=0.29
