@@ -1,5 +1,6 @@
 ---@meta
 -- GENERATED FILE — DO NOT EDIT. Source: {{ prefix }}.proto.
+{% if lua_opt_in %}
 -- LuaLS annotations for the `{{ type_snake }}` zephlet's Lua bindings.
 -- Instance names come from zephlets_instances.lua, written after the build.
 
@@ -54,3 +55,6 @@ function _{{ type_snake }}:await(timeout_ms) end
 function _{{ type_snake }}:{{ cmd.name }}({% if not cmd.req_is_empty %}req, {% endif %}timeout_ms) end
 
 {% endfor %}
+{% else %}
+-- `{{ prefix }}.proto` does not opt in to the Lua frontend.
+{% endif %}

@@ -3,6 +3,7 @@
 #ifndef GENERATED_{{ prefix|upper }}_LUA_INTERFACE_H_
 #define GENERATED_{{ prefix|upper }}_LUA_INTERFACE_H_
 
+{% if lua_opt_in %}
 /**
  * @file
  * @brief Lua frontend bindings for the `{{ type_snake }}` zephlet.
@@ -39,5 +40,8 @@ extern const struct zephlet_lua_type {{ type_snake }}_lua_type;
 		zephlet_lua_stage(&__zlet_lua__{{ type_snake }}__##_name, ev, sizeof(*ev));        \
 	}                                                                                          \
 	ZEPHLET_EVENTS_LISTENER(_name, {{ type_snake }}, _zlet_lua_fwd_##_name)
+{% else %}
+/* `{{ prefix }}.proto` does not opt in to the Lua frontend. */
+{% endif %}
 
 #endif /* GENERATED_{{ prefix|upper }}_LUA_INTERFACE_H_ */

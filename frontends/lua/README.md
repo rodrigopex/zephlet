@@ -1,7 +1,8 @@
 # Lua frontend
 
-`CONFIG_ZEPHLETS_LUA=y` exposes every zephlet instance to a Lua script as the
-`zephlets` module. It covers commands, events and enum constants. Zephlet code
+`CONFIG_ZEPHLETS_LUA=y` exposes the instances of every zephlet type that opts
+in with `option (zephlet.lua) = true;` to a Lua script as the `zephlets`
+module. It covers commands, events and enum constants. Zephlet code
 and the core C API stay unchanged. The scheduler is lua_zephyr's
 `zephyr.async`; this frontend adds no scheduler of its own.
 
@@ -72,9 +73,24 @@ int main(void)
    `zephlet_lua_coordinate(buf, len, chunkname)` also takes source, for
    example a script read from a filesystem, when the parser is kept.
 
-No other wiring is needed. The per-type hook that `ZEPHLET_NEW(...)` already
-expands registers every instance with the frontend. Instances are found by
-name in an iterable section; the application declares no list of them.
+4. Opt each zephlet type the script uses in, in its `.proto`:
+
+   ```proto
+   import "zephlet_options.proto";
+
+   service TickApi {
+     option (zephlet.lua) = true;
+     ...
+   }
+   ```
+
+No other wiring is needed. For an opted-in type, the per-type hook that
+`ZEPHLET_NEW(...)` already expands registers every instance with the
+frontend. Instances are found by name in an iterable section; the
+application declares no list of them. A type without the option gets no
+bindings, record or listener, so it costs nothing: in the example app that
+keeps the 43-RPC `typelab` out: 1.6 KB of flash and 96 B of RAM. Its
+instances are unknown names to the script.
 
 ## The `zephlets` module
 
@@ -173,7 +189,7 @@ end)
   `add_policy` raises an error. An instance may have any number of policies.
   They run in the order they were added, and the lists live on the Lua heap.
   `add_policy` is a member of every instance, so codegen rejects an rpc or
-  enum of that name.
+  enum of that name in an opted-in type.
 - **One persistent coroutine** runs every policy of every instance. No
   coroutine is created per event. Policies run one at a time, in the order the
   events were emitted.

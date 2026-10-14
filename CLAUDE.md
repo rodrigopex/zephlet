@@ -196,7 +196,9 @@ Single script `codegen/generate_zephlet.py` parses the `.proto` service block, c
 
 - `CONFIG_ZEPHLETS_LUA=y` — Lua frontend (`frontends/lua/`, guide in its
   README). `depends on LUA_ASYNC` (lua_zephyr module, pinned by SHA in the
-  app manifest), `select`s `NANOPB_TEXTFORMAT` for descriptors. Hook
+  app manifest), `select`s `NANOPB_TEXTFORMAT` for descriptors. Per-type
+  opt-in `option (zephlet.lua) = true;` (`zephlet_options.proto`); without
+  it the hook is empty and the Lua outputs are stubs. Hook
   `_ZLET_LUA_HOOK_<type>` emits per instance a
   `zephlet_lua_instance` record (`__zlet_lua__<type>__<inst>`) plus a
   forwarding `ZEPHLET_EVENTS_LISTENER` that copies events into C staging.

@@ -307,9 +307,10 @@ needs one.
 
 ## Lua frontend
 
-`CONFIG_ZEPHLETS_LUA=y` exposes every instance to a Lua script as the
-`zephlets` module, through lua_zephyr's `zephyr.async` scheduler. No app
-wiring beyond `zephlet_lua_coordinate()` in `main()`:
+`CONFIG_ZEPHLETS_LUA=y` exposes the instances of each type whose service
+declares `option (zephlet.lua) = true;` to a Lua script as the `zephlets`
+module, through lua_zephyr's `zephyr.async` scheduler. No app wiring beyond
+`zephlet_lua_coordinate()` in `main()`:
 
 ```lua
 local z = require("zephlets")

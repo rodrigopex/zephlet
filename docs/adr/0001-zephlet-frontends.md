@@ -234,8 +234,11 @@ nothing.
 
 The Lua frontend is the first frontend whose consumer runs in the same
 image. A Lua script on lua_zephyr's `zephyr.async` scheduler calls commands
-and handles events. It follows the shell's shape: no per-service opt-in, and
-the hook is gated by `CONFIG_ZEPHLETS_LUA` alone. Its generated artifacts sit
+and handles events. Like CoAP, it has a per-service opt-in,
+`option (zephlet.lua) = true;`: a type without it gets an empty hook and
+empty generated files, so a script reaches only the types it is meant to and
+the image carries no bindings for the rest. For an opted-in type the hook is
+gated by `CONFIG_ZEPHLETS_LUA`. Its generated artifacts sit
 next to CoAP's: `<prefix>_lua_interface.{h,c}`, which are included or compiled
 only with the frontend on, and `<prefix>_lua_meta.lua` (LuaLS annotations).
 The `=n` image is therefore unchanged.

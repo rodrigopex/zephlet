@@ -1,5 +1,6 @@
 /* GENERATED FILE — DO NOT EDIT. Source: {{ prefix }}.proto. */
 
+{% if lua_opt_in %}
 /*
  * Lua frontend bindings for the `{{ type_snake }}` zephlet. Compiled only
  * under CONFIG_ZEPHLETS_LUA.
@@ -93,3 +94,9 @@ const struct zephlet_lua_type {{ type_snake }}_lua_type = {
 	.num_enums = 0U,
 {% endif %}
 };
+{% else %}
+/*
+ * `{{ prefix }}.proto` does not opt in to the Lua frontend, so this
+ * translation unit emits no symbols.
+ */
+{% endif %}

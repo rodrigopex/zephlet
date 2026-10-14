@@ -640,6 +640,7 @@ _LUA_PROTO = """
 syntax = "proto3";
 import "nanopb.proto";
 import "zephlet.proto";
+import "zephlet_options.proto";
 option (nanopb_fileopt).long_names = false;
 
 message Gauge {
@@ -656,6 +657,8 @@ message Gauge {
 }
 
 service GaugeApi {
+  option (zephlet.lua) = true;
+
   rpc start      (Empty)        returns (Lifecycle.Status);
   rpc get_status (Empty)        returns (Lifecycle.Status);
   rpc config     (Gauge.Config) returns (Gauge.Config);
@@ -663,6 +666,9 @@ service GaugeApi {
   rpc put        (Gauge.Config) returns (Empty);
 }
 """
+
+
+_LUA_OPT_IN = "  option (zephlet.lua) = true;\n"
 
 
 def _run_lua_codegen(tmp_path, text=_LUA_PROTO):
@@ -692,6 +698,31 @@ def test_lua_hook_chained_and_gated(tmp_path):
 		in lua_h)
 	assert "ZEPHLET_EVENTS_LISTENER(_name, gauge, _zlet_lua_fwd_##_name)" in lua_h
 	assert "sizeof(struct gauge_events) <= CONFIG_ZEPHLETS_LUA_SLOT_SIZE" in lua_h
+
+
+def test_detect_lua_opt_in(codegen_module):
+	"""Only `option (zephlet.lua) = true;` inside a service exposes the type."""
+	parser = Parser()
+	assert codegen_module.detect_lua_opt_in(parser.parse(_LUA_PROTO)) is True
+	assert codegen_module.detect_lua_opt_in(
+		parser.parse(_LUA_PROTO.replace(_LUA_OPT_IN, ""))) is False
+	assert codegen_module.detect_lua_opt_in(
+		parser.parse(_LUA_PROTO.replace(_LUA_OPT_IN, "  // option (zephlet.lua) = true;\n"))) is False
+
+
+def test_lua_not_opted_in_emits_no_bindings(tmp_path):
+	"""Without the opt-in the hook is empty even under CONFIG_ZEPHLETS_LUA, and
+	the Lua outputs are stubs: no record, listener, trampolines or classes."""
+	out = _run_lua_codegen(tmp_path, _LUA_PROTO.replace(_LUA_OPT_IN, ""))
+	header = (out / "zlet_gauge_interface.h").read_text()
+
+	assert "#define _ZLET_LUA_HOOK_gauge(_name) /* empty */" in header
+	assert "zlet_gauge_lua_interface.h" not in header
+	assert "CONFIG_ZEPHLETS_LUA" not in header
+	assert "_ZLET_LUA_HOOK_gauge" not in (out / "zlet_gauge_lua_interface.h").read_text()
+	source = (out / "zlet_gauge_lua_interface.c").read_text()
+	assert "#include" not in source and "gauge_lua_type" not in source
+	assert "---@class" not in (out / "zlet_gauge_lua_meta.lua").read_text()
 
 
 def test_lua_bindings_call_typed_wrappers(tmp_path):
@@ -776,3 +807,12 @@ def test_lua_name_clash_is_rejected(tmp_path, clash, needle):
 
 	assert result.returncode != 0, result.stdout
 	assert needle in result.stderr, result.stderr
+
+
+def test_lua_names_unchecked_without_opt_in(tmp_path):
+	"""The Lua-only name checks apply only to a type exposed to Lua: an rpc
+	named await is fine in a zephlet that does not opt in."""
+	text = _LUA_PROTO.replace(_LUA_OPT_IN, "").replace(
+		"rpc put        (Gauge.Config) returns (Empty);",
+		"rpc put        (Gauge.Config) returns (Empty);\n  rpc await (Empty) returns (Empty);")
+	_run_lua_codegen(tmp_path, text)

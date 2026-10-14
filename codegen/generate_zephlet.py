@@ -103,6 +103,14 @@ def detect_coap_discoverable_opt_in(tree) -> bool:
     return _detect_service_bool_option(tree, "zephlet.coap_discoverable")
 
 
+def detect_lua_opt_in(tree) -> bool:
+    """
+    Return True iff a service in @p tree declares
+    `option (zephlet.lua) = true;`, exposing the zephlet to the Lua frontend.
+    """
+    return _detect_service_bool_option(tree, "zephlet.lua")
+
+
 _BASE_METHODS_CACHE: list[str] | None = None
 
 
@@ -563,6 +571,7 @@ def parse_proto(proto_path: str) -> dict:
     tree = Parser().parse(content)
     coap_opt_in = detect_coap_opt_in(tree)
     coap_discoverable = detect_coap_discoverable_opt_in(tree)
+    lua_opt_in = detect_lua_opt_in(tree)
 
     if coap_discoverable and not coap_opt_in:
         print(f"{proto_path}: `option (zephlet.coap_discoverable) = true;` "
@@ -714,10 +723,10 @@ def parse_proto(proto_path: str) -> dict:
     commands_base = [c for c in commands if c["name"] in base_set]
     commands_custom = [c for c in commands if c["name"] not in base_set]
 
-    # Lua frontend: which messages carry a text-format descriptor (only those
-    # with at least one field do), so a method row can point at it or say
-    # NULL. Lifecycle.Status is the one shared message that has one; its
-    # descriptor is defined by the infra itself (zephlet_textformat.c).
+    # Lua frontend: which messages carry a text-format descriptor, so a method
+    # row can point at it or say NULL. Every message of this proto does; of
+    # the shared ones only Lifecycle.Status, whose descriptor the infra
+    # defines itself (zephlet_textformat.c).
     tf_messages = collect_tf_messages(tree)
     tf_names = {m["lc"] for m in tf_messages} | {"lifecycle_status"}
     shared_elements = load_shared_elements()
@@ -735,6 +744,21 @@ def parse_proto(proto_path: str) -> dict:
                              getattr(method.input_type, "name", str(method.input_type)))
         output_type = getattr(method.output_type, "type",
                               getattr(method.output_type, "name", str(method.output_type)))
+        # A message without a descriptor reads and builds as {}: right for
+        # Empty, but a message imported from another proto has fields and no
+        # descriptor here, and would lose them.
+        if lua_opt_in:
+            for kind, type_ref, c_name in (("request", input_type, cmd["req_c_name"]),
+                                           ("response", output_type, cmd["resp_c_name"])):
+                entry = (type_index.get(type_ref)
+                         or type_index.get(type_ref.split(".")[-1]))
+                if c_name in tf_names or (entry and not _message_fields(entry[1])):
+                    continue
+                print(f"{proto_path}: rpc '{method.name}': the Lua frontend cannot "
+                      f"convert {kind} type '{type_ref}': it is not declared in "
+                      f"this proto. Declare the message here, or drop lua.",
+                      file=sys.stderr)
+                sys.exit(1)
         cmd["lua_req_tf"] = (f"&{cmd['req_c_name']}_t_tf"
                              if cmd["req_c_name"] in tf_names else "NULL")
         cmd["lua_resp_tf"] = (f"&{cmd['resp_c_name']}_t_tf"
@@ -742,27 +766,29 @@ def parse_proto(proto_path: str) -> dict:
         cmd["lua_req_class"] = lua_class(input_type)
         cmd["lua_resp_class"] = lua_class(output_type)
 
-    reserved_rpcs = sorted(declared & _LUA_RESERVED_INSTANCE_KEYS)
-    if reserved_rpcs:
-        print(f"{proto_path}: rpc '{reserved_rpcs[0]}' collides with the Lua "
-              "frontend's own instance method of that name.", file=sys.stderr)
-        sys.exit(1)
-
     enums = collect_enums(tree)
-    seen = {}
-    for enum in enums:
-        if enum["name"] in seen:
-            print(f"{proto_path}: enums '{seen[enum['name']]}' and "
-                  f"'{enum['qualified']}' share the name '{enum['name']}'; the "
-                  "Lua frontend exposes enums by bare name on each instance.",
-                  file=sys.stderr)
+    # Names the Lua frontend reserves, checked only for a type it exposes.
+    if lua_opt_in:
+        reserved_rpcs = sorted(declared & _LUA_RESERVED_INSTANCE_KEYS)
+        if reserved_rpcs:
+            print(f"{proto_path}: rpc '{reserved_rpcs[0]}' collides with the Lua "
+                  "frontend's own instance method of that name.", file=sys.stderr)
             sys.exit(1)
-        seen[enum["name"]] = enum["qualified"]
-        if enum["name"] in declared or enum["name"] in _LUA_RESERVED_INSTANCE_KEYS:
-            print(f"{proto_path}: enum '{enum['qualified']}' collides with an "
-                  f"rpc or reserved Lua instance field named '{enum['name']}'.",
-                  file=sys.stderr)
-            sys.exit(1)
+
+        seen = {}
+        for enum in enums:
+            if enum["name"] in seen:
+                print(f"{proto_path}: enums '{seen[enum['name']]}' and "
+                      f"'{enum['qualified']}' share the name '{enum['name']}'; the "
+                      "Lua frontend exposes enums by bare name on each instance.",
+                      file=sys.stderr)
+                sys.exit(1)
+            seen[enum["name"]] = enum["qualified"]
+            if enum["name"] in declared or enum["name"] in _LUA_RESERVED_INSTANCE_KEYS:
+                print(f"{proto_path}: enum '{enum['qualified']}' collides with an "
+                      f"rpc or reserved Lua instance field named '{enum['name']}'.",
+                      file=sys.stderr)
+                sys.exit(1)
 
     events_lc = f"{camel_to_snake(owning_type)}_events"
 
@@ -776,6 +802,7 @@ def parse_proto(proto_path: str) -> dict:
         "num_methods_including_reserved": commands[-1]["method_id"] + 1,
         "coap_opt_in": coap_opt_in,
         "coap_discoverable": coap_discoverable,
+        "lua_opt_in": lua_opt_in,
         "tf_messages": tf_messages,
         "enums": enums,
         "lua_events_tf": f"&{events_lc}_t_tf" if events_lc in tf_names else "NULL",
@@ -795,11 +822,14 @@ def render_templates(ctx: dict, prefix: str, template_dir: str,
                                       `CONFIG_ZEPHLETS_COAP=y`, so the empty
                                       stub is a 0-symbol TU for non-opted
                                       types.
-      <prefix>_lua_interface.{h,c}  — Lua frontend bindings. The header is
-                                      included, and the .c compiled, only
-                                      under `CONFIG_ZEPHLETS_LUA=y`.
-      <prefix>_lua_meta.lua         — LuaLS annotations for the type; never
-                                      compiled, collected after the build.
+      <prefix>_lua_interface.{h,c}  — Lua frontend bindings, populated only
+                                      when the proto opts in (empty stubs
+                                      otherwise). The header is included,
+                                      and the .c compiled, only under
+                                      `CONFIG_ZEPHLETS_LUA=y`.
+      <prefix>_lua_meta.lua         — LuaLS annotations for the type, likewise
+                                      opt-in; never compiled, collected
+                                      after the build.
 
     Returns the written paths, in that order.
     """

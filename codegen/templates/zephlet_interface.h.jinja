@@ -118,13 +118,18 @@ PB_TF_DECLARE({{ m.lc }}_t);
 #define _ZLET_SHELL_HOOK_{{ type_snake }}(_name) /* empty: CONFIG_ZEPHLETS_SHELL disabled */
 #endif
 
-/* Like the shell, the Lua frontend has no per-service opt-in: every instance
- * is reachable from Lua whenever CONFIG_ZEPHLETS_LUA is on. */
+{% if lua_opt_in %}
+/* `option (zephlet.lua) = true;`: every instance is reachable from Lua
+ * whenever CONFIG_ZEPHLETS_LUA is on. */
 #if defined(CONFIG_ZEPHLETS_LUA)
 #include "{{ prefix }}_lua_interface.h"
 #else
 #define _ZLET_LUA_HOOK_{{ type_snake }}(_name) /* empty: CONFIG_ZEPHLETS_LUA disabled */
 #endif
+{% else %}
+/* No `option (zephlet.lua) = true;` in {{ prefix }}.proto: not exposed to Lua. */
+#define _ZLET_LUA_HOOK_{{ type_snake }}(_name) /* empty */
+{% endif %}
 
 /* ----- Synchronous command wrappers ------------------------------------ */
 
