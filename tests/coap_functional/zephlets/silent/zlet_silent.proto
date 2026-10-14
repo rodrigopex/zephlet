@@ -2,7 +2,6 @@ syntax = "proto3";
 
 import "nanopb.proto";
 import "zephlet.proto";
-import "zephlet_options.proto";
 
 option (nanopb_fileopt).long_names = false;
 
@@ -18,12 +17,10 @@ message Silent {
 
 service SilentApi {
   /* Exposes RPCs over CoAP but is intentionally NOT discoverable:
-   * `option (zephlet.coap_discoverable)` is absent, so /.well-known/core
+   * zlet_silent.zephlet.options has no coap_discoverable, so /.well-known/core
    * never surfaces a `silent_inst` anchor. The functional test relies on
    * this asymmetry to prove the discoverable opt-in actually gates
    * emission. */
-  option (zephlet.coap) = true;
-
   rpc start(Empty) returns (Lifecycle.Status);
   rpc stop(Empty) returns (Lifecycle.Status);
   rpc get_status(Empty) returns (Lifecycle.Status);

@@ -12,7 +12,7 @@
  * `silent` opts into the CoAP RPC frontend but NOT into discovery, so a
  * `silent_inst` instance is callable yet never advertised in
  * `/.well-known/core`. Used by the discovery functional test to prove
- * the `(zephlet.coap_discoverable)` opt-in gates emission.
+ * the `coap_discoverable` opt-in gates emission.
  *
  * All handlers fall through to the codegen-emitted `__weak` defaults
  * returning -ENOSYS; the test does not exercise SilentApi RPCs directly.

@@ -242,7 +242,7 @@ config ZEPHLETS_SHELL
     help
       Expose every ZLET_SHELL_INSTANCE()'d instance's RPCs under one
       `zlet` shell root command, entirely via compile-time-generated
-      SHELL_STATIC_SUBCMD_SET_CREATE trees. No per-service proto opt-in:
+      SHELL_STATIC_SUBCMD_SET_CREATE trees. No per-service opt-in:
       enabling shell already implies local, privileged console access.
 
       An RPC takes its request as a protobuf text-format message:

@@ -13,8 +13,7 @@
  * @file
  * @brief CoAP frontend hook for the `{{ type_snake }}` zephlet type.
  *
- * Emitted because `{{ prefix }}.proto` declares
- * `option (zephlet.coap) = true;` at service level. Under
+ * Emitted because `{{ prefix }}.zephlet.options` sets `coap:true`. Under
  * `CONFIG_ZEPHLETS_COAP`, this header redefines `_ZLET_COAP_HOOK_{{ type_snake }}`
  * so the aggregator in `{{ prefix }}_interface.h` chains a per-instance
  * `ZEPHLET_EVENTS_LISTENER` for every `ZEPHLET_NEW({{ type_snake }}, ...)` call
@@ -49,9 +48,8 @@ void _{{ type_snake }}_coap_event_cb(const struct zephlet *z,
 #endif /* CONFIG_ZEPHLETS_COAP */
 {% else %}
 /*
- * `{{ prefix }}.proto` does not opt in to the CoAP frontend
- * (`option (zephlet.coap) = true;` is not present in the service block),
- * so this header is intentionally empty. The aggregator in
+ * `{{ prefix }}.zephlet.options` does not set `coap:true`, so this header
+ * is intentionally empty. The aggregator in
  * `{{ prefix }}_interface.h` keeps the default empty
  * `_ZLET_COAP_HOOK_{{ type_snake }}` from the `#ifndef` guard.
  */

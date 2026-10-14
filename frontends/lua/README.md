@@ -1,7 +1,7 @@
 # Lua frontend
 
 `CONFIG_ZEPHLETS_LUA=y` exposes the instances of every zephlet type that opts
-in with `option (zephlet.lua) = true;` to a Lua script as the `zephlets`
+in with `lua:true` in its options file to a Lua script as the `zephlets`
 module. It covers commands, events and enum constants. Zephlet code
 and the core C API stay unchanged. The scheduler is lua_zephyr's
 `zephyr.async`; this frontend adds no scheduler of its own.
@@ -73,15 +73,12 @@ int main(void)
    `zephlet_lua_coordinate(buf, len, chunkname)` also takes source, for
    example a script read from a filesystem, when the parser is kept.
 
-4. Opt each zephlet type the script uses in, in its `.proto`:
+4. Opt each zephlet type the script uses in, in the options file beside its
+   `.proto` (`zlet_tick.proto` → `zlet_tick.zephlet.options`), whose syntax
+   is that of nanopb's `.options` files:
 
-   ```proto
-   import "zephlet_options.proto";
-
-   service TickApi {
-     option (zephlet.lua) = true;
-     ...
-   }
+   ```
+   TickApi lua:true
    ```
 
 No other wiring is needed. For an opted-in type, the per-type hook that

@@ -8,7 +8,7 @@ config ZEPHLET_SILENT
       functional test. `silent` opts into the CoAP RPC frontend but not
       into discovery, so a `silent_inst` instance is callable yet must
       never appear in `/.well-known/core`. The test asserts that
-      asymmetry to prove the `coap_discoverable` proto option gates
+      asymmetry to prove the `coap_discoverable` option gates
       emission.
 
 if ZEPHLET_SILENT

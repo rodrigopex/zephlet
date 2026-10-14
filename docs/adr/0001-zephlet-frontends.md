@@ -37,10 +37,12 @@ Frontends share these invariants:
 - **Envelope-bound.** A frontend never reads zephlet `config`/`data`
   directly; everything goes through the envelope.
 - **Per-frontend opt-in.** A zephlet is exposed over a given frontend only
-  when its `.proto` declares an opt-in option at service level:
-  `option (zephlet.coap) = true;`, `option (zephlet.grpc) = true;`, etc.
-  Default is not-exposed. The option is read by the existing codegen
-  string/regex pre-scan — `protoc` never sees it.
+  when its options file, `<prefix>.zephlet.options` beside the `.proto`,
+  sets that frontend's option: `TickApi coap:true lua:true`. Default is
+  not-exposed. The file has the syntax of nanopb's `.options` files and is
+  read by the codegen only, so the `.proto` stays plain protobuf, portable
+  to any other generator. (The options used to be custom service options
+  in the `.proto`, from a `zephlet_options.proto` it had to import.)
 - **Build-gated.** Each frontend has its own Kconfig (e.g.
   `CONFIG_ZEPHLETS_COAP`, `CONFIG_ZEPHLETS_GRPC`) defaulting to `n`. With a
   frontend disabled, the build's stripped section hash (`.text`, `.rodata`,
@@ -76,7 +78,7 @@ Frontends share these invariants:
   frontend's own plan/ADR.
 - The disabled-build hash gate must be wired into CI as a standing check;
   every frontend phase ends by re-asserting the gate.
-- Adding a new frontend = (a) one Kconfig, (b) one opt-in proto option,
+- Adding a new frontend = (a) one Kconfig, (b) one options-file key,
   (c) one codegen branch, (d) one runtime module — no zephlet rewrite.
 
 ## Addendum: shell's hook is gated by Kconfig alone, no per-service opt-in
@@ -234,8 +236,8 @@ nothing.
 
 The Lua frontend is the first frontend whose consumer runs in the same
 image. A Lua script on lua_zephyr's `zephyr.async` scheduler calls commands
-and handles events. Like CoAP, it has a per-service opt-in,
-`option (zephlet.lua) = true;`: a type without it gets an empty hook and
+and handles events. Like CoAP, it has a per-service opt-in, `lua:true` in
+the options file: a type without it gets an empty hook and
 empty generated files, so a script reaches only the types it is meant to and
 the image carries no bindings for the rest. For an opted-in type the hook is
 gated by `CONFIG_ZEPHLETS_LUA`. Its generated artifacts sit

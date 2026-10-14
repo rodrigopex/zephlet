@@ -96,7 +96,7 @@ const struct zephlet_lua_type {{ type_snake }}_lua_type = {
 };
 {% else %}
 /*
- * `{{ prefix }}.proto` does not opt in to the Lua frontend, so this
+ * `{{ prefix }}.zephlet.options` does not set `lua:true`, so this
  * translation unit emits no symbols.
  */
 {% endif %}

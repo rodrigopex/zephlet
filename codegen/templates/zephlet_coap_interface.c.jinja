@@ -206,8 +206,8 @@ COAP_RESOURCE_DEFINE({{ type_snake }}_coap_resource, zlet_coap_service, {
 	.post = {{ type_snake }}_coap_rpc_post,
 	.get = {{ type_snake }}_coap_get,
 {% if not coap_discoverable %}
-	/* Service has `option (zephlet.coap)` but not
-	 * `option (zephlet.coap_discoverable)`, so the wildcard is hidden
+	/* The options file sets `coap:true` but not
+	 * `coap_discoverable:true`, so the wildcard is hidden
 	 * from `/.well-known/core` enumeration. RPC dispatch still works:
 	 * clients that already know the URI keep calling it. */
 	.user_data = ZEPHLET_COAP_HIDDEN,
@@ -315,7 +315,7 @@ COAP_RESOURCE_DEFINE({{ type_snake }}_coap_instances_resource, zlet_coap_service
 {% endif %}
 {% else %}
 /*
- * `{{ prefix }}.proto` does not opt in to the CoAP frontend, so this
+ * `{{ prefix }}.zephlet.options` does not set `coap:true`, so this
  * translation unit emits no symbols.
  */
 {% endif %}

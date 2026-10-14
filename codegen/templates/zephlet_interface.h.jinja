@@ -93,7 +93,7 @@ extern const struct zephlet_api {{ type_snake }}_api;
 #define _ZLET_COAP_HOOK_{{ type_snake }}(_name) /* empty */
 #endif
 
-/* Shell has no per-service proto opt-in (see ADR-0001's addendum) — its
+/* Shell has no per-service opt-in (see ADR-0001's addendum) — its
  * hook is gated purely by CONFIG_ZEPHLETS_SHELL, not by an included
  * override header, so a plain #if/#else suffices here (no #ifndef
  * fallback needed, unlike CoAP above). */
@@ -119,15 +119,15 @@ PB_TF_DECLARE({{ m.lc }}_t);
 #endif
 
 {% if lua_opt_in %}
-/* `option (zephlet.lua) = true;`: every instance is reachable from Lua
- * whenever CONFIG_ZEPHLETS_LUA is on. */
+/* `lua:true` in {{ prefix }}.zephlet.options: every instance is reachable
+ * from Lua whenever CONFIG_ZEPHLETS_LUA is on. */
 #if defined(CONFIG_ZEPHLETS_LUA)
 #include "{{ prefix }}_lua_interface.h"
 #else
 #define _ZLET_LUA_HOOK_{{ type_snake }}(_name) /* empty: CONFIG_ZEPHLETS_LUA disabled */
 #endif
 {% else %}
-/* No `option (zephlet.lua) = true;` in {{ prefix }}.proto: not exposed to Lua. */
+/* No `lua:true` in {{ prefix }}.zephlet.options: not exposed to Lua. */
 #define _ZLET_LUA_HOOK_{{ type_snake }}(_name) /* empty */
 {% endif %}
 

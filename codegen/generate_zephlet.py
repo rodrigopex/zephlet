@@ -37,6 +37,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import os
 import re
 import sys
@@ -59,56 +60,83 @@ def camel_to_snake(name: str) -> str:
     return re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s).lower()
 
 
-def _detect_service_bool_option(tree, option_name: str) -> bool:
+# Keys of a zephlet's options file. Every one is a boolean, false unless set.
+ZEPHLET_OPTIONS = ("coap", "coap_discoverable", "lua")
+
+
+def options_path_for(proto_path: str) -> str:
+    """The zephlet options file read for @p proto_path: `<prefix>.zephlet.options`
+    beside it. nanopb reads only `<prefix>.options`, so the two never mix."""
+    return re.sub(r"\.proto$", "", proto_path) + ".zephlet.options"
+
+
+def _options_error(path: str, lineno: int, msg: str) -> None:
+    print(f"{path}:{lineno}: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def read_zephlet_options(path: str, service_name: str) -> dict:
     """
-    Return True iff any service in @p tree declares
-    `option (<option_name>) = true;`. Shared backend for the two
-    service-level booleans the codegen consumes.
+    Read the options of the service @p service_name from @p path.
+
+    The syntax is that of nanopb's .options files: `#`, `//` and `/* */`
+    comments, and lines of `<pattern> option:value ...`, where the pattern is
+    an fnmatch() mask matched against the service name and a later line
+    overrides an earlier one:
+
+        TickApi coap:true lua:true
+
+    The options are the ZEPHLET_OPTIONS keys, each `true` or `false`. A line
+    whose pattern matches no service is an error, as is an unknown option. A
+    missing file sets nothing.
     """
-    qualified = f"({option_name})"
-    for elem in tree.file_elements:
-        if elem.__class__.__name__ != "Service":
+    opts = dict.fromkeys(ZEPHLET_OPTIONS, False)
+    if not os.path.exists(path):
+        return opts
+
+    with open(path, "r") as f:
+        data = f.read()
+    # Keep the newlines of a block comment, so line numbers stay right.
+    data = re.sub(r"/\*.*?\*/", lambda m: "\n" * m.group(0).count("\n"), data,
+                  flags=re.DOTALL)
+    data = re.sub(r"(//|#).*?$", "", data, flags=re.MULTILINE)
+
+    for lineno, line in enumerate(data.split("\n"), start=1):
+        line = line.strip()
+        if not line:
             continue
-        for inner in elem.elements:
-            if (inner.__class__.__name__ == "Option"
-                    and inner.name == qualified
-                    and inner.value is True):
-                return True
-    return False
+        parts = line.split(None, 1)
+        if len(parts) < 2:
+            _options_error(path, lineno, f"expected `<service> option:value ...`, "
+                           f"got '{line}'")
+        mask, rest = parts
+        if not fnmatch.fnmatchcase(service_name, mask):
+            _options_error(path, lineno, f"'{mask}' matches no service; this "
+                           f"file's service is {service_name}")
+        for token in re.sub(r"\s*:\s*", ":", rest).split():
+            key, sep, value = token.partition(":")
+            if not sep or key not in ZEPHLET_OPTIONS:
+                _options_error(path, lineno, f"unknown option '{token}'; known: "
+                               + ", ".join(ZEPHLET_OPTIONS))
+            if value not in ("true", "false"):
+                _options_error(path, lineno, f"{key}: expected true or false, "
+                               f"got '{value}'")
+            opts[key] = value == "true"
+
+    return opts
 
 
-def detect_coap_opt_in(tree) -> bool:
-    """
-    Return True iff a service in the parsed proto AST declares
-    `option (zephlet.coap) = true;`.
-
-    `tree` is a `proto_schema_parser.ast.File` (the result of
-    `Parser().parse(text)`). Walking the AST keeps the parser as the
-    single source of truth for proto structure — comments, string
-    literals, and option-shaped text outside a service body are
-    naturally ignored without a second tokenization pass. Multiple
-    services in one file are tolerated; any service-level opt-in
-    flips the whole zephlet on.
-    """
-    return _detect_service_bool_option(tree, "zephlet.coap")
-
-
-def detect_coap_discoverable_opt_in(tree) -> bool:
-    """
-    Return True iff a service in @p tree declares
-    `option (zephlet.coap_discoverable) = true;`. The codegen separately
-    asserts that a discoverable service also opts into CoAP and declares
-    every base lifecycle method.
-    """
-    return _detect_service_bool_option(tree, "zephlet.coap_discoverable")
-
-
-def detect_lua_opt_in(tree) -> bool:
-    """
-    Return True iff a service in @p tree declares
-    `option (zephlet.lua) = true;`, exposing the zephlet to the Lua frontend.
-    """
-    return _detect_service_bool_option(tree, "zephlet.lua")
+def reject_proto_zephlet_options(proto_path: str, service) -> None:
+    """The zephlet options live in `<prefix>.zephlet.options`, not in the proto."""
+    for inner in service.elements:
+        name = getattr(inner, "name", "")
+        if inner.__class__.__name__ == "Option" and name.startswith("(zephlet."):
+            key = name[len("(zephlet."):-1]
+            print(f"{proto_path}: `option {name}` is no longer read from the "
+                  f"proto; set `{service.name} {key}:true` in "
+                  f"{os.path.basename(options_path_for(proto_path))} instead.",
+                  file=sys.stderr)
+            sys.exit(1)
 
 
 _BASE_METHODS_CACHE: list[str] | None = None
@@ -562,22 +590,14 @@ def nanopb_descriptor(c_name: str) -> str:
     return f"{c_name}_t_msg" if c_name else ""
 
 
-def parse_proto(proto_path: str) -> dict:
+def parse_proto(proto_path: str, options_path: str | None = None) -> dict:
     """
-    Parse the .proto and return a flat dict for the Jinja templates.
+    Parse the .proto, and its zephlet options file (by default
+    options_path_for(proto_path)), into a flat dict for the Jinja templates.
     """
     with open(proto_path, "r") as f:
         content = f.read()
     tree = Parser().parse(content)
-    coap_opt_in = detect_coap_opt_in(tree)
-    coap_discoverable = detect_coap_discoverable_opt_in(tree)
-    lua_opt_in = detect_lua_opt_in(tree)
-
-    if coap_discoverable and not coap_opt_in:
-        print(f"{proto_path}: `option (zephlet.coap_discoverable) = true;` "
-              "requires `option (zephlet.coap) = true;` on the same service.",
-              file=sys.stderr)
-        sys.exit(1)
 
     # Locate the outer zephlet message (the one containing Config / Events).
     owning_msg = None
@@ -613,6 +633,19 @@ def parse_proto(proto_path: str) -> dict:
 
     if service is None:
         print(f"{proto_path}: no service block found", file=sys.stderr)
+        sys.exit(1)
+
+    reject_proto_zephlet_options(proto_path, service)
+    if options_path is None:
+        options_path = options_path_for(proto_path)
+    options = read_zephlet_options(options_path, service.name)
+    coap_opt_in = options["coap"]
+    coap_discoverable = options["coap_discoverable"]
+    lua_opt_in = options["lua"]
+
+    if coap_discoverable and not coap_opt_in:
+        print(f"{options_path}: coap_discoverable:true requires coap:true.",
+              file=sys.stderr)
         sys.exit(1)
 
     # Walk service methods, allocate method_id in declaration order starting at 1.
@@ -713,7 +746,7 @@ def parse_proto(proto_path: str) -> dict:
         missing = [n for n in base_method_names if n not in declared]
         if missing:
             print(
-                f"{proto_path}: `option (zephlet.coap_discoverable) = true;` "
+                f"{proto_path}: coap_discoverable:true "
                 f"requires the service to declare every base lifecycle "
                 f"method. Missing: {', '.join(missing)}.",
                 file=sys.stderr)
@@ -816,14 +849,15 @@ def render_templates(ctx: dict, prefix: str, template_dir: str,
     """
     Render the per-zephlet artifacts:
       <prefix>_interface.{h,c}      — always populated (core dispatch).
-      <prefix>_coap_interface.{h,c} — populated only when the proto opts in;
-                                      empty stubs otherwise. CMake compiles
-                                      the .c unconditionally under
+      <prefix>_coap_interface.{h,c} — populated only with `coap:true` in
+                                      <prefix>.zephlet.options; empty stubs
+                                      otherwise. CMake compiles the .c
+                                      unconditionally under
                                       `CONFIG_ZEPHLETS_COAP=y`, so the empty
                                       stub is a 0-symbol TU for non-opted
                                       types.
       <prefix>_lua_interface.{h,c}  — Lua frontend bindings, populated only
-                                      when the proto opts in (empty stubs
+                                      with `lua:true` there (empty stubs
                                       otherwise). The header is included,
                                       and the .c compiled, only under
                                       `CONFIG_ZEPHLETS_LUA=y`.
@@ -871,6 +905,9 @@ def main() -> int:
     p.add_argument("--type", required=True,
                    help="Zephlet type (e.g. 'tick'). Used for symbol names "
                         "(tick_api, lis_tick, tick_<rpc>_impl, ...).")
+    p.add_argument("--options",
+                   help="Zephlet options file (default: the proto's path with "
+                        "`.zephlet.options` for `.proto`). Optional.")
     p.add_argument("--prefix", required=True,
                    help="File-name prefix (e.g. 'zlet_tick'). "
                         "Output: <prefix>_interface.{h,c}.")
@@ -880,7 +917,7 @@ def main() -> int:
         print(f"Proto not found: {args.proto}", file=sys.stderr)
         return 1
 
-    ctx = parse_proto(args.proto)
+    ctx = parse_proto(args.proto, args.options)
 
     # Sanity: --type must agree with the owning message's snake-cased name.
     if ctx["type_snake"] != args.type:

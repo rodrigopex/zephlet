@@ -16,8 +16,5 @@ message Tick {
 }
 
 service TickApi {
-  // option (zephlet.coap) = true;   ← line comment, must NOT count.
-  /* option (zephlet.coap) = true; */ /* block comment, must NOT count. */
-
   rpc start(Empty) returns (Lifecycle.Status);
 }

@@ -19,8 +19,5 @@ message Tick {
  * reject this with a diagnostic naming `stop`, `get_status`, `config`,
  * `get_config`. */
 service TickApi {
-  option (zephlet.coap) = true;
-  option (zephlet.coap_discoverable) = true;
-
   rpc start(Empty) returns (Lifecycle.Status);
 }

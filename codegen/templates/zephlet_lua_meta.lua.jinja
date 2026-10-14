@@ -56,5 +56,5 @@ function _{{ type_snake }}:{{ cmd.name }}({% if not cmd.req_is_empty %}req, {% e
 
 {% endfor %}
 {% else %}
--- `{{ prefix }}.proto` does not opt in to the Lua frontend.
+-- `{{ prefix }}.zephlet.options` does not set `lua:true`.
 {% endif %}

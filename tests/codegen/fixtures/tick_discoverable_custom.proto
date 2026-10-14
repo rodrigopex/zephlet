@@ -19,9 +19,6 @@ message Tick {
 /* Discoverable + has a custom rpc → codegen registers `/apis` and the
  * blob contains the custom only. */
 service TickApi {
-  option (zephlet.coap) = true;
-  option (zephlet.coap_discoverable) = true;
-
   rpc start(Empty) returns (Lifecycle.Status);
   rpc stop(Empty) returns (Lifecycle.Status);
   rpc get_status(Empty) returns (Lifecycle.Status);

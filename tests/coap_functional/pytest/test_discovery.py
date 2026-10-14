@@ -1,7 +1,7 @@
 """Functional cases for the per-type discovery resources.
 
-For every zephlet type whose service declares
-`option (zephlet.coap_discoverable) = true;`, the codegen emits two
+For every zephlet type whose options file sets `coap_discoverable:true`,
+the codegen emits two
 extra CoAP resources next to the existing `/zlet/<type>/#` wildcard:
 
   - `GET /zlet/<type>/instances`  → RFC 6690 link-format listing each
@@ -169,7 +169,7 @@ async def test_silent_has_no_discovery_resources(
 	for path in ("zlet/silent/instances", "zlet/silent/apis"):
 		req = Message(code=GET, uri=f"coap://{host}:{port}/{path}")
 		resp = await aiocoap_client.request(req).response
-		# silent declares (zephlet.coap)=true but NOT discoverable, so
+		# silent sets coap:true but NOT coap_discoverable, so
 		# neither resource was registered. Falls through the wildcard
 		# to the per-type GET stub which surfaces -ENOSYS → 4.05.
 		# (Either 4.04 or 4.05 are valid; assert "client error".)

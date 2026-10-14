@@ -23,12 +23,12 @@ from __future__ import annotations
 
 import importlib.util
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
-from proto_schema_parser.parser import Parser
 
 
 _ZEPHLET_ROOT = Path(__file__).resolve().parents[2]
@@ -58,26 +58,76 @@ def _run_codegen(proto: Path, out_dir: Path, *, type_name: str = "tick",
 		capture_output=True)
 
 
-def _tree(path: Path):
-	"""Parse a proto fixture into a `proto_schema_parser` AST."""
-	return Parser().parse(path.read_text())
+def _options(codegen_module, fixture, service="TickApi"):
+	"""Read a fixture proto's zephlet options file."""
+	return codegen_module.read_zephlet_options(
+		codegen_module.options_path_for(str(_FIXTURES / fixture)), service)
 
 
 def test_detect_opt_in_positive(codegen_module):
-	assert codegen_module.detect_coap_opt_in(
-		_tree(_FIXTURES / "tick_opted.proto")) is True
+	assert _options(codegen_module, "tick_opted.proto")["coap"] is True
 
 
 def test_detect_opt_in_negative(codegen_module):
-	assert codegen_module.detect_coap_opt_in(
-		_tree(_FIXTURES / "tick_no_opt.proto")) is False
+	"""No options file: every option is off."""
+	assert not (_FIXTURES / "tick_no_opt.zephlet.options").exists()
+	assert _options(codegen_module, "tick_no_opt.proto") == {
+		"coap": False, "coap_discoverable": False, "lua": False}
 
 
 def test_detect_opt_in_ignores_comments(codegen_module):
-	"""The AST never surfaces commented-out options, so the opt-in
-	detector inherits that immunity for free."""
-	assert codegen_module.detect_coap_opt_in(
-		_tree(_FIXTURES / "tick_commented_opt.proto")) is False
+	"""`#`, `//` and `/* */` comments, as in nanopb's .options files, and
+	a later line overrides an earlier one."""
+	assert _options(codegen_module, "tick_commented_opt.proto") == {
+		"coap": False, "coap_discoverable": False, "lua": False}
+
+
+def test_options_file_follows_nanopb_syntax(codegen_module, tmp_path):
+	"""fnmatch patterns against the service name, several options per line,
+	`key: value` with a space, later lines win."""
+	path = tmp_path / "x.zephlet.options"
+	path.write_text("* coap:true lua:true\nTick* lua: false\n")
+	assert codegen_module.read_zephlet_options(str(path), "TickApi") == {
+		"coap": True, "coap_discoverable": False, "lua": False}
+
+
+@pytest.mark.parametrize("line, needle", [
+	("UiApi lua:true", "matches no service"),
+	("TickApi rest:true", "unknown option 'rest:true'"),
+	("TickApi lua", "unknown option 'lua'"),
+	("TickApi lua:yes", "expected true or false"),
+	("TickApi", "expected `<service> option:value ...`"),
+])
+def test_options_file_errors(tmp_path, line, needle):
+	"""A line that matches no service, an unknown option or a bad value
+	stops the codegen with the file and line."""
+	proto = tmp_path / "zlet_tick.proto"
+	proto.write_text((_FIXTURES / "tick_no_opt.proto").read_text())
+	(tmp_path / "zlet_tick.zephlet.options").write_text("# first\n" + line + "\n")
+	result = subprocess.run(
+		[sys.executable, str(_CODEGEN), "--proto", str(proto),
+		 "--output-dir", str(tmp_path), "--type", "tick", "--prefix", "zlet_tick"],
+		check=False, capture_output=True, text=True)
+
+	assert result.returncode != 0, result.stdout
+	assert "zlet_tick.zephlet.options:2: " in result.stderr, result.stderr
+	assert needle in result.stderr, result.stderr
+
+
+def test_proto_zephlet_option_is_rejected(tmp_path):
+	"""An `option (zephlet.*)` left in a proto is an error naming the
+	options file line that replaces it."""
+	proto = tmp_path / "zlet_tick.proto"
+	proto.write_text((_FIXTURES / "tick_no_opt.proto").read_text().replace(
+		"service TickApi {", "service TickApi {\n  option (zephlet.lua) = true;"))
+	result = subprocess.run(
+		[sys.executable, str(_CODEGEN), "--proto", str(proto),
+		 "--output-dir", str(tmp_path), "--type", "tick", "--prefix", "zlet_tick"],
+		check=False, capture_output=True, text=True)
+
+	assert result.returncode != 0, result.stdout
+	assert "`TickApi lua:true` in zlet_tick.zephlet.options" in result.stderr, \
+		result.stderr
 
 
 def test_no_opt_in_emits_empty_stubs(tmp_path):
@@ -160,13 +210,13 @@ def test_interface_c_invariant_across_opt_in(tmp_path):
 
 
 def test_detect_discoverable_positive(codegen_module):
-	assert codegen_module.detect_coap_discoverable_opt_in(
-		_tree(_FIXTURES / "tick_discoverable_full.proto")) is True
+	assert _options(codegen_module,
+			"tick_discoverable_full.proto")["coap_discoverable"] is True
 
 
 def test_detect_discoverable_negative(codegen_module):
-	assert codegen_module.detect_coap_discoverable_opt_in(
-		_tree(_FIXTURES / "tick_opted.proto")) is False
+	assert _options(codegen_module,
+			"tick_opted.proto")["coap_discoverable"] is False
 
 
 def test_load_base_method_names(codegen_module):
@@ -418,7 +468,7 @@ service ShapesApi {
 
 def test_shell_methods_invariant_across_coap_opt_in(tmp_path):
 	"""The shell macro table doesn't depend on the CoAP opt-in option —
-	same rows whether or not `option (zephlet.coap) = true;` is set."""
+	same rows whether or not `coap:true` is set."""
 	dir_no = tmp_path / "no"
 	dir_yes = tmp_path / "yes"
 	dir_no.mkdir()
@@ -640,7 +690,6 @@ _LUA_PROTO = """
 syntax = "proto3";
 import "nanopb.proto";
 import "zephlet.proto";
-import "zephlet_options.proto";
 option (nanopb_fileopt).long_names = false;
 
 message Gauge {
@@ -657,8 +706,6 @@ message Gauge {
 }
 
 service GaugeApi {
-  option (zephlet.lua) = true;
-
   rpc start      (Empty)        returns (Lifecycle.Status);
   rpc get_status (Empty)        returns (Lifecycle.Status);
   rpc config     (Gauge.Config) returns (Gauge.Config);
@@ -668,12 +715,20 @@ service GaugeApi {
 """
 
 
-_LUA_OPT_IN = "  option (zephlet.lua) = true;\n"
+_LUA_OPT_IN = "GaugeApi lua:true\n"
 
 
-def _run_lua_codegen(tmp_path, text=_LUA_PROTO):
+def _write_lua_proto(tmp_path, text=_LUA_PROTO, options=_LUA_OPT_IN):
+	"""The gauge proto, and its options file unless @p options is None."""
 	proto = tmp_path / "zlet_gauge.proto"
 	proto.write_text(text)
+	if options is not None:
+		(tmp_path / "zlet_gauge.zephlet.options").write_text(options)
+	return proto
+
+
+def _run_lua_codegen(tmp_path, text=_LUA_PROTO, options=_LUA_OPT_IN):
+	proto = _write_lua_proto(tmp_path, text, options)
 	_run_codegen(proto, tmp_path, type_name="gauge", prefix="zlet_gauge")
 	return tmp_path
 
@@ -700,20 +755,10 @@ def test_lua_hook_chained_and_gated(tmp_path):
 	assert "sizeof(struct gauge_events) <= CONFIG_ZEPHLETS_LUA_SLOT_SIZE" in lua_h
 
 
-def test_detect_lua_opt_in(codegen_module):
-	"""Only `option (zephlet.lua) = true;` inside a service exposes the type."""
-	parser = Parser()
-	assert codegen_module.detect_lua_opt_in(parser.parse(_LUA_PROTO)) is True
-	assert codegen_module.detect_lua_opt_in(
-		parser.parse(_LUA_PROTO.replace(_LUA_OPT_IN, ""))) is False
-	assert codegen_module.detect_lua_opt_in(
-		parser.parse(_LUA_PROTO.replace(_LUA_OPT_IN, "  // option (zephlet.lua) = true;\n"))) is False
-
-
 def test_lua_not_opted_in_emits_no_bindings(tmp_path):
 	"""Without the opt-in the hook is empty even under CONFIG_ZEPHLETS_LUA, and
 	the Lua outputs are stubs: no record, listener, trampolines or classes."""
-	out = _run_lua_codegen(tmp_path, _LUA_PROTO.replace(_LUA_OPT_IN, ""))
+	out = _run_lua_codegen(tmp_path, options=None)
 	header = (out / "zlet_gauge_interface.h").read_text()
 
 	assert "#define _ZLET_LUA_HOOK_gauge(_name) /* empty */" in header
@@ -798,8 +843,7 @@ def test_lua_name_clash_is_rejected(tmp_path, clash, needle):
 	named add_policy or await could not all be reached."""
 	text = _LUA_PROTO.replace("rpc put        (Gauge.Config) returns (Empty);",
 				  "rpc put        (Gauge.Config) returns (Empty);\n  " + clash)
-	proto = tmp_path / "zlet_gauge.proto"
-	proto.write_text(text)
+	proto = _write_lua_proto(tmp_path, text)
 	result = subprocess.run(
 		[sys.executable, str(_CODEGEN), "--proto", str(proto),
 		 "--output-dir", str(tmp_path), "--type", "gauge", "--prefix", "zlet_gauge"],
@@ -812,7 +856,122 @@ def test_lua_name_clash_is_rejected(tmp_path, clash, needle):
 def test_lua_names_unchecked_without_opt_in(tmp_path):
 	"""The Lua-only name checks apply only to a type exposed to Lua: an rpc
 	named await is fine in a zephlet that does not opt in."""
-	text = _LUA_PROTO.replace(_LUA_OPT_IN, "").replace(
+	text = _LUA_PROTO.replace(
 		"rpc put        (Gauge.Config) returns (Empty);",
 		"rpc put        (Gauge.Config) returns (Empty);\n  rpc await (Empty) returns (Empty);")
-	_run_lua_codegen(tmp_path, text)
+	_run_lua_codegen(tmp_path, text, options=None)
+
+
+@pytest.mark.parametrize("rpc, needle", [
+	("rpc ext (other.Thing) returns (Empty);", "request type 'other.Thing'"),
+	("rpc ext (Empty) returns (Thing);", "response type 'Thing'"),
+])
+def test_lua_imported_message_is_rejected(tmp_path, rpc, needle):
+	"""A request or response declared in another proto has no descriptor
+	here, so Lua would read and build it as {}: an error, not lost fields."""
+	text = _LUA_PROTO.replace("rpc put        (Gauge.Config) returns (Empty);",
+				  "rpc put        (Gauge.Config) returns (Empty);\n  " + rpc)
+	proto = _write_lua_proto(tmp_path, text)
+	result = subprocess.run(
+		[sys.executable, str(_CODEGEN), "--proto", str(proto),
+		 "--output-dir", str(tmp_path), "--type", "gauge", "--prefix", "zlet_gauge"],
+		check=False, capture_output=True, text=True)
+
+	assert result.returncode != 0, result.stdout
+	assert needle in result.stderr, result.stderr
+
+
+def test_lua_fieldless_message_is_accepted(tmp_path):
+	"""A field-less message of this proto converts as {}, like Empty."""
+	text = _LUA_PROTO.replace("rpc put        (Gauge.Config) returns (Empty);",
+				  "rpc put        (Gauge.Config) returns (Empty);\n"
+				  "  rpc ping (Gauge) returns (Gauge);")
+	source = (_run_lua_codegen(tmp_path, text) / "zlet_gauge_lua_interface.c").read_text()
+
+	assert '.name = "ping"' in source
+
+
+def test_luals_output_keeps_only_linked_types(tmp_path, monkeypatch):
+	"""The LuaLS step copies the annotations of the types the ELF links and
+	deletes those a removed or renamed zephlet left from earlier builds."""
+	spec = importlib.util.spec_from_file_location(
+		"zephlet_lua_instances",
+		_ZEPHLET_ROOT / "frontends" / "lua" / "scripts" / "zephlet_lua_instances.py")
+	script = importlib.util.module_from_spec(spec)
+	spec.loader.exec_module(script)
+
+	meta = tmp_path / "meta"
+	for prefix, body in (("zlet_tick", "---@class zephlets.tick\n"),
+			     ("zlet_gone", "---@class zephlets.gone\n"),
+			     ("zlet_plain", "-- The zephlet does not set the `lua` option.\n")):
+		(meta / prefix).mkdir(parents=True)
+		(meta / prefix / f"{prefix}_lua_meta.lua").write_text(body)
+	out = tmp_path / "out"
+	out.mkdir()
+	(out / "zlet_old_lua_meta.lua").write_text("---@class zephlets.old\n")
+	base = tmp_path / "zephlets_base.lua"
+	base.write_text("---@meta\n")
+
+	monkeypatch.setattr(script, "instances", lambda elf: [("tick_main", "tick")])
+	monkeypatch.setattr(sys, "argv", ["x", "--elf", "unused", "--meta-dir", str(meta),
+					  "--base", str(base), "--out", str(out)])
+	assert script.main() == 0
+
+	assert sorted(p.name for p in out.iterdir()) == [
+		"zephlets_base.lua", "zephlets_instances.lua", "zlet_tick_lua_meta.lua"]
+	assert "---@field tick_main zephlets.tick" in (out / "zephlets_instances.lua").read_text()
+
+
+_CMAKE_PROJECT = """
+cmake_minimum_required(VERSION 3.20)
+project(zephlet_options_incremental NONE)
+set(ZEPHYR_ZEPHLET_MODULE_DIR "{root}")
+add_custom_target(zephyr_generated_headers)
+foreach(_fn zephyr_include_directories zephyr_library zephyr_library_sources
+            zephyr_library_sources_ifdef)
+  cmake_language(EVAL CODE "function(${{_fn}})\\nendfunction()")
+endforeach()
+include("{root}/codegen/zephyr_zephlet_codegen.cmake")
+zephyr_zephlet_generate(TYPE tick PREFIX zlet_tick)
+"""
+
+
+@pytest.mark.skipif(not (shutil.which("cmake") and shutil.which("ninja")),
+		    reason="needs cmake and ninja")
+def test_options_file_changes_regenerate_incrementally(tmp_path):
+	"""Adding, changing and removing <prefix>.zephlet.options regenerate the
+	outputs without a clean build. Removal used to leave Ninja nothing newer
+	than the outputs, so the frontends it had enabled stayed on."""
+	src = tmp_path / "src"
+	build = tmp_path / "build"
+	src.mkdir()
+	(src / "CMakeLists.txt").write_text(_CMAKE_PROJECT.format(root=_ZEPHLET_ROOT.as_posix()))
+	(src / "zlet_tick.proto").write_text((_FIXTURES / "tick_no_opt.proto").read_text())
+	options = src / "zlet_tick.zephlet.options"
+	gen = build / "modules" / "zlet_tick"
+
+	def build_codegen():
+		subprocess.run(["ninja", "-C", str(build), "zlet_tick_codegen"], check=True,
+			       capture_output=True)
+
+	def exposed():
+		lua = "_lua_type = " in (gen / "zlet_tick_lua_interface.c").read_text()
+		coap = "emits no symbols" not in (gen / "zlet_tick_coap_interface.c").read_text()
+		return coap, lua
+
+	subprocess.run(["cmake", "-G", "Ninja", "-S", str(src), "-B", str(build),
+			f"-DPYTHON_EXECUTABLE={sys.executable}"], check=True, capture_output=True)
+	build_codegen()
+	assert exposed() == (False, False), "no options file"
+
+	options.write_text("TickApi coap:true lua:true\n")
+	build_codegen()
+	assert exposed() == (True, True), "options file added"
+
+	options.write_text("TickApi lua:true\n")
+	build_codegen()
+	assert exposed() == (False, True), "options file changed"
+
+	options.unlink()
+	build_codegen()
+	assert exposed() == (False, False), "options file removed"

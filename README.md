@@ -86,7 +86,34 @@ my_zephlet_start(&my_instance, &st, K_MSEC(500));
 - **Non-singleton**: multiple instances per type coexist; each has its own channel pair and data.
 - **Weak handler overrides**: generator emits `__weak int <type>_<cmd>_impl(...)` returning `-ENOSYS`; user provides strong overrides in `<prefix>.c`.
 - **Coordinators** (optional, `CONFIG_ZEPHLETS_COORD=y`): multi-step flows with workqueue dispatch + bounded zbus-event awaits. Sits above the per-zephlet command/events surface — see [Coordinators](#coordinators) below.
-- **Frontends** (optional): expose the same command surface over a transport, with no change to domain code — each hooks itself in from `ZEPHLET_NEW` via a per-type macro. Shell (`CONFIG_ZEPHLETS_SHELL=y`, see [Shell frontend](#shell-frontend)) and CoAP (`CONFIG_ZEPHLETS_COAP=y`, per-service proto opt-in). Rationale in [ADR-0001](docs/adr/0001-zephlet-frontends.md).
+- **Frontends** (optional): expose the same command surface over a transport, with no change to domain code — each hooks itself in from `ZEPHLET_NEW` via a per-type macro. Shell (`CONFIG_ZEPHLETS_SHELL=y`, see [Shell frontend](#shell-frontend)) and CoAP (`CONFIG_ZEPHLETS_COAP=y`, per-service opt-in, see [Frontend options](#frontend-options)). Rationale in [ADR-0001](docs/adr/0001-zephlet-frontends.md).
+
+## Frontend options
+
+CoAP and Lua expose only the zephlet types that opt in. The opt-ins live in
+an options file beside the proto, `<prefix>.zephlet.options`, never in the
+`.proto` itself, so the proto stays plain protobuf. The syntax is that of
+nanopb's [`.options` files](https://jpa.kapsi.fi/nanopb/docs/reference.html#generator-options):
+`#`, `//` and `/* */` comments, and `<pattern> option:value ...` lines, the
+pattern an `fnmatch()` mask over the service name, a later line overriding
+an earlier one.
+
+```
+# zlet_tick.zephlet.options
+TickApi coap:true lua:true
+```
+
+| Option | Effect |
+|---|---|
+| `coap` | Expose the type over the CoAP frontend. |
+| `coap_discoverable` | Also list its instances in `/.well-known/core`. Needs `coap`, and every `LifecycleApi` method. |
+| `lua` | Expose the type to the Lua frontend. |
+
+Every option is `false` unless set, and a missing file sets none. An unknown
+option, a value other than `true` or `false`, or a line whose pattern
+matches no service stops the build with the file and line. A proto that
+still sets an `option (zephlet.<name>)` is rejected with the line to put in
+the options file instead.
 
 ## Adapters
 
@@ -307,9 +334,9 @@ needs one.
 
 ## Lua frontend
 
-`CONFIG_ZEPHLETS_LUA=y` exposes the instances of each type whose service
-declares `option (zephlet.lua) = true;` to a Lua script as the `zephlets`
-module, through lua_zephyr's `zephyr.async` scheduler. No app wiring beyond
+`CONFIG_ZEPHLETS_LUA=y` exposes the instances of each type whose options
+file sets `lua:true` (see [Frontend options](#frontend-options)) to a Lua
+script as the `zephlets` module, through lua_zephyr's `zephyr.async` scheduler. No app wiring beyond
 `zephlet_lua_coordinate()` in `main()`:
 
 ```lua

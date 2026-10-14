@@ -1,0 +1,7 @@
+# TickApi coap:true      <- hash comment, must NOT count.
+// TickApi coap:true     <- line comment, must NOT count.
+/* TickApi coap:true */  /* block comment, must NOT count. */
+/*
+TickApi lua:true
+*/
+TickApi lua:false

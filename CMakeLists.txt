@@ -23,17 +23,14 @@ if(NOT PKG_CHECK EQUAL 0)
     message(FATAL_ERROR "Missing Python packages. Install: pip install -r ${SHARED_ZEPHLET_DIR}/codegen/requirements.txt")
 endif()
 
-# Always add framework proto files to the list (registered before
-# CONFIG variables are available). zephlet_options.proto declares the
-# `(zephlet.coap)` custom service option referenced by opted-in
-# per-zephlet protos.
+# Always add the framework proto file to the list (registered before
+# CONFIG variables are available).
 set_property(
     GLOBAL
     APPEND
     PROPERTY
     PROTO_FILES_LIST
     "${SHARED_ZEPHLET_DIR}/zephlet.proto"
-    "${SHARED_ZEPHLET_DIR}/zephlet_options.proto"
 )
 
 if(CONFIG_ZEPHLETS)
