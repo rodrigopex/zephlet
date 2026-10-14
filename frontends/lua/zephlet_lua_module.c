@@ -6,8 +6,12 @@
  *   inst:<rpc>([req,] timeout_ms)   command, through the generated typed wrapper
  *   inst:add_policy(fn)             handler for the instance's events; only
  *                                   before the seal
+ *   inst:await([timeout_ms])        next event, from a zephyr.async task
  *   inst.<Enum>.<VALUE>             proto enum constants
+ *   z.await_any(insts[, timeout_ms]) next event of any of @p insts
  *   z.stats(), z.FOREVER
+ *
+ * await and await_any live in the prelude (Lua): they park the task.
  *
  * The module and instance objects are read-only. No table mirrors the instance
  * registry: lookups walk the section, and only the instances a script actually
@@ -298,6 +302,14 @@ static int l_add_policy(lua_State *L)
 
 /* ----- Instances -------------------------------------------------------- */
 
+/* Push the prelude's function @p name. */
+static void push_prelude_fn(lua_State *L, const char *name)
+{
+	lua_rawgetp(L, LUA_REGISTRYINDEX, &zlet_lua_prelude_key);
+	lua_getfield(L, -1, name);
+	lua_remove(L, -2);
+}
+
 /* Upvalue 1: the type's member table (methods and enums). */
 static int l_instance_index(lua_State *L)
 {
@@ -349,10 +361,12 @@ static void push_type_metatable(lua_State *L, const struct zephlet_lua_type *typ
 	lua_remove(L, -2);
 
 	/* Member table, shared by every instance of the type. */
-	lua_createtable(L, 0, 1 + type->num_methods + type->num_enums);
+	lua_createtable(L, 0, 2 + type->num_methods + type->num_enums);
 	lua_pushvalue(L, -2); /* the metatable */
 	lua_pushcclosure(L, l_add_policy, 1);
 	lua_setfield(L, -2, "add_policy");
+	push_prelude_fn(L, "await");
+	lua_setfield(L, -2, "await");
 	for (uint16_t i = 0U; i < type->num_methods; i++) {
 		lua_pushlightuserdata(L, (void *)&type->methods[i]);
 		lua_pushvalue(L, -3); /* the metatable */
@@ -379,6 +393,22 @@ static void push_type_metatable(lua_State *L, const struct zephlet_lua_type *typ
 	lua_setfield(L, -2, "__tostring");
 	lua_pushboolean(L, 0);
 	lua_setfield(L, -2, "__metatable");
+}
+
+struct zephlet_lua_instance *zlet_lua_to_instance(lua_State *L, int idx)
+{
+	struct instance_ud *self = lua_touserdata(L, idx);
+	bool ok = false;
+
+	if ((self != NULL) && lua_getmetatable(L, idx)) {
+		if (lua_getfield(L, -1, "__name") == LUA_TSTRING) {
+			ok = strncmp(lua_tostring(L, -1), INSTANCE_MT_PREFIX,
+				     sizeof(INSTANCE_MT_PREFIX) - 1U) == 0;
+		}
+		lua_pop(L, 2);
+	}
+
+	return ok ? self->inst : NULL;
 }
 
 void zlet_lua_push_instance(lua_State *L, struct zephlet_lua_instance *inst)
@@ -421,7 +451,7 @@ static int l_stats(lua_State *L)
 		struct zephlet_lua_instance *inst = zlet_lua_instance_get(i);
 		const struct zephlet_lua_stats *s = &inst->stats;
 
-		lua_createtable(L, 0, 6);
+		lua_createtable(L, 0, 7);
 		lua_pushinteger(L, (lua_Integer)atomic_get(&s->seq));
 		lua_setfield(L, -2, "emitted");
 		lua_pushinteger(L, (lua_Integer)atomic_get(&s->delivered));
@@ -434,6 +464,8 @@ static int l_stats(lua_State *L)
 		lua_setfield(L, -2, "doorbell_fail");
 		lua_pushinteger(L, (lua_Integer)atomic_get(&s->handler_err));
 		lua_setfield(L, -2, "handler_err");
+		lua_pushinteger(L, (lua_Integer)atomic_get(&s->await_drop));
+		lua_setfield(L, -2, "await_drop");
 		lua_setfield(L, -2, inst->z->name);
 	}
 
@@ -455,6 +487,17 @@ static int l_module_index(lua_State *L)
 		lua_pushinteger(L, ZEPHLET_LUA_FOREVER);
 		return 1;
 	}
+	if (strcmp(key, "await_any") == 0) {
+		push_prelude_fn(L, "await_any");
+		return 1;
+	}
+
+	/* An instance already named once is cached: skip the section walk. */
+	lua_rawgetp(L, LUA_REGISTRYINDEX, &cache_key);
+	if (lua_getfield(L, -1, key) != LUA_TNIL) {
+		return 1;
+	}
+	lua_pop(L, 2);
 
 	STRUCT_SECTION_FOREACH(zephlet_lua_instance, inst) {
 		if (strcmp(inst->z->name, key) == 0) {
@@ -505,7 +548,8 @@ void zlet_lua_seal(lua_State *L)
 	lua_rawgetp(L, LUA_REGISTRYINDEX, &handlers_key);
 	for (size_t i = 0U; i < n; i++) {
 		if (lua_rawgeti(L, -1, (lua_Integer)i + 1) == LUA_TTABLE) {
-			(void)atomic_or(&zlet_lua_instance_get(i)->flags, ZEPHLET_LUA_F_CONNECTED);
+			(void)atomic_or(&zlet_lua_instance_get(i)->flags,
+					ZEPHLET_LUA_F_CONNECTED | ZEPHLET_LUA_F_POLICY);
 		}
 		lua_pop(L, 1);
 	}

@@ -30,6 +30,14 @@ local _{{ type_snake }} = {}
 ---@param policy fun(ev: {{ lua_events_class }}, meta: zephlets.EventMeta)
 function _{{ type_snake }}:add_policy(policy) end
 
+---Wait for this instance's next event, parking the calling zephyr.async task.
+---The task's first await on the instance starts its queue: events from then
+---on are kept until taken, up to CONFIG_ZEPHLETS_LUA_AWAIT_DEPTH.
+---@param timeout_ms? integer nil or zephlets.FOREVER = wait forever, 0 = no wait
+---@return {{ lua_events_class }}|nil ev
+---@return zephlets.EventMeta|"timeout" meta
+function _{{ type_snake }}:await(timeout_ms) end
+
 {% for cmd in commands %}
 {% if not cmd.req_is_empty %}
 ---@param req {{ cmd.lua_req_class }}

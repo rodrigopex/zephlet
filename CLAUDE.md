@@ -207,7 +207,10 @@ Single script `codegen/generate_zephlet.py` parses the `.proto` service block, c
   call, since lua_zephyr is processed after this module) and calls
   `zephlet_lua_coordinate(ZEPHLET_LUA_SCRIPT(app))` from `main()`; the
   main chunk adds policies (`inst:add_policy(fn)`), the seal freezes them,
-  then the `zephyr.async` loop runs the pump + dispatcher tasks. Tests: `tests/lua_functional`
+  then the `zephyr.async` loop runs the pump + dispatcher tasks. The script's
+  own tasks wait with `inst:await()` / `z.await_any()` (per-task queues,
+  `ZEPHLETS_LUA_AWAIT_DEPTH`), implemented in the prelude on the same doorbell;
+  lua_zephyr itself is never patched. Tests: `tests/lua_functional`
   (console harness, native_sim).
 
 ## Naming

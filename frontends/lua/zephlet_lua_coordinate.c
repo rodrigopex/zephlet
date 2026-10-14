@@ -3,11 +3,13 @@
  *
  * Order, all on the calling thread:
  *   1. Lua state on the frontend's own heap; `zephlets` in package preload.
- *   2. The script's main chunk, synchronously: it adds policies and may call
+ *   2. The prelude, which defines the internal tasks and `await`.
+ *   3. The script's main chunk, synchronously: it adds policies and may call
  *      commands. zephyr.async is not available yet.
- *   3. Seal: policies freeze, and only instances with one keep staging.
- *   4. zephyr.async loop with the pump and dispatcher tasks, plus the function
- *      the chunk returned, if any.
+ *   4. Seal: policies freeze. An instance with none stops staging until a
+ *      task awaits it.
+ *   5. zephyr.async loop with the pump and dispatcher tasks, plus the function
+ *      the chunk returned, if any. Its tasks may await instances' events.
  *
  * Zephlet instances are initialised before any of this, by the zephlet
  * SYS_INIT walker, and their events are staged from boot.
@@ -36,12 +38,13 @@ LOG_MODULE_REGISTER(zlet_lua, CONFIG_ZEPHLET_LOG_LEVEL);
 BUILD_ASSERT(CONFIG_LUA_ASYNC_MAX_TASKS >= 3,
 	     "the Lua frontend needs 2 scheduler tasks, plus 1 for the script's async main");
 
-static uint8_t heap_mem[CONFIG_ZEPHLETS_LUA_HEAP_SIZE] __aligned(8);
-static struct sys_heap heap;
+K_HEAP_DEFINE(heap, CONFIG_ZEPHLETS_LUA_HEAP_SIZE);
 
 ZBUS_MSG_SUBSCRIBER_DEFINE(zlet_lua_sub);
 
 static atomic_t started;
+
+const char zlet_lua_prelude_key;
 
 static int traceback(lua_State *L)
 {
@@ -50,6 +53,28 @@ static int traceback(lua_State *L)
 	luaL_traceback(L, L, (msg != NULL) ? msg : "(error object is not a string)", 1);
 
 	return 1;
+}
+
+/* Run the prelude, and keep the table it returns for the module and run(). */
+static int load_prelude(lua_State *L, int tb)
+{
+	int rc;
+
+	rc = luaL_loadbufferx(L, (const char *)zephlet_lua_prelude_lua_bytecode,
+			      zephlet_lua_prelude_lua_bytecode_len, "=zephlets", "b");
+	if (rc != LUA_OK) {
+		LOG_ERR("prelude: %s", lua_tostring(L, -1));
+		return (rc == LUA_ERRMEM) ? -ENOMEM : -EFAULT;
+	}
+	zlet_lua_push_core(L);
+	rc = lua_pcall(L, 1, 1, tb);
+	if (rc != LUA_OK) {
+		LOG_ERR("prelude: %s", lua_tostring(L, -1));
+		return (rc == LUA_ERRMEM) ? -ENOMEM : -EFAULT;
+	}
+	lua_rawsetp(L, LUA_REGISTRYINDEX, &zlet_lua_prelude_key);
+
+	return 0;
 }
 
 static int run(lua_State *L, const char *buf, size_t len, const char *chunkname)
@@ -61,9 +86,15 @@ static int run(lua_State *L, const char *buf, size_t len, const char *chunkname)
 	lua_pushcfunction(L, traceback);
 	tb = lua_gettop(L);
 
-	if (luaL_loadbufferx(L, buf, len, chunkname, NULL) != LUA_OK) {
+	rc = load_prelude(L, tb);
+	if (rc != 0) {
+		return rc;
+	}
+
+	rc = luaL_loadbufferx(L, buf, len, chunkname, NULL);
+	if (rc != LUA_OK) {
 		LOG_ERR("%s", lua_tostring(L, -1));
-		return -ENOEXEC;
+		return (rc == LUA_ERRMEM) ? -ENOMEM : -ENOEXEC;
 	}
 	rc = lua_pcall(L, 0, 1, tb);
 	if (rc != LUA_OK) {
@@ -81,16 +112,10 @@ static int run(lua_State *L, const char *buf, size_t len, const char *chunkname)
 
 	zlet_lua_seal(L);
 
-	if (luaL_loadbufferx(L, (const char *)zephlet_lua_prelude_lua_bytecode,
-			     zephlet_lua_prelude_lua_bytecode_len, "=zephlets", "b") != LUA_OK) {
-		LOG_ERR("prelude: %s", lua_tostring(L, -1));
-		return -EFAULT;
-	}
-	zlet_lua_push_core(L);
-	if (lua_pcall(L, 1, 2, tb) != LUA_OK) {
-		LOG_ERR("prelude: %s", lua_tostring(L, -1));
-		return -EFAULT;
-	}
+	lua_rawgetp(L, LUA_REGISTRYINDEX, &zlet_lua_prelude_key);
+	lua_getfield(L, -1, "pump");
+	lua_getfield(L, -2, "dispatch");
+	lua_remove(L, -3);
 	/* [tb, main?, pump, dispatch]: the script's task, if any, goes last. */
 	if (ntasks == 3) {
 		lua_rotate(L, tb + 1, -1);
@@ -137,9 +162,10 @@ int zephlet_lua_coordinate(const char *buf, size_t len, const char *chunkname)
 	}
 	zlet_lua_owner = k_current_get();
 
-	sys_heap_init(&heap, heap_mem, sizeof(heap_mem));
-	L = lua_newstate(lua_zephyr_allocator, &heap, 0U);
+	L = lua_newstate(lua_zephyr_allocator, &heap.heap, 0U);
 	if (L == NULL) {
+		/* As on every other way out: nothing will empty staging. */
+		zlet_lua_shutdown();
 		return -ENOMEM;
 	}
 	luaz_openlibs(L);

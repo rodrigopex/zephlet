@@ -14,6 +14,9 @@
  * z.tick_fast:add_policy(function(ev, meta) z.ui_main:blink(100) end)
  * @endcode
  *
+ * The script's zephyr.async tasks can instead wait for events in sequence,
+ * with `inst:await()` and `zephlets.await_any()`.
+ *
  * Nothing here needs Lua headers: generated code and application code include
  * this file to declare instances and start the frontend, nothing more.
  */
@@ -83,6 +86,8 @@ struct zephlet_lua_stats {
 	atomic_t handler_err;
 	/** Events handed to the handlers. */
 	atomic_t delivered;
+	/** Events dropped because an awaiting task's queue was full. */
+	atomic_t await_drop;
 };
 
 /**
@@ -98,12 +103,18 @@ struct zephlet_lua_instance {
 	/** ZEPHLET_LUA_F_* */
 	atomic_t flags;
 	struct zephlet_lua_stats stats;
-	/** `seq` of the last event handed to Lua; `meta.dropped` is the gap. */
+	/** `seq` of the last event handed to a policy; `meta.dropped` is the gap. */
 	uint32_t last_seq;
 };
 
-/** Set at seal on an instance with at least one handler. */
+/** The instance's events are staged: it has a policy or an awaiting task. */
 #define ZEPHLET_LUA_F_CONNECTED BIT(0)
+
+/** Set at seal on an instance with at least one policy. */
+#define ZEPHLET_LUA_F_POLICY BIT(1)
+
+/** Set by the first `inst:await()` or `zephlets.await_any()` on the instance. */
+#define ZEPHLET_LUA_F_AWAITED BIT(2)
 
 /** `timeout_ms` value meaning K_FOREVER, also exported to Lua as `z.FOREVER`. */
 #define ZEPHLET_LUA_FOREVER (-1)

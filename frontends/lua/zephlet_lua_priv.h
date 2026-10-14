@@ -52,6 +52,9 @@ void zlet_lua_seal(lua_State *L);
 /** Push the (cached) Lua object of @p inst. */
 void zlet_lua_push_instance(lua_State *L, struct zephlet_lua_instance *inst);
 
+/** The instance behind the Lua object at @p idx, or NULL if it is not one. */
+struct zephlet_lua_instance *zlet_lua_to_instance(lua_State *L, int idx);
+
 /** Push the handler list of the instance at @p idx, or nil when it has none. */
 void zlet_lua_push_handlers(lua_State *L, size_t idx);
 
@@ -59,5 +62,14 @@ void zlet_lua_push_handlers(lua_State *L, size_t idx);
 
 /** Push the table of internal functions the prelude's tasks call. */
 void zlet_lua_push_core(lua_State *L);
+
+/* zephlet_lua_coordinate.c */
+
+/**
+ * Registry key of the table the prelude returned: its tasks, `pump` and
+ * `dispatch`, and the Lua functions behind `inst:await()` and
+ * `zephlets.await_any()`.
+ */
+extern const char zlet_lua_prelude_key;
 
 #endif /* ZEPHLET_LUA_PRIV_H_ */

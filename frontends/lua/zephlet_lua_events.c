@@ -3,15 +3,18 @@
  *
  *   zephlet emit -> forwarding listener (system workqueue)
  *                -> C staging slot + doorbell on `zlet_lua_bell`
- *                -> pump/dispatcher tasks (Lua thread) drain into the Lua-heap FIFO
- *                -> dispatcher pops and runs the handlers
+ *                -> any task on the Lua thread drains staging:
+ *                     policies:       into the Lua-heap FIFO, which the
+ *                                     dispatcher pops to run them
+ *                     awaiting tasks: into each one's queue, through the
+ *                                     prelude's router
  *
  * The listener only copies into a fixed slot: nothing on the workqueue touches
  * the Lua state, whose allocator and VM are not thread-safe. The doorbell is
  * the one channel the zephyr.async scheduler watches for us; it carries no
  * data, only "staging is not empty", so a lost or coalesced doorbell loses no
- * event. Both tasks drain, so staging keeps emptying while the dispatcher is
- * parked inside a handler.
+ * event. Every task that waits for events drains, so staging keeps emptying
+ * while the dispatcher is parked inside a handler.
  */
 
 #include <errno.h>
@@ -187,41 +190,80 @@ static int l_convert(lua_State *L)
 	return 1;
 }
 
-/* core.drain(): move every staged event into the FIFO. */
+/* Convert drain_slot to a table; under a protected call, since it allocates. */
+static bool convert(lua_State *L, struct zephlet_lua_instance *inst)
+{
+	lua_pushcfunction(L, l_convert);
+	lua_pushlightuserdata(L, inst);
+	if (lua_pcall(L, 1, 1, 0) != LUA_OK) {
+		LOG_ERR("%s: event conversion failed: %s", inst->z->name, lua_tostring(L, -1));
+		lua_pop(L, 1);
+		return false;
+	}
+
+	return true;
+}
+
+/*
+ * core.drain([route]): move every staged event to its consumers. Events of an
+ * instance with policies go into the FIFO; those of an awaited instance go to
+ * route(idx, ev, seq), which queues them for the awaiting tasks. Both share
+ * one table.
+ */
 static int l_drain(lua_State *L)
 {
+	bool routed = lua_isfunction(L, 1);
+
 	zlet_lua_check_owner(L);
 	atomic_clear(&bell_pending);
 
 	lua_rawgetp(L, LUA_REGISTRYINDEX, &fifo_key);
 	while (staging_take(&drain_slot)) {
 		struct zephlet_lua_instance *inst = zlet_lua_instance_get(drain_slot.idx);
-		size_t tail;
+		atomic_val_t flags = atomic_get(&inst->flags);
+		bool to_fifo = (flags & ZEPHLET_LUA_F_POLICY) != 0;
+		bool to_route = routed && ((flags & ZEPHLET_LUA_F_AWAITED) != 0);
 
-		if ((atomic_get(&inst->flags) & ZEPHLET_LUA_F_CONNECTED) == 0) {
-			/* Staged before the seal by a source nothing listens to. */
-			continue;
-		}
-		if (fifo_len == ARRAY_SIZE(fifo_src)) {
+		if (to_fifo && (fifo_len == ARRAY_SIZE(fifo_src))) {
 			count_drop(inst, &inst->stats.fifo_drop, "fifo full");
+			to_fifo = false;
+		}
+		/* Also a source nothing listens to, staged before the seal: purged. */
+		if (!to_fifo && !to_route) {
+			continue;
+		}
+		if (!convert(L, inst)) {
+			if (to_fifo) {
+				count_drop(inst, &inst->stats.fifo_drop, "out of memory");
+			}
+			if (to_route) {
+				count_drop(inst, &inst->stats.await_drop, "out of memory");
+			}
 			continue;
 		}
 
-		lua_pushcfunction(L, l_convert);
-		lua_pushlightuserdata(L, inst);
-		if (lua_pcall(L, 1, 1, 0) != LUA_OK) {
-			LOG_ERR("%s: event conversion failed: %s", inst->z->name,
-				lua_tostring(L, -1));
+		if (to_route) {
+			lua_pushvalue(L, 1);
+			lua_pushinteger(L, (lua_Integer)drain_slot.idx);
+			lua_pushvalue(L, -3);
+			lua_pushinteger(L, (lua_Integer)drain_slot.seq);
+			if (lua_pcall(L, 3, 0, 0) != LUA_OK) {
+				LOG_ERR("%s: event lost: %s", inst->z->name, lua_tostring(L, -1));
+				lua_pop(L, 1);
+				count_drop(inst, &inst->stats.await_drop, "out of memory");
+			}
+		}
+
+		if (to_fifo) {
+			size_t tail = (fifo_head + fifo_len) % ARRAY_SIZE(fifo_src);
+
+			lua_rawseti(L, -2, (lua_Integer)tail + 1);
+			fifo_src[tail] = drain_slot.idx;
+			fifo_seq[tail] = drain_slot.seq;
+			fifo_len++;
+		} else {
 			lua_pop(L, 1);
-			count_drop(inst, &inst->stats.fifo_drop, "out of memory");
-			continue;
 		}
-
-		tail = (fifo_head + fifo_len) % ARRAY_SIZE(fifo_src);
-		lua_rawseti(L, -2, (lua_Integer)tail + 1);
-		fifo_src[tail] = drain_slot.idx;
-		fifo_seq[tail] = drain_slot.seq;
-		fifo_len++;
 	}
 	lua_pop(L, 1);
 
@@ -321,18 +363,103 @@ static int l_bell(lua_State *L)
 	return 1;
 }
 
+/* core.index(v) -> idx; or nil, "instance" / "sealed" when @p v cannot be awaited. */
+static int l_index(lua_State *L)
+{
+	struct zephlet_lua_instance *inst = zlet_lua_to_instance(L, 1);
+
+	lua_pushnil(L);
+	if (inst == NULL) {
+		lua_pushliteral(L, "instance");
+		return 2;
+	}
+	if (atomic_get(&zlet_lua_sealed) == 0) {
+		lua_pushliteral(L, "sealed");
+		return 2;
+	}
+	lua_pushinteger(L, (lua_Integer)zlet_lua_instance_index(inst));
+
+	return 1;
+}
+
+/*
+ * core.subscribe(idx) -> name, seq: stage the events of the instance at @p idx
+ * for awaiting tasks from now on. seq is its last event number so far.
+ */
+static int l_subscribe(lua_State *L)
+{
+	struct zephlet_lua_instance *inst = zlet_lua_instance_get((size_t)luaL_checkinteger(L, 1));
+
+	zlet_lua_check_owner(L);
+	(void)atomic_or(&inst->flags, ZEPHLET_LUA_F_CONNECTED | ZEPHLET_LUA_F_AWAITED);
+	lua_pushstring(L, inst->z->name);
+	lua_pushinteger(L, (lua_Integer)(uint32_t)atomic_get(&inst->stats.seq));
+
+	return 2;
+}
+
+/* core.await_drop(idx): an awaiting task's queue was full. */
+static int l_await_drop(lua_State *L)
+{
+	struct zephlet_lua_instance *inst = zlet_lua_instance_get((size_t)luaL_checkinteger(L, 1));
+
+	count_drop(inst, &inst->stats.await_drop, "await queue full");
+
+	return 0;
+}
+
+/* core.gap(seq, last) -> events lost between two event numbers. */
+static int l_gap(lua_State *L)
+{
+	int32_t gap = (int32_t)((uint32_t)luaL_checkinteger(L, 1) -
+				(uint32_t)luaL_checkinteger(L, 2) - 1U);
+
+	lua_pushinteger(L, (gap > 0) ? gap : 0);
+
+	return 1;
+}
+
+/* core.now() -> uptime in ms. */
+static int l_now(lua_State *L)
+{
+	lua_pushinteger(L, (lua_Integer)k_uptime_get());
+
+	return 1;
+}
+
+/* core.self(): the running task's thread, which keys its queues. */
+static int l_self(lua_State *L)
+{
+	lua_pushthread(L);
+
+	return 1;
+}
+
 void zlet_lua_push_core(lua_State *L)
 {
 	static const luaL_Reg funcs[] = {
-		{"drain", l_drain}, {"pop", l_pop},
-		{"lost", l_lost},   {"handler_error", l_handler_error},
-		{"bell", l_bell},   {NULL, NULL},
+		{"drain", l_drain},
+		{"pop", l_pop},
+		{"lost", l_lost},
+		{"handler_error", l_handler_error},
+		{"bell", l_bell},
+		{"index", l_index},
+		{"subscribe", l_subscribe},
+		{"await_drop", l_await_drop},
+		{"gap", l_gap},
+		{"now", l_now},
+		{"self", l_self},
+		{NULL, NULL},
 	};
 
 	lua_createtable(L, (int)ARRAY_SIZE(fifo_src), 0);
 	lua_rawsetp(L, LUA_REGISTRYINDEX, &fifo_key);
 
 	luaL_newlib(L, funcs);
+	lua_pushinteger(L, CONFIG_ZEPHLETS_LUA_AWAIT_DEPTH);
+	lua_setfield(L, -2, "AWAIT_DEPTH");
+	lua_pushinteger(L, ZEPHLET_LUA_FOREVER);
+	lua_setfield(L, -2, "FOREVER");
 	if (CONFIG_ZEPHLETS_LUA_POLL_MS > 0) {
 		lua_pushinteger(L, CONFIG_ZEPHLETS_LUA_POLL_MS);
 		lua_setfield(L, -2, "POLL_MS");

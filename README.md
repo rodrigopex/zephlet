@@ -317,9 +317,10 @@ z.tick_fast:add_policy(function(ev, meta) z.ui_main:blink(100) end)
 ```
 
 Commands take a required `timeout_ms` and return `resp` or
-`nil, "<ERRNO>", rc`. Connections are fixed once the script's main chunk
-returns. Every handler runs in one persistent coroutine, and no Lua runs in
-listener context. Full guide (event transport, limits, LuaLS):
+`nil, "<ERRNO>", rc`. Policies are fixed once the script's main chunk
+returns, and all of them run in one persistent coroutine. The script's own
+`zephyr.async` tasks can also wait for events with `inst:await()` and
+`z.await_any()`. No Lua runs in listener context. Full guide (event transport, limits, LuaLS):
 [`frontends/lua/README.md`](frontends/lua/README.md).
 
 ## West commands

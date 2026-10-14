@@ -45,6 +45,16 @@ tests:
       type: one_line
       regex:
         - "lua suite overflow: \\d+ passed, 0 failed"
+  zephlet.lua_functional.await:
+    # Tasks waiting for events with inst:await() and await_any(), beside a
+    # policy; per-task queues and their limit.
+    extra_configs:
+      - CONFIG_TEST_LUA_SUITE="await"
+      - CONFIG_ZEPHLETS_LUA_AWAIT_DEPTH=4
+    harness_config:
+      type: one_line
+      regex:
+        - "lua suite await: \\d+ passed, 0 failed"
   zephlet.lua_functional.bad_chunk:
     # A main chunk that raises: zephlet_lua_coordinate() returns -EINVAL.
     extra_configs:

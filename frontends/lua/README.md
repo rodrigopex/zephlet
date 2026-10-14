@@ -81,6 +81,8 @@ name in an iterable section; the application declares no list of them.
 | `inst:<rpc>(timeout_ms)` | A command whose request is `Empty`. |
 | `inst:<rpc>(req, timeout_ms)` | A command with a request table. |
 | `inst:add_policy(fn)` | Adds a policy: `fn(ev, meta)` runs for every event of `inst`. |
+| `inst:await([timeout_ms])` | From a `zephyr.async` task: the next event of `inst`, as `ev, meta`. |
+| `z.await_any(insts[, timeout_ms])` | From a task: the next event of any instance in the array `insts`. |
 | `inst.<Enum>.<VALUE>` | Proto enum constants, read-only. Proto names are kept verbatim. |
 | `z.FOREVER` | `-1`, the `timeout_ms` that means `K_FOREVER`. |
 | `z.stats()` | Per-instance counters, keyed by instance name. |
@@ -171,10 +173,76 @@ end)
   instance's `handler_err` counter goes up. The remaining policies, and later
   events, still run.
 - **Events emitted before the seal**, for example during boot or from the
-  main chunk itself, are kept in staging, as far as its depth allows. After
-  the seal they go to the instances that have policies. Staged events from
-  instances with none are discarded without being counted as drops.
+  main chunk itself, are kept in staging, as far as its depth allows. Nothing
+  empties staging before the seal, so when it is full the oldest event makes
+  room for the new one, and the events the main chunk's commands cause are not
+  crowded out by earlier ones from sources nobody uses. After the seal they go
+  to the instances that have policies. Staged or overwritten events from
+  instances with none are discarded without being counted as drops; an
+  overwritten one of an instance with a policy counts as `staged_drop`.
   After the seal, those instances' events are filtered out in the listener.
+
+### Waiting for events in a task
+
+A policy reacts to each event on its own. To write a coordinator as
+sequential code instead, wait for events from a `zephyr.async` task:
+
+```lua
+return function()
+    local async = require("zephyr.async")
+
+    async.spawn(function()
+        while true do
+            local ev, meta = tick:await()            -- parks this task only
+            if meta.dropped > 0 then print("lost", meta.dropped) end
+            ui:blink(100)
+        end
+    end)
+
+    async.spawn(function()
+        while true do
+            local ev, meta = z.await_any({tick, tampering}, 5000)
+            if ev == nil then
+                print("quiet for 5 s")               -- meta == "timeout"
+            elseif meta.source == tampering then
+                ui:blink(100)
+            end
+        end
+    end)
+end
+```
+
+- **`inst:await([timeout_ms])`** returns the next event of `inst` as
+  `ev, meta`, the same values a policy gets, or `nil, "timeout"`. `nil` or
+  `z.FOREVER` waits forever, and `0` does not wait. It parks the calling task,
+  as `chan:await` does, never the thread.
+- **`z.await_any(insts[, timeout_ms])`** waits on several instances at once,
+  like `observer:wait_msg`, and returns their events oldest first.
+  `meta.source` and `meta.name` say which instance sent each one.
+- **Each task has its own queue per instance**, created by its first await on
+  that instance. From then on every event of the instance is kept until the
+  task takes it, including while the task does something else, up to
+  `ZEPHLETS_LUA_AWAIT_DEPTH`. When the queue is full the newest event is
+  dropped, counted as `await_drop`, and reported to the task as
+  `meta.dropped`. Events from before the first await are not delivered.
+- **Several tasks may await one instance**, and an instance may have policies
+  too. Every consumer gets every event. They share the event table, so treat
+  it as read-only.
+- **Only from a task, after the seal.** Awaiting in the main chunk raises an
+  error. Inside a `coroutine.wrap()`/`resume()` it raises as soon as it would
+  park, as `zephyr.async` does for its own waits.
+- An instance with no policy costs nothing until a task first awaits it. From
+  then on its events are staged while a task that has awaited it is alive.
+  Once every such task has finished, its next event stops the staging again,
+  until a task awaits the instance anew. The queues themselves are freed by
+  the garbage collector.
+- `await` is a member of every instance, so codegen rejects an rpc or enum of
+  that name, as it does for `add_policy`.
+
+Policies and awaiting tasks complement each other. Policies share the one
+dispatcher task, so a hundred of them still cost no task slot; use them for
+independent reactions. Use await for logic that waits for one event and then
+another, or that combines several sources.
 
 ### The main chunk and the async main
 
@@ -214,7 +282,8 @@ zephlet emit ─► chan_<inst>_events
                                                                              │
                 ┌───────────────── zephyr.async loop, owner thread ──────────┘
                 ▼
-     pump task ── drain ──► Lua-heap FIFO ──► dispatcher task ──► policy(ev, meta)
+     pump task ── drain ─┬─► Lua-heap FIFO ──► dispatcher task ──► policy(ev, meta)
+   (or any waiter)       └─► per-task queues ──► task in inst:await() / z.await_any()
 ```
 
 - **No Lua runs in zbus listener context.** The forwarding listener, emitted
@@ -227,11 +296,17 @@ zephlet emit ─► chan_<inst>_events
   `chan:await` requires; zephlet channels carry a `struct zephlet *` there and
   cannot be awaited directly. A burst rings it once. A lost or coalesced
   doorbell loses no event, because each wakeup drains everything staged.
-- **Two internal tasks.** Both the pump and the dispatcher drain staging into
-  the Lua-heap FIFO, converting each event to a table with its source's
-  descriptor. The pump exists so that staging keeps emptying while the
-  dispatcher is parked inside a policy. The dispatcher is the one persistent
-  application coroutine.
+- **Two internal tasks.** Both the pump and the dispatcher drain staging,
+  converting each event to a table with its source's descriptor. Events of an
+  instance with policies go into the Lua-heap FIFO; those of an awaited
+  instance go into each awaiting task's queue. The pump exists so that staging
+  keeps emptying while the dispatcher is parked inside a policy. The
+  dispatcher is the one persistent policy coroutine.
+- **Awaiting tasks wait on the doorbell too.** `await` drains, takes from the
+  task's queues, and otherwise parks in `chan:await` on the doorbell, waking
+  up for every doorbell and at least every `POLL_MS`. That is all built from
+  the public `zephyr.async` API, in the frontend's prelude. lua_zephyr is not
+  modified.
 - **The scheduler never holds pointers into event buffers.** The listener
   copies, and the drain copies again into a table. The zbus buffer is released
   as soon as the listener returns.
@@ -245,7 +320,7 @@ zephlet emit ─► chan_<inst>_events
 3. The main chunk runs: policies, plus any setup commands.
 4. The seal freezes the policies and marks the instances that have one.
 5. The `zephyr.async` loop starts the pump, the dispatcher and the optional
-   async main.
+   async main. From here on, tasks can await instances.
 
 ## Limits and memory
 
@@ -255,6 +330,7 @@ zephlet emit ─► chan_<inst>_events
 | `ZEPHLETS_LUA_SLOT_SIZE` | 64 | Payload of one staging slot. Every events struct must fit, which is checked at build time. |
 | `ZEPHLETS_LUA_STAGING_DEPTH` | 8 | Staging slots. Static RAM is `(SLOT_SIZE + 8) × DEPTH`. |
 | `ZEPHLETS_LUA_FIFO_DEPTH` | 32 | Events queued as Lua tables. Costs 6 B of static RAM each, plus each queued table on the Lua heap. |
+| `ZEPHLETS_LUA_AWAIT_DEPTH` | 8 | Events kept per awaiting task and instance, on the Lua heap. |
 | `ZEPHLETS_LUA_SCRATCH_SIZE` | 256 | Two static buffers for a command's request and response. Every RPC must fit, which is checked at build time. |
 | `ZEPHLETS_LUA_POLL_MS` | 1000 | How long an event can wait unnoticed after a refused doorbell. `0` turns the poll off. |
 | `MAIN_STACK_SIZE` | 8192 (overridden) | The Lua VM and every command's handler run on this stack. |
@@ -273,11 +349,14 @@ reported, never silently.**
 |---|---|---|
 | Staging full | `staged_drop` | `LOG_WRN` on the 1st, 2nd, 4th, 8th, … drop |
 | FIFO full, or out of memory while converting | `fifo_drop` | Same |
+| An awaiting task's queue full, or out of memory | `await_drop` | Same |
 | Doorbell refused (zbus message pool exhausted) | `doorbell_fail` | Recovered by the next event or by `POLL_MS` |
 
 The next event delivered from that source reports what was lost before it, as
 `meta.dropped`. That value is the gap in the source's sequence numbers, so it
-is exact. `z.stats()` also reports `emitted`, `delivered` and `handler_err`.
+is exact. Policies and each awaiting task count the gap separately.
+`z.stats()` also reports `emitted`, `delivered` (to policies) and
+`handler_err`.
 
 **Allocations on the event path.** The listener allocates nothing on the Lua
 heap. Per delivered event, the drain allocates the event table (and its nested

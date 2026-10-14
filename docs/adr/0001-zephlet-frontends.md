@@ -255,6 +255,13 @@ Four decisions are specific to it:
   script's main chunk and sealed when it returns. Instances without one are
   then filtered in the listener, which bounds the cost of the frontend to the
   sources the script actually uses.
+- **Tasks can also wait for events.** `inst:await()` and `z.await_any()` give
+  each calling `zephyr.async` task its own queue per instance, which the
+  drain fills beside the policy FIFO. The waiter parks on the same doorbell
+  with `chan:await`, so this needs no change to lua_zephyr: a zephlet events
+  channel cannot be awaited directly, and the frontend translates the
+  doorbell into typed events itself. An instance becomes staged on its first
+  await.
 - **Instance names for LuaLS come from the ELF.** Codegen runs per type and
   never sees instances. The hook names each instance record
   `__zlet_lua__<type>__<instance>`, and a post-build step reads those symbols

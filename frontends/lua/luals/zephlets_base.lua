@@ -8,6 +8,7 @@
 ---@field name string    its name
 ---@field seq integer    per-instance event number, counting dropped events
 ---@field dropped integer events of this instance lost since the last one delivered
+---                        to this consumer
 
 ---@class zephlets.Stats
 ---@field emitted integer       events the instance emitted
@@ -16,6 +17,7 @@
 ---@field fifo_drop integer     dropped: Lua-heap FIFO full, or out of memory
 ---@field doorbell_fail integer doorbells the zbus message pool refused
 ---@field handler_err integer   handler calls that raised
+---@field await_drop integer    dropped: an awaiting task's queue full, or out of memory
 
 ---@class pb.Empty
 

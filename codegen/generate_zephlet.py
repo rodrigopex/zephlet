@@ -444,7 +444,7 @@ for _t in ("int32", "sint32", "sfixed32", "uint32", "fixed32",
 
 # Members the Lua frontend gives every instance itself; an rpc or enum of the
 # same name could never be reached through `inst:<rpc>` / `inst.<Enum>`.
-_LUA_RESERVED_INSTANCE_KEYS = {"add_policy"}
+_LUA_RESERVED_INSTANCE_KEYS = {"add_policy", "await"}
 
 
 def collect_qualified_names(*element_lists) -> dict:

@@ -393,7 +393,9 @@ config ZEPHLETS_LUA
 
       Events are copied on the system workqueue into fixed staging slots
       and handed to the handlers by one persistent zephyr.async task on the
-      thread that runs the script. No Lua runs in zbus listener context.
+      thread that runs the script. The script's own zephyr.async tasks can
+      also wait for them with inst:await() and zephlets.await_any(). No Lua
+      runs in zbus listener context.
 
       Every script is precompiled, so LUA_PRECOMPILE_ONLY can drop the Lua
       parser from the image.
@@ -435,6 +437,17 @@ config ZEPHLETS_LUA_FIFO_DEPTH
       live on the Lua heap, so a handler that parks (async.sleep) does not
       stall staging. When the FIFO is full a new event is dropped and
       counted, as for staging.
+
+config ZEPHLETS_LUA_AWAIT_DEPTH
+    int "Events queued per awaiting task and instance"
+    default 8
+    range 1 1024
+    help
+      A task's first inst:await() or zephlets.await_any() on an instance
+      gives it a queue for that instance's events, on the Lua heap. Every
+      event from then on is queued until the task takes it; when the
+      queue is full a new event is dropped, counted as await_drop in
+      z.stats() and reported to the task as meta.dropped.
 
 config ZEPHLETS_LUA_SCRATCH_SIZE
     int "Command request/response buffer size (bytes)"
