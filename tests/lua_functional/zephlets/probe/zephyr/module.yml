@@ -1,0 +1,4 @@
+name: zlet_probe
+build:
+  cmake: .
+  kconfig: Kconfig

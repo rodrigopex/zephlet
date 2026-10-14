@@ -1,0 +1,17 @@
+config ZEPHLET_PROBE
+    bool "Probe zephlet (Lua functional test fixture)"
+    select NANOPB
+    select ZBUS
+    select ZBUS_ASYNC_LISTENER
+    help
+      Enable the `probe` zephlet the Lua functional test drives: its
+      config message carries every field shape the Lua conversion
+      handles, and its commands emit events and fail on request.
+
+if ZEPHLET_PROBE
+
+module = ZEPHLET_PROBE
+module-str = zlet_probe
+source "subsys/logging/Kconfig.template.log_config"
+
+endif

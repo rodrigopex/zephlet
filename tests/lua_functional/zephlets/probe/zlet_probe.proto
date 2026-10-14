@@ -1,0 +1,87 @@
+syntax = "proto3";
+
+import "nanopb.proto";
+import "zephlet.proto";
+
+option (nanopb_fileopt).long_names = false;
+
+message Probe {
+  enum Mode {
+    MODE_IDLE = 0;
+    MODE_FAST = 1;
+    MODE_SLOW = 2;
+  }
+
+  message Inner {
+    int32 a = 1;
+    uint32 b = 2;
+  }
+
+  /* Every field shape the Lua conversion handles. */
+  message Config {
+    int32 gain = 1;
+    string label = 2 [(nanopb).max_size = 16];
+    optional uint32 limit = 3;
+    repeated int32 samples = 4 [(nanopb).max_count = 4];
+    Inner inner = 5;
+    Mode mode = 6;
+    bytes blob = 7 [(nanopb).max_size = 8];
+    bool enabled = 8;
+    float ratio = 9;
+  }
+
+  message Events {
+    uint32 seq = 1;
+    int32 value = 2;
+    Mode mode = 3;
+    bool alarm = 4;
+    Inner inner = 5;
+  }
+
+  message Burst {
+    uint32 count = 1;
+    int32 value = 2;
+  }
+
+  message Fail {
+    int32 code = 1;
+  }
+
+  /* One field of each shape Config leaves out, for the Lua conversion. */
+  message Wide {
+    int64 i64 = 1;
+    uint64 u64 = 2;
+    sint32 s32 = 3;
+    fixed32 f32 = 4;
+    sfixed64 sf64 = 5;
+    double d = 6;
+    int32 i8 = 7 [(nanopb).int_size = IS_8];
+    int32 i16 = 8 [(nanopb).int_size = IS_16];
+    uint32 u8 = 9 [(nanopb).int_size = IS_8];
+    uint32 u16 = 10 [(nanopb).int_size = IS_16];
+    bytes tag4 = 11 [(nanopb).max_size = 4, (nanopb).fixed_length = true];
+    repeated uint64 r64 = 12 [(nanopb).max_count = 3];
+    oneof pick {
+      int32 p_int = 13;
+      Inner p_inner = 14;
+    }
+  }
+}
+
+service ProbeApi {
+  rpc start(Empty) returns (Lifecycle.Status);
+  /* Left unimplemented: the weak default answers -ENOSYS. */
+  rpc stop(Empty) returns (Lifecycle.Status);
+  rpc get_status(Empty) returns (Lifecycle.Status);
+  rpc config(Probe.Config) returns (Probe.Config);
+  rpc get_config(Empty) returns (Probe.Config);
+  /* Emit `count` events, one after the other, from the caller's thread. */
+  rpc burst(Probe.Burst) returns (Empty);
+  /* Return `code` as the command's result. */
+  rpc fail(Probe.Fail) returns (Empty);
+  rpc ping(Empty) returns (Empty);
+  /* Return the request as the response. */
+  rpc echo(Probe.Wide) returns (Probe.Wide);
+  /* Stage one byte as this instance's event, which no generated hook does. */
+  rpc stage_short(Empty) returns (Empty);
+}

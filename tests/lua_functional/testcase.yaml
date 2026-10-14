@@ -1,0 +1,53 @@
+common:
+  tags: zephlet lua
+  harness: console
+  # lua_zephyr (Zephyr module `lua`) comes from the app's west manifest,
+  # pinned by SHA there. A workspace without it skips these suites rather
+  # than failing on an unmet Kconfig dependency. Not a Kconfig `filter:`:
+  # twister evaluates that without this app's CMakeLists, so the fixture
+  # module in EXTRA_ZEPHYR_MODULES would be missing.
+  modules:
+    - lua
+  platform_allow:
+    - native_sim
+    - native_sim/native/64
+  integration_platforms:
+    - native_sim
+  timeout: 60
+tests:
+  zephlet.lua_functional.basic:
+    # Discovery, commands and their errors, argument checking, enums, event
+    # routing, ordering, handler errors and yields, static connections.
+    harness_config:
+      type: multi_line
+      ordered: false
+      regex:
+        - "lua suite basic: \\d+ passed, 0 failed"
+        - "second zephlet_lua_run\\(\\): EALREADY"
+  zephlet.lua_functional.overflow:
+    # Staging and FIFO both full: drops are counted and reported in meta.
+    extra_configs:
+      - CONFIG_TEST_LUA_SUITE="overflow"
+      - CONFIG_ZEPHLETS_LUA_STAGING_DEPTH=4
+      - CONFIG_ZEPHLETS_LUA_FIFO_DEPTH=2
+    harness_config:
+      type: one_line
+      regex:
+        - "lua suite overflow: \\d+ passed, 0 failed"
+  zephlet.lua_functional.bad_chunk:
+    # A main chunk that raises: zephlet_lua_run() returns -EINVAL.
+    extra_configs:
+      - CONFIG_TEST_LUA_SUITE="bad_chunk"
+    harness_config:
+      type: one_line
+      regex:
+        - "zephlet_lua_run\\(\\) returned EINVAL"
+  zephlet.lua_functional.disabled:
+    # The frontend off: the app builds and runs with no Lua at all.
+    extra_configs:
+      - CONFIG_ZEPHLETS_LUA=n
+      - CONFIG_LUA=n
+    harness_config:
+      type: one_line
+      regex:
+        - "lua frontend disabled"

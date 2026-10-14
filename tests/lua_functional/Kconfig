@@ -1,0 +1,8 @@
+config TEST_LUA_SUITE
+    string "Lua suite to run"
+    default "basic"
+    help
+      Name of the script under scripts/, without the .lua extension,
+      that main() hands to zephlet_lua_run().
+
+source "Kconfig.zephyr"
