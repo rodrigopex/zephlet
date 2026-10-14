@@ -73,13 +73,17 @@ int main(void)
    `zephlet_lua_coordinate(buf, len, chunkname)` also takes source, for
    example a script read from a filesystem, when the parser is kept.
 
-4. Opt each zephlet type the script uses in, in the options file beside its
-   `.proto` (`zlet_tick.proto` → `zlet_tick.zephlet.options`), whose syntax
-   is that of nanopb's `.options` files:
+4. Opt each zephlet type the script uses in, either in the options file
+   beside its `.proto` (`zlet_tick.proto` → `zlet_tick.zephlet.options`),
+   whose syntax is that of nanopb's `.options` files:
 
    ```
    TickApi lua:true
    ```
+
+   or in the `.proto` itself, with `import "zephlet_options.proto";` and
+   `option (zephlet.lua) = true;` in the service. See
+   [Frontend options](../../README.md#frontend-options).
 
 No other wiring is needed. For an opted-in type, the per-type hook that
 `ZEPHLET_NEW(...)` already expands registers every instance with the

@@ -90,18 +90,36 @@ my_zephlet_start(&my_instance, &st, K_MSEC(500));
 
 ## Frontend options
 
-CoAP and Lua expose only the zephlet types that opt in. The opt-ins live in
-an options file beside the proto, `<prefix>.zephlet.options`, never in the
-`.proto` itself, so the proto stays plain protobuf. The syntax is that of
-nanopb's [`.options` files](https://jpa.kapsi.fi/nanopb/docs/reference.html#generator-options):
-`#`, `//` and `/* */` comments, and `<pattern> option:value ...` lines, the
-pattern an `fnmatch()` mask over the service name, a later line overriding
-an earlier one.
+CoAP and Lua expose only the zephlet types that opt in. As with nanopb's
+own [generator options](https://jpa.kapsi.fi/nanopb/docs/reference.html#generator-options),
+an opt-in can be set in either of two places.
+
+In the `.proto`, as a service option declared by `zephlet_options.proto`:
+
+```proto
+import "zephlet_options.proto";
+
+service TickApi {
+  option (zephlet.coap) = true;
+  option (zephlet.lua) = true;
+  ...
+}
+```
+
+Or in an options file beside the proto, `<prefix>.zephlet.options`, which
+keeps the proto plain protobuf, portable to other generators. Its syntax is
+that of nanopb's `.options` files: `#`, `//` and `/* */` comments, and
+`<pattern> option:value ...` lines, the pattern an `fnmatch()` mask over
+the service name, a later line overriding an earlier one.
 
 ```
 # zlet_tick.zephlet.options
 TickApi coap:true lua:true
 ```
+
+Both can be used together. As in nanopb, an option set in the proto
+overrides the options file. (nanopb's own `<prefix>.options` cannot hold
+these: it rejects keys it does not know.)
 
 | Option | Effect |
 |---|---|
@@ -110,10 +128,9 @@ TickApi coap:true lua:true
 | `lua` | Expose the type to the Lua frontend. |
 
 Every option is `false` unless set, and a missing file sets none. An unknown
-option, a value other than `true` or `false`, or a line whose pattern
-matches no service stops the build with the file and line. A proto that
-still sets an `option (zephlet.<name>)` is rejected with the line to put in
-the options file instead.
+option, a value other than `true` or `false`, or an options file line whose
+pattern matches no service stops the build, with the file and line for the
+options file.
 
 ## Adapters
 

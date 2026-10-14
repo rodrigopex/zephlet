@@ -37,12 +37,13 @@ Frontends share these invariants:
 - **Envelope-bound.** A frontend never reads zephlet `config`/`data`
   directly; everything goes through the envelope.
 - **Per-frontend opt-in.** A zephlet is exposed over a given frontend only
-  when its options file, `<prefix>.zephlet.options` beside the `.proto`,
-  sets that frontend's option: `TickApi coap:true lua:true`. Default is
-  not-exposed. The file has the syntax of nanopb's `.options` files and is
-  read by the codegen only, so the `.proto` stays plain protobuf, portable
-  to any other generator. (The options used to be custom service options
-  in the `.proto`, from a `zephlet_options.proto` it had to import.)
+  when it sets that frontend's option. Default is not-exposed. As with
+  nanopb's generator options, it is set in either place, or both: a custom
+  service option in the `.proto` (`option (zephlet.coap) = true;`, from
+  `zephlet_options.proto`), or a line in the options file beside it,
+  `<prefix>.zephlet.options` (`TickApi coap:true lua:true`), which has the
+  syntax of nanopb's `.options` files and keeps the `.proto` plain
+  protobuf, portable to any other generator. The proto overrides the file.
 - **Build-gated.** Each frontend has its own Kconfig (e.g.
   `CONFIG_ZEPHLETS_COAP`, `CONFIG_ZEPHLETS_GRPC`) defaulting to `n`. With a
   frontend disabled, the build's stripped section hash (`.text`, `.rodata`,

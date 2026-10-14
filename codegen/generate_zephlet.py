@@ -96,10 +96,11 @@ def read_zephlet_options(path: str, service_name: str) -> dict:
 
     with open(path, "r") as f:
         data = f.read()
-    # Keep the newlines of a block comment, so line numbers stay right.
-    data = re.sub(r"/\*.*?\*/", lambda m: "\n" * m.group(0).count("\n"), data,
-                  flags=re.DOTALL)
-    data = re.sub(r"(//|#).*?$", "", data, flags=re.MULTILINE)
+    # One left-to-right pass, so whichever comment starts first wins: a `/*`
+    # inside a line comment opens nothing, and a `//` inside a block comment
+    # ends nothing. Keep a block comment's newlines, so line numbers stay right.
+    data = re.sub(r"/\*.*?\*/|//[^\n]*|#[^\n]*",
+                  lambda m: "\n" * m.group(0).count("\n"), data, flags=re.DOTALL)
 
     for lineno, line in enumerate(data.split("\n"), start=1):
         line = line.strip()
@@ -126,17 +127,42 @@ def read_zephlet_options(path: str, service_name: str) -> dict:
     return opts
 
 
-def reject_proto_zephlet_options(proto_path: str, service) -> None:
-    """The zephlet options live in `<prefix>.zephlet.options`, not in the proto."""
+def read_proto_zephlet_options(proto_path: str, service) -> dict:
+    """
+    Return the options that @p service sets in its proto, e.g.
+    `option (zephlet.lua) = true;` (declared in zephlet_options.proto), as a
+    dict holding only the keys it sets.
+    """
+    opts = {}
     for inner in service.elements:
         name = getattr(inner, "name", "")
-        if inner.__class__.__name__ == "Option" and name.startswith("(zephlet."):
-            key = name[len("(zephlet."):-1]
-            print(f"{proto_path}: `option {name}` is no longer read from the "
-                  f"proto; set `{service.name} {key}:true` in "
-                  f"{os.path.basename(options_path_for(proto_path))} instead.",
+        if inner.__class__.__name__ != "Option" or not name.startswith("(zephlet."):
+            continue
+        key = name[len("(zephlet."):-1]
+        if key not in ZEPHLET_OPTIONS:
+            print(f"{proto_path}: unknown option `{name}` (the proto parser "
+                  "gives no line numbers); known: "
+                  + ", ".join(f"(zephlet.{k})" for k in ZEPHLET_OPTIONS),
                   file=sys.stderr)
             sys.exit(1)
+        if not isinstance(inner.value, bool):
+            print(f"{proto_path}: `option {name}` expects true or false (the "
+                  "proto parser gives no line numbers).",
+                  file=sys.stderr)
+            sys.exit(1)
+        opts[key] = inner.value
+    return opts
+
+
+def zephlet_options(proto_path: str, service, options_path: str) -> dict:
+    """
+    The options of @p service, from both places they can be set: the options
+    file @p options_path, then `option (zephlet.<key>)` in the proto. As in
+    nanopb, an option set in the proto overrides the options file.
+    """
+    opts = read_zephlet_options(options_path, service.name)
+    opts.update(read_proto_zephlet_options(proto_path, service))
+    return opts
 
 
 _BASE_METHODS_CACHE: list[str] | None = None
@@ -592,8 +618,9 @@ def nanopb_descriptor(c_name: str) -> str:
 
 def parse_proto(proto_path: str, options_path: str | None = None) -> dict:
     """
-    Parse the .proto, and its zephlet options file (by default
-    options_path_for(proto_path)), into a flat dict for the Jinja templates.
+    Parse the .proto, with its zephlet options (see zephlet_options(); the
+    options file defaults to options_path_for(proto_path)), into a flat dict
+    for the Jinja templates.
     """
     with open(proto_path, "r") as f:
         content = f.read()
@@ -635,16 +662,16 @@ def parse_proto(proto_path: str, options_path: str | None = None) -> dict:
         print(f"{proto_path}: no service block found", file=sys.stderr)
         sys.exit(1)
 
-    reject_proto_zephlet_options(proto_path, service)
     if options_path is None:
         options_path = options_path_for(proto_path)
-    options = read_zephlet_options(options_path, service.name)
+    options = zephlet_options(proto_path, service, options_path)
     coap_opt_in = options["coap"]
     coap_discoverable = options["coap_discoverable"]
     lua_opt_in = options["lua"]
 
     if coap_discoverable and not coap_opt_in:
-        print(f"{options_path}: coap_discoverable:true requires coap:true.",
+        print(f"{proto_path}: coap_discoverable requires coap on the same "
+              f"service (in the proto or {os.path.basename(options_path)}).",
               file=sys.stderr)
         sys.exit(1)
 
@@ -746,7 +773,7 @@ def parse_proto(proto_path: str, options_path: str | None = None) -> dict:
         missing = [n for n in base_method_names if n not in declared]
         if missing:
             print(
-                f"{proto_path}: coap_discoverable:true "
+                f"{proto_path}: coap_discoverable "
                 f"requires the service to declare every base lifecycle "
                 f"method. Missing: {', '.join(missing)}.",
                 file=sys.stderr)
@@ -849,15 +876,15 @@ def render_templates(ctx: dict, prefix: str, template_dir: str,
     """
     Render the per-zephlet artifacts:
       <prefix>_interface.{h,c}      — always populated (core dispatch).
-      <prefix>_coap_interface.{h,c} — populated only with `coap:true` in
-                                      <prefix>.zephlet.options; empty stubs
+      <prefix>_coap_interface.{h,c} — populated only when the zephlet sets
+                                      the `coap` option; empty stubs
                                       otherwise. CMake compiles the .c
                                       unconditionally under
                                       `CONFIG_ZEPHLETS_COAP=y`, so the empty
                                       stub is a 0-symbol TU for non-opted
                                       types.
       <prefix>_lua_interface.{h,c}  — Lua frontend bindings, populated only
-                                      with `lua:true` there (empty stubs
+                                      with the `lua` option (empty stubs
                                       otherwise). The header is included,
                                       and the .c compiled, only under
                                       `CONFIG_ZEPHLETS_LUA=y`.

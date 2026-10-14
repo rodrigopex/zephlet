@@ -48,7 +48,7 @@ const struct zephlet *zephlet_get_by_name(const char *name);
 
 ## Per-zephlet files
 
-- **User-owned (source tree):** `<prefix>.proto` (plain protobuf: no zephlet options), optional `<prefix>.zephlet.options` (frontend opt-ins `coap`, `coap_discoverable`, `lua`; nanopb `.options` syntax, e.g. `TickApi coap:true lua:true`), `<prefix>.h` (declares `struct <type>_data` + `int <type>_init_fn(const struct zephlet *)`), `<prefix>.c` (strong handler overrides), `CMakeLists.txt` (single `zephyr_zephlet_generate(TYPE ... PREFIX ... SOURCES ...)` call), `Kconfig`, `zephyr/module.yml`.
+- **User-owned (source tree):** `<prefix>.proto`, optional `<prefix>.zephlet.options` (frontend opt-ins `coap`, `coap_discoverable`, `lua`, set here in nanopb `.options` syntax, e.g. `TickApi coap:true lua:true`, and/or in the proto as `option (zephlet.<key>) = true;` from `zephlet_options.proto`; proto overrides the file, as in nanopb), `<prefix>.h` (declares `struct <type>_data` + `int <type>_init_fn(const struct zephlet *)`), `<prefix>.c` (strong handler overrides), `CMakeLists.txt` (single `zephyr_zephlet_generate(TYPE ... PREFIX ... SOURCES ...)` call), `Kconfig`, `zephyr/module.yml`.
 - **Generated (build dir):** `<prefix>_interface.{h,c}`, `<prefix>.pb.{h,c}`.
 - **Framework-standard fields** come first in `struct <type>_data`: `bool is_running, is_ready;` — custom fields follow, separated by a banner comment. The runtime config is `*z->config` (writable; user owns the per-instance struct).
 
@@ -197,7 +197,7 @@ Single script `codegen/generate_zephlet.py` parses the `.proto` service block, c
 - `CONFIG_ZEPHLETS_LUA=y` — Lua frontend (`frontends/lua/`, guide in its
   README). `depends on LUA_ASYNC` (lua_zephyr module, pinned by SHA in the
   app manifest), `select`s `NANOPB_TEXTFORMAT` for descriptors. Per-type
-  opt-in `lua:true` in `<prefix>.zephlet.options`; without it the hook is
+  opt-in `lua` (proto option or `<prefix>.zephlet.options`); without it the hook is
   empty and the Lua outputs are stubs. Hook
   `_ZLET_LUA_HOOK_<type>` emits per instance a
   `zephlet_lua_instance` record (`__zlet_lua__<type>__<inst>`) plus a

@@ -82,6 +82,36 @@ def test_detect_opt_in_ignores_comments(codegen_module):
 		"coap": False, "coap_discoverable": False, "lua": False}
 
 
+@pytest.mark.parametrize("text, expected", [
+	# A `/*` inside a line comment opens no block comment.
+	("// starts /*\nTickApi lua:true\n# ends */\n", {"lua": True}),
+	("# starts /*\nTickApi lua:true\n// ends */\n", {"lua": True}),
+	# A line comment inside a block comment does not hide the rest of the line.
+	("/* // */ TickApi coap:true\n", {"coap": True}),
+])
+def test_options_file_comment_nesting(codegen_module, tmp_path, text, expected):
+	"""Whichever comment starts first wins, as nanopb reads them."""
+	path = tmp_path / "x.zephlet.options"
+	path.write_text(text)
+	opts = dict.fromkeys(("coap", "coap_discoverable", "lua"), False)
+	opts.update(expected)
+	assert codegen_module.read_zephlet_options(str(path), "TickApi") == opts
+
+
+def test_options_file_error_line_after_block_comment(tmp_path):
+	"""A multi-line block comment keeps the line numbers of what follows."""
+	proto = tmp_path / "zlet_tick.proto"
+	proto.write_text((_FIXTURES / "tick_no_opt.proto").read_text())
+	(tmp_path / "zlet_tick.zephlet.options").write_text("/*\n\n*/ // x /*\nTickApi lua:yes\n")
+	result = subprocess.run(
+		[sys.executable, str(_CODEGEN), "--proto", str(proto),
+		 "--output-dir", str(tmp_path), "--type", "tick", "--prefix", "zlet_tick"],
+		check=False, capture_output=True, text=True)
+
+	assert result.returncode != 0, result.stdout
+	assert "zlet_tick.zephlet.options:4: " in result.stderr, result.stderr
+
+
 def test_options_file_follows_nanopb_syntax(codegen_module, tmp_path):
 	"""fnmatch patterns against the service name, several options per line,
 	`key: value` with a space, later lines win."""
@@ -114,20 +144,80 @@ def test_options_file_errors(tmp_path, line, needle):
 	assert needle in result.stderr, result.stderr
 
 
-def test_proto_zephlet_option_is_rejected(tmp_path):
-	"""An `option (zephlet.*)` left in a proto is an error naming the
-	options file line that replaces it."""
+def _proto_with_options(tmp_path, *options, file_text=None):
+	"""tick_no_opt.proto with @p options set in its TickApi service, and an
+	options file holding @p file_text unless None."""
 	proto = tmp_path / "zlet_tick.proto"
+	lines = ""
+	for o in options:
+		key, value = (part.strip() for part in o.split("=", 1))
+		lines += f"\n  option (zephlet.{key}) = {value};"
 	proto.write_text((_FIXTURES / "tick_no_opt.proto").read_text().replace(
-		"service TickApi {", "service TickApi {\n  option (zephlet.lua) = true;"))
-	result = subprocess.run(
+		'import "zephlet.proto";',
+		'import "zephlet.proto";\nimport "zephlet_options.proto";').replace(
+		"service TickApi {", "service TickApi {" + lines))
+	if file_text is not None:
+		(tmp_path / "zlet_tick.zephlet.options").write_text(file_text)
+	return proto
+
+
+def _run_codegen_rc(proto, out_dir):
+	return subprocess.run(
 		[sys.executable, str(_CODEGEN), "--proto", str(proto),
-		 "--output-dir", str(tmp_path), "--type", "tick", "--prefix", "zlet_tick"],
+		 "--output-dir", str(out_dir), "--type", "tick", "--prefix", "zlet_tick"],
 		check=False, capture_output=True, text=True)
 
+
+def test_proto_options_are_read(codegen_module, tmp_path):
+	"""The options can be set in the proto, without an options file."""
+	proto = _proto_with_options(tmp_path, "coap = true", "lua = true")
+	ctx = codegen_module.parse_proto(str(proto))
+	assert (ctx["coap_opt_in"], ctx["coap_discoverable"], ctx["lua_opt_in"]) \
+		== (True, False, True)
+
+
+def test_proto_and_file_options_combine(codegen_module, tmp_path):
+	"""Both places are read, and the proto overrides the file, as in nanopb."""
+	proto = _proto_with_options(tmp_path, "lua = false",
+				    file_text="TickApi coap:true lua:true\n")
+	ctx = codegen_module.parse_proto(str(proto))
+	assert (ctx["coap_opt_in"], ctx["lua_opt_in"]) == (True, False)
+
+
+def test_proto_and_file_give_same_output(tmp_path):
+	"""An option gives the same generated code from either place."""
+	in_proto = tmp_path / "proto"
+	in_file = tmp_path / "file"
+	in_proto.mkdir()
+	in_file.mkdir()
+	a = _proto_with_options(in_proto, "coap = true", "lua = true")
+	b = _proto_with_options(in_file, file_text="TickApi coap:true lua:true\n")
+	for proto, out in ((a, in_proto / "out"), (b, in_file / "out")):
+		out.mkdir()
+		result = _run_codegen_rc(proto, out)
+		assert result.returncode == 0, result.stderr
+	for name in sorted(p.name for p in (in_proto / "out").iterdir()):
+		assert ((in_proto / "out" / name).read_bytes()
+			== (in_file / "out" / name).read_bytes()), name
+
+
+@pytest.mark.parametrize("option, needle", [
+	("rest = true", "unknown option `(zephlet.rest)`"),
+	('lua = "yes"', "`option (zephlet.lua)` expects true or false"),
+])
+def test_proto_option_errors(tmp_path, option, needle):
+	result = _run_codegen_rc(_proto_with_options(tmp_path, option), tmp_path)
 	assert result.returncode != 0, result.stdout
-	assert "`TickApi lua:true` in zlet_tick.zephlet.options" in result.stderr, \
-		result.stderr
+	assert needle in result.stderr, result.stderr
+
+
+def test_discoverable_needs_coap_in_either_place(tmp_path):
+	"""coap_discoverable in the proto with coap in neither place is an error;
+	coap in the options file satisfies it."""
+	result = _run_codegen_rc(
+		_proto_with_options(tmp_path, "coap_discoverable = true"), tmp_path)
+	assert result.returncode != 0, result.stdout
+	assert "coap_discoverable requires coap" in result.stderr, result.stderr
 
 
 def test_no_opt_in_emits_empty_stubs(tmp_path):

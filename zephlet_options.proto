@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package zephlet;
+
+import "google/protobuf/descriptor.proto";
+
+/*
+ * Custom proto options consumed by the zephlet codegen.
+ *
+ * Field numbers are in the user-options range (>= 50000). The codegen
+ * reads them, e.g. `option (zephlet.coap) = true;`, from the parsed proto;
+ * `protoc` itself only needs to accept each option as well-formed when it
+ * parses the .proto.
+ *
+ * The same options can instead be set in `<prefix>.zephlet.options` beside
+ * the proto (`TickApi coap:true`), which keeps the proto free of this
+ * import. An option set here overrides that file, as in nanopb.
+ */
+
+extend google.protobuf.ServiceOptions {
+  /*
+   * Expose this service's zephlet over the CoAP frontend.
+   */
+  bool coap = 50001;
+
+  /*
+   * Additionally list this zephlet's instances in `/.well-known/core`.
+   * Default false; has no effect when `coap` is false. Codegen asserts
+   * that any service with this option declares every name in
+   * `LifecycleApi` (see zephlet.proto) so the anchor link can stand in
+   * for the standard lifecycle sub-paths.
+   */
+  bool coap_discoverable = 50002;
+
+  /*
+   * Expose this service's zephlet to the Lua frontend (CONFIG_ZEPHLETS_LUA).
+   * Without it, its instances are not reachable from a script and the
+   * frontend adds no code or RAM for them.
+   */
+  bool lua = 50003;
+}

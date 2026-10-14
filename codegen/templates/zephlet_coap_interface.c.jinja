@@ -315,7 +315,7 @@ COAP_RESOURCE_DEFINE({{ type_snake }}_coap_instances_resource, zlet_coap_service
 {% endif %}
 {% else %}
 /*
- * `{{ prefix }}.zephlet.options` does not set `coap:true`, so this
- * translation unit emits no symbols.
+ * The zephlet does not set the `coap` option, so this translation unit
+ * emits no symbols.
  */
 {% endif %}

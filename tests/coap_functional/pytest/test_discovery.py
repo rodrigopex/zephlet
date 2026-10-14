@@ -1,6 +1,6 @@
 """Functional cases for the per-type discovery resources.
 
-For every zephlet type whose options file sets `coap_discoverable:true`,
+For every zephlet type that sets the `coap_discoverable` option,
 the codegen emits two
 extra CoAP resources next to the existing `/zlet/<type>/#` wildcard:
 

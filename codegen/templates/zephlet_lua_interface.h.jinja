@@ -41,7 +41,7 @@ extern const struct zephlet_lua_type {{ type_snake }}_lua_type;
 	}                                                                                          \
 	ZEPHLET_EVENTS_LISTENER(_name, {{ type_snake }}, _zlet_lua_fwd_##_name)
 {% else %}
-/* `{{ prefix }}.zephlet.options` does not set `lua:true`. */
+/* The zephlet does not set the `lua` option. */
 {% endif %}
 
 #endif /* GENERATED_{{ prefix|upper }}_LUA_INTERFACE_H_ */
