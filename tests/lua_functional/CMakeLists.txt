@@ -31,10 +31,10 @@ set(CMAKE_CURRENT_SOURCE_DIR ${_saved_csd})
 target_sources(app PRIVATE src/main.c)
 
 if(CONFIG_ZEPHLETS_LUA)
-    # One suite per scenario, chosen in testcase.yaml.
-    set(_suite_gen "${CMAKE_CURRENT_BINARY_DIR}/generated")
-    target_include_directories(app PRIVATE ${_suite_gen})
-    generate_inc_file_for_target(app
-        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/${CONFIG_TEST_LUA_SUITE}.lua"
-        "${_suite_gen}/suite.lua.inc")
+    # One suite per scenario, chosen in testcase.yaml; main() runs it as
+    # ZEPHLET_LUA_SCRIPT(SUITE).
+    luaz_add_bytecode_file("scripts/${CONFIG_TEST_LUA_SUITE}.lua")
+    target_compile_definitions(app PRIVATE
+        SUITE=${CONFIG_TEST_LUA_SUITE}
+        SUITE_HEADER="${CONFIG_TEST_LUA_SUITE}_lua_bytecode.h")
 endif()

@@ -23,17 +23,21 @@ tampering.events:connect(function(ev, meta)
 end)
 ```
 
+```cmake
+# CMakeLists.txt, after find_package(Zephyr): precompile src/app.lua into
+# app_lua_bytecode.h (lua_zephyr's luaz.cmake).
+luaz_add_bytecode_file(src/app.lua)
+```
+
 ```c
 #include <zephlet_lua.h>
 
-static const char app_lua[] = {
-#include "app.lua.inc" /* generate_inc_file_for_target() */
-};
+#include "app_lua_bytecode.h"
 
 int main(void)
 {
 	/* C setup first: this call does not return while the script runs. */
-	return zephlet_lua_run(app_lua, sizeof(app_lua), "=app");
+	return zephlet_lua_coordinate(ZEPHLET_LUA_SCRIPT(app));
 }
 ```
 
@@ -56,10 +60,14 @@ int main(void)
    # or all of them with CONFIG_LUA_LIBS_ALL=y.
    ```
 
-3. Embed the script and call `zephlet_lua_run(buf, len, chunkname)` from
-   `main()`. You can pass source or bytecode compiled by lua_zephyr's `luac`.
-   The frontend's own internal tasks are Lua source, so it needs the parser
-   (`depends on !LUA_PRECOMPILE_ONLY`).
+3. Embed the script with `luaz_add_bytecode_file(<path>.lua)` and call
+   `zephlet_lua_coordinate(ZEPHLET_LUA_SCRIPT(<name>))` from `main()`.
+   `CONFIG_ZEPHLETS_LUA` selects `CONFIG_LUA_PRECOMPILE`, so a host `luac` is
+   built and every script is compiled to stripped bytecode at build time,
+   the frontend's own tasks included. Add `CONFIG_LUA_PRECOMPILE_ONLY=y` to
+   leave the Lua parser out of the image (about 20 KB of flash on Cortex-M3).
+   `zephlet_lua_coordinate(buf, len, chunkname)` also takes source, for
+   example a script read from a filesystem, when the parser is kept.
 
 No other wiring is needed. The per-type hook that `ZEPHLET_NEW(...)` already
 expands registers every instance with the frontend. Instances are found by
@@ -93,9 +101,12 @@ end
   for the command channel, exactly as in the C wrappers.
 - A command goes through the generated typed wrapper (`<type>_<rpc>()`), the
   same path a C caller takes. The handler runs on the caller's thread, which
-  here is the thread that called `zephlet_lua_run()`.
+  here is the thread that called `zephlet_lua_coordinate()`.
 - **Success** returns the response table, or `true` for `Empty`. **Failure**
   (`rc != 0`) returns `nil, "<ERRNO>", rc`.
+- **A command cannot start while another converts its request or response**,
+  which only a `__gc` metamethod that calls a command can attempt: it raises
+  instead of overwriting the first command's data.
 - **Invalid arguments raise an error** instead of returning one, because they
   are bugs in the script, not runtime conditions. That covers a wrong
   argument count, a missing or invalid timeout, an unknown field, a value of
@@ -180,7 +191,7 @@ return function()
 end
 ```
 
-`zephlet_lua_run()` returns only on failure:
+`zephlet_lua_coordinate()` returns only on failure:
 
 | Return | Cause |
 |---|---|
@@ -227,7 +238,7 @@ zephlet emit ─► chan_<inst>_events
 
 1. The zephlet SYS_INIT walker initialises the instances (APPLICATION level).
    From then on their events are staged.
-2. `zephlet_lua_run()`, called from `main()`, creates the Lua state and
+2. `zephlet_lua_coordinate()`, called from `main()`, creates the Lua state and
    registers `zephlets`.
 3. The main chunk runs: connections, plus any setup commands.
 4. The seal freezes the handler lists and marks the connected instances.
@@ -312,8 +323,8 @@ warning on a misspelled name.
   Starting it a second time returns `-EALREADY`.
 - Commands block that thread for their duration, and with it every Lua task.
   They are synchronous zbus calls, like the C wrappers.
-- `LUA_PRECOMPILE_ONLY` (no Lua parser) is not supported, because the
-  frontend's internal tasks are Lua source.
+- Scripts are stripped bytecode (`luac -s`), so Lua error messages carry no
+  line numbers.
 - 32-bit Lua numbers; see [Messages as tables](#messages-as-tables).
 - Pointer- and callback-allocated nanopb fields, and `FIXARRAY` fields, are
   not converted. They are the same shapes nanopb-textformat skips.

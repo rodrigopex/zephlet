@@ -4,7 +4,7 @@ if(CONFIG_ZEPHLETS_LUA)
         zephlet_lua_events.c
         zephlet_lua_module.c
         zephlet_lua_pb.c
-        zephlet_lua_run.c
+        zephlet_lua_coordinate.c
     )
     zephyr_include_directories(include)
 
@@ -15,12 +15,19 @@ if(CONFIG_ZEPHLETS_LUA)
         NAME zephlet_lua_instance
         GROUP DATA_REGION ${XIP_ALIGN_WITH_INPUT})
 
-    # The frontend's own tasks, embedded as Lua source.
-    set(_zlet_lua_gen "${CMAKE_CURRENT_BINARY_DIR}/generated")
-    zephyr_library_include_directories(${_zlet_lua_gen})
-    generate_inc_file_for_target(zephlet_lua_frontend
-        "${CMAKE_CURRENT_SOURCE_DIR}/zephlet_lua_prelude.lua"
-        "${_zlet_lua_gen}/zephlet_lua_prelude.inc")
+    # The frontend's own tasks, embedded as bytecode by lua_zephyr's
+    # luaz_add_bytecode_file(). This module is processed before lua_zephyr,
+    # which defines that function, so the call is deferred to the end of the
+    # application's CMakeLists.txt. luaz resolves the path against the
+    # application directory and writes the header to <build>/lua/.
+    function(_zlet_lua_embed_prelude)
+        file(RELATIVE_PATH _prelude "${CMAKE_SOURCE_DIR}"
+            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/zephlet_lua_prelude.lua")
+        luaz_add_bytecode_file("${_prelude}")
+        target_include_directories(zephlet_lua_frontend PRIVATE "${CMAKE_BINARY_DIR}/lua")
+        add_dependencies(zephlet_lua_frontend zephlet_lua_prelude_lua_bytecode_header)
+    endfunction()
+    cmake_language(DEFER DIRECTORY "${CMAKE_SOURCE_DIR}" CALL _zlet_lua_embed_prelude)
 
     # LuaLS: after the link, read the instance records' symbols back from
     # the ELF and gather every type's annotations into one directory.

@@ -3,6 +3,12 @@ config TEST_LUA_SUITE
     default "basic"
     help
       Name of the script under scripts/, without the .lua extension,
-      that main() hands to zephlet_lua_run().
+      that main() hands to zephlet_lua_coordinate().
+
+config TEST_LUA_BAD_BUFFER
+    bool "Start the frontend with a buffer that is not a Lua chunk"
+    help
+      main() hands zephlet_lua_coordinate() a truncated bytecode header
+      instead of the suite's script, so the start fails to load the chunk.
 
 source "Kconfig.zephyr"

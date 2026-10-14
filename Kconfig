@@ -371,16 +371,18 @@ config ZEPHLETS_LUA
     # LUA_ASYNC comes from the lua_zephyr module; without that module in the
     # workspace this option cannot be enabled, and nothing Lua is built.
     depends on LUA_ASYNC
-    # The frontend's own tasks ship as Lua source.
-    depends on !LUA_PRECOMPILE_ONLY
+    # Scripts are compiled to bytecode on the host: the frontend's own tasks,
+    # and the application's through luaz_add_bytecode_file().
+    select LUA_PRECOMPILE
     select LUA_LIB_BASE
     # Descriptors only: field names and exact value types for the
     # nanopb <-> Lua table conversion. Neither the parser nor the printer is
     # used.
     select NANOPB_TEXTFORMAT
     help
-      Expose every zephlet instance to a Lua script through the `zephlets`
-      Lua module. The application passes the script to zephlet_lua_run()
+      Expose the instances of every zephlet type that sets the `lua`
+      option to a Lua script through the `zephlets` Lua module. The application embeds its script as bytecode with
+      luaz_add_bytecode_file() and passes it to zephlet_lua_coordinate()
       from main(). The script reaches instances by name, calls their
       commands as methods, and connects handlers to their events:
 
@@ -392,6 +394,9 @@ config ZEPHLETS_LUA
       Events are copied on the system workqueue into fixed staging slots
       and handed to the handlers by one persistent zephyr.async task on the
       thread that runs the script. No Lua runs in zbus listener context.
+
+      Every script is precompiled, so LUA_PRECOMPILE_ONLY can drop the Lua
+      parser from the image.
 
 if ZEPHLETS_LUA
 
@@ -450,7 +455,7 @@ config ZEPHLETS_LUA_POLL_MS
       idle. 0 disables the poll and the tasks wait for a doorbell only.
 
 config MAIN_STACK_SIZE
-    # zephlet_lua_run() runs the Lua VM, and every command's handler, on
+    # zephlet_lua_coordinate() runs the Lua VM, and every command's handler, on
     # the calling thread's stack.
     default 8192
 

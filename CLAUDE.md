@@ -202,7 +202,10 @@ Single script `codegen/generate_zephlet.py` parses the `.proto` service block, c
   forwarding `ZEPHLET_EVENTS_LISTENER` that copies events into C staging.
   Codegen adds `<prefix>_lua_interface.{h,c}` (trampolines → typed wrappers,
   method/enum tables; compiled only `=y`) and `<prefix>_lua_meta.lua` (LuaLS).
-  The app calls `zephlet_lua_run(buf, len, name)` from `main()`; the
+  `select`s `LUA_PRECOMPILE`: the app embeds its script with
+  `luaz_add_bytecode_file()` (the prelude too, via a `cmake_language(DEFER)`
+  call, since lua_zephyr is processed after this module) and calls
+  `zephlet_lua_coordinate(ZEPHLET_LUA_SCRIPT(app))` from `main()`; the
   main chunk connects, the seal freezes connections, then the `zephyr.async`
   loop runs the pump + dispatcher tasks. Tests: `tests/lua_functional`
   (console harness, native_sim).

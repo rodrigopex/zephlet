@@ -5,8 +5,8 @@
  * @file
  * @brief Lua frontend: the `zephlets` Lua module over every zephlet instance.
  *
- * The application hands a Lua script to zephlet_lua_run() from main(). The
- * script reaches instances by name as fields of the module, calls their
+ * The application hands a Lua script to zephlet_lua_coordinate() from main().
+ * The script reaches instances by name as fields of the module, calls their
  * commands with `:` syntax, and connects handlers to their events:
  *
  * @code{.lua}
@@ -121,6 +121,23 @@ struct zephlet_lua_instance {
 void zephlet_lua_stage(struct zephlet_lua_instance *inst, const void *ev, size_t size);
 
 /**
+ * @brief Arguments of zephlet_lua_coordinate() for a script embedded with
+ * luaz_add_bytecode_file().
+ *
+ * `luaz_add_bytecode_file(src/app.lua)` in CMakeLists.txt generates
+ * `app_lua_bytecode.h`; include it, then:
+ *
+ * @code{.c}
+ * return zephlet_lua_coordinate(ZEPHLET_LUA_SCRIPT(app));
+ * @endcode
+ *
+ * @param name  The script's file name without `.lua`. Macros are expanded.
+ */
+#define ZEPHLET_LUA_SCRIPT(name) Z_ZEPHLET_LUA_SCRIPT(name)
+#define Z_ZEPHLET_LUA_SCRIPT(name)                                                                 \
+	(const char *)name##_lua_bytecode, name##_lua_bytecode_len, "=" #name
+
+/**
  * @brief Run a Lua script against the zephlet instances. Call from main().
  *
  * Creates the Lua state on its own heap, runs the script's main chunk -- which
@@ -131,17 +148,27 @@ void zephlet_lua_stage(struct zephlet_lua_instance *inst, const void *ev, size_t
  * The calling thread owns the Lua state: commands run their handlers on its
  * stack, so size CONFIG_MAIN_STACK_SIZE accordingly.
  *
- * @param buf        Script source or precompiled bytecode.
+ * @param buf        Precompiled bytecode (see ZEPHLET_LUA_SCRIPT()), or source
+ *                   when the build keeps the Lua parser.
  * @param len        Length of @p buf in bytes.
  * @param chunkname  Name used in Lua error messages.
  *
+ * The frontend starts once: after any return, including a failure before the
+ * Lua state exists, every later call returns -EALREADY, and the instances stop
+ * staging events.
+ *
  * @retval -EALREADY  The frontend has already been started.
- * @retval -ENOMEM    The Lua state could not be created.
- * @retval -ENOEXEC   The script did not load (syntax error).
- * @retval -EINVAL    The main chunk raised an error, or returned something
+ * @retval -ENOMEM    The heap is too small to start: for the Lua state, the
+ *                    libraries, the frontend's own prelude or the main chunk.
+ * @retval -ENOEXEC   The script did not load: not bytecode for this Lua, or a
+ *                    syntax error in source.
+ * @retval -EINVAL    The main chunk raised an error other than running out of
+ *                    memory, or returned something
  *                    other than nil or a function.
- * @retval -EFAULT    The scheduler stopped on a fault.
+ * @retval -EFAULT    The scheduler stopped on a fault, or the frontend's own
+ *                    prelude failed to load or run: a build that mixes Lua
+ *                    versions.
  */
-int zephlet_lua_run(const char *buf, size_t len, const char *chunkname);
+int zephlet_lua_coordinate(const char *buf, size_t len, const char *chunkname);
 
 #endif /* ZEPHLET_LUA_H_ */

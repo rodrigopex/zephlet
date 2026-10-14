@@ -1,5 +1,5 @@
 /*
- * zephlet_lua_run(): the frontend's entry point.
+ * zephlet_lua_coordinate(): the frontend's entry point.
  *
  * Order, all on the calling thread:
  *   1. Lua state on the frontend's own heap; `zephlets` in package preload.
@@ -28,6 +28,8 @@
 #include <zephyr/zbus/zbus.h>
 
 #include "zephlet_lua_priv.h"
+/* zephlet_lua_prelude.lua, precompiled by luaz_add_bytecode_file(). */
+#include "zephlet_lua_prelude_lua_bytecode.h"
 
 LOG_MODULE_REGISTER(zlet_lua, CONFIG_ZEPHLET_LOG_LEVEL);
 
@@ -38,10 +40,6 @@ static uint8_t heap_mem[CONFIG_ZEPHLETS_LUA_HEAP_SIZE] __aligned(8);
 static struct sys_heap heap;
 
 ZBUS_MSG_SUBSCRIBER_DEFINE(zlet_lua_sub);
-
-static const char prelude[] = {
-#include "zephlet_lua_prelude.inc"
-};
 
 static atomic_t started;
 
@@ -67,9 +65,10 @@ static int run(lua_State *L, const char *buf, size_t len, const char *chunkname)
 		LOG_ERR("%s", lua_tostring(L, -1));
 		return -ENOEXEC;
 	}
-	if (lua_pcall(L, 0, 1, tb) != LUA_OK) {
+	rc = lua_pcall(L, 0, 1, tb);
+	if (rc != LUA_OK) {
 		LOG_ERR("%s", lua_tostring(L, -1));
-		return -EINVAL;
+		return (rc == LUA_ERRMEM) ? -ENOMEM : -EINVAL;
 	}
 	if (lua_isnil(L, -1)) {
 		lua_pop(L, 1);
@@ -82,7 +81,8 @@ static int run(lua_State *L, const char *buf, size_t len, const char *chunkname)
 
 	zlet_lua_seal(L);
 
-	if (luaL_loadbufferx(L, prelude, sizeof(prelude), "=zephlets", "t") != LUA_OK) {
+	if (luaL_loadbufferx(L, (const char *)zephlet_lua_prelude_lua_bytecode,
+			     zephlet_lua_prelude_lua_bytecode_len, "=zephlets", "b") != LUA_OK) {
 		LOG_ERR("prelude: %s", lua_tostring(L, -1));
 		return -EFAULT;
 	}
@@ -101,8 +101,34 @@ static int run(lua_State *L, const char *buf, size_t len, const char *chunkname)
 	return (rc == 0) ? 0 : -EFAULT;
 }
 
-int zephlet_lua_run(const char *buf, size_t len, const char *chunkname)
+struct start_args {
+	const char *buf;
+	size_t len;
+	const char *chunkname;
+	int rc;
+};
+
+/*
+ * Everything after lua_newstate(), under the protected call
+ * zephlet_lua_coordinate() makes: the libraries, the module and run()'s own
+ * bookkeeping allocate outside any pcall of their own, and on a heap too
+ * small for them an unprotected error would abort.
+ */
+static int start(lua_State *L)
 {
+	struct start_args *args = lua_touserdata(L, 1);
+
+	lua_settop(L, 0);
+	luaz_openlibs(L);
+	zlet_lua_register(L);
+	args->rc = run(L, args->buf, args->len, args->chunkname);
+
+	return 0;
+}
+
+int zephlet_lua_coordinate(const char *buf, size_t len, const char *chunkname)
+{
+	struct start_args args = {.buf = buf, .len = len, .chunkname = chunkname};
 	lua_State *L;
 	int rc;
 

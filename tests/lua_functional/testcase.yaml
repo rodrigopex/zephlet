@@ -23,7 +23,18 @@ tests:
       ordered: false
       regex:
         - "lua suite basic: \\d+ passed, 0 failed"
-        - "second zephlet_lua_run\\(\\): EALREADY"
+        - "second zephlet_lua_coordinate\\(\\): EALREADY"
+  zephlet.lua_functional.precompile_only:
+    # The basic suite with the Lua parser left out of the image: the script
+    # and the frontend's own tasks both load as bytecode.
+    extra_configs:
+      - CONFIG_LUA_PRECOMPILE_ONLY=y
+    harness_config:
+      type: multi_line
+      ordered: false
+      regex:
+        - "lua suite basic: \\d+ passed, 0 failed"
+        - "second zephlet_lua_coordinate\\(\\): EALREADY"
   zephlet.lua_functional.overflow:
     # Staging and FIFO both full: drops are counted and reported in meta.
     extra_configs:
@@ -35,13 +46,58 @@ tests:
       regex:
         - "lua suite overflow: \\d+ passed, 0 failed"
   zephlet.lua_functional.bad_chunk:
-    # A main chunk that raises: zephlet_lua_run() returns -EINVAL.
+    # A main chunk that raises: zephlet_lua_coordinate() returns -EINVAL.
     extra_configs:
       - CONFIG_TEST_LUA_SUITE="bad_chunk"
     harness_config:
-      type: one_line
+      type: multi_line
+      ordered: true
       regex:
-        - "zephlet_lua_run\\(\\) returned EINVAL"
+        - "zephlet_lua_coordinate\\(\\) returned EINVAL"
+        - "after the frontend stopped: 0 new staged drops"
+  zephlet.lua_functional.bad_load:
+    # A buffer that is not a Lua chunk: zephlet_lua_coordinate() returns
+    # -ENOEXEC, and the frontend stays stopped.
+    extra_configs:
+      - CONFIG_TEST_LUA_BAD_BUFFER=y
+    harness_config:
+      type: multi_line
+      ordered: true
+      regex:
+        - "zephlet_lua_coordinate\\(\\) returned ENOEXEC"
+        - "after the frontend stopped: 0 new staged drops"
+  zephlet.lua_functional.bad_return:
+    # A main chunk that returns a number: -EINVAL, with the reason logged.
+    extra_configs:
+      - CONFIG_TEST_LUA_SUITE="bad_return"
+    harness_config:
+      type: multi_line
+      ordered: true
+      regex:
+        - "the main chunk must return nil or a function, not a number"
+        - "zephlet_lua_coordinate\\(\\) returned EINVAL"
+        - "after the frontend stopped: 0 new staged drops"
+  zephlet.lua_functional.heap_tiny:
+    # A heap too small for the Lua state itself: -ENOMEM.
+    extra_configs:
+      - CONFIG_ZEPHLETS_LUA_HEAP_SIZE=1024
+    harness_config:
+      type: multi_line
+      ordered: true
+      regex:
+        - "zephlet_lua_coordinate\\(\\) returned ENOMEM"
+        - "after the frontend stopped: 0 new staged drops"
+  zephlet.lua_functional.heap_small:
+    # Room for the state but not for the libraries and the prelude: the
+    # start runs under a protected call, so this is -ENOMEM, not an abort.
+    extra_configs:
+      - CONFIG_ZEPHLETS_LUA_HEAP_SIZE=8192
+    harness_config:
+      type: multi_line
+      ordered: true
+      regex:
+        - "zephlet_lua_coordinate\\(\\) returned ENOMEM"
+        - "after the frontend stopped: 0 new staged drops"
   zephlet.lua_functional.disabled:
     # The frontend off: the app builds and runs with no Lua at all.
     extra_configs:

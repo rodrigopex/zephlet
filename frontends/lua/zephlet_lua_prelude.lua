@@ -1,4 +1,5 @@
--- Internal tasks of the zephlets Lua frontend; started by zephlet_lua_run().
+-- Internal tasks of the zephlets Lua frontend; started by
+-- zephlet_lua_coordinate().
 --
 -- pump     moves staged events into the Lua-heap FIFO, so staging keeps
 --          emptying while a handler is parked (e.g. in async.sleep).

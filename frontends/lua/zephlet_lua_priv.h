@@ -3,8 +3,8 @@
 
 /*
  * Internals shared by the Lua frontend's translation units. Everything here
- * runs on the owner thread (the one that called zephlet_lua_run()) unless it
- * says otherwise.
+ * runs on the owner thread (the one that called zephlet_lua_coordinate())
+ * unless it says otherwise.
  */
 
 #include <lua.h>
@@ -16,7 +16,7 @@
 
 struct pb_tf_msg;
 
-/** Thread that owns the Lua state; set once by zephlet_lua_run(). */
+/** Thread that owns the Lua state; set once by zephlet_lua_coordinate(). */
 extern k_tid_t zlet_lua_owner;
 
 /** Non-zero once the main chunk has returned and connections are frozen. */
