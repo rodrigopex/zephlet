@@ -145,6 +145,7 @@ has **no per-service proto opt-in**.
 |---|---|---|
 | CoAP | Proposed (v1) | [`../plans/coap-frontend.md`](../plans/coap-frontend.md) |
 | Shell | Implemented (v2) | [`../plans/shell-frontend.md`](../plans/shell-frontend.md) (v1 design, superseded — see the addendum below) |
+| Lua | Implemented | [`../../frontends/lua/README.md`](../../frontends/lua/README.md) (see the addendum below) |
 | gRPC | Deferred | — |
 | MQTT | Deferred | — |
 
@@ -228,3 +229,34 @@ round-tripping intact through string, bytes and repeated-string values,
 including a wildcard in the instance-name position. Requiring a Kconfig
 symbol of every consumer is a real ergonomic cost, and this one bought
 nothing.
+
+## Addendum: the Lua frontend
+
+The Lua frontend is the first frontend whose consumer runs in the same
+image. A Lua script on lua_zephyr's `zephyr.async` scheduler calls commands
+and handles events. It follows the shell's shape: no per-service opt-in, and
+the hook is gated by `CONFIG_ZEPHLETS_LUA` alone. Its generated artifacts sit
+next to CoAP's: `<prefix>_lua_interface.{h,c}`, which are included or compiled
+only with the frontend on, and `<prefix>_lua_meta.lua` (LuaLS annotations).
+The `=n` image is therefore unchanged.
+
+Four decisions are specific to it:
+
+- **Commands reuse the typed wrappers.** A generated trampoline per RPC calls
+  `<type>_<rpc>()`, rather than building a `zephlet_call` like CoAP does. A
+  Lua command takes exactly the C caller's path.
+- **Events cross threads by copy only.** The Lua state's allocator, VM and
+  scheduler are owned by one thread and are not thread-safe. The per-instance
+  listener therefore copies into fixed C staging slots and rings a data-less
+  doorbell channel, which is the only thing `zephyr.async` awaits. Two Lua
+  tasks drain staging into a Lua-heap FIFO. One persistent dispatcher
+  coroutine runs the handlers.
+- **Connections are static.** They are declared in the script's main chunk
+  and sealed when it returns. Instances without handlers are then filtered in
+  the listener, which bounds the cost of the frontend to the sources the
+  script actually uses.
+- **Instance names for LuaLS come from the ELF.** Codegen runs per type and
+  never sees instances. The hook names each instance record
+  `__zlet_lua__<type>__<instance>`, and a post-build step reads those symbols
+  back. The resulting list is exact, and Kconfig-disabled instances are left
+  out.

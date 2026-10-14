@@ -194,6 +194,19 @@ Single script `codegen/generate_zephlet.py` parses the `.proto` service block, c
   32 bits; see `docs/adr/0001-zephlet-frontends.md` for why
   `SHELL_WILDCARD` is *not* one of them.
 
+- `CONFIG_ZEPHLETS_LUA=y` — Lua frontend (`frontends/lua/`, guide in its
+  README). `depends on LUA_ASYNC` (lua_zephyr module, pinned by SHA in the
+  app manifest), `select`s `NANOPB_TEXTFORMAT` for descriptors. Hook
+  `_ZLET_LUA_HOOK_<type>` emits per instance a
+  `zephlet_lua_instance` record (`__zlet_lua__<type>__<inst>`) plus a
+  forwarding `ZEPHLET_EVENTS_LISTENER` that copies events into C staging.
+  Codegen adds `<prefix>_lua_interface.{h,c}` (trampolines → typed wrappers,
+  method/enum tables; compiled only `=y`) and `<prefix>_lua_meta.lua` (LuaLS).
+  The app calls `zephlet_lua_run(buf, len, name)` from `main()`; the
+  main chunk connects, the seal freezes connections, then the `zephyr.async`
+  loop runs the pump + dispatcher tasks. Tests: `tests/lua_functional`
+  (console harness, native_sim).
+
 ## Naming
 
 | Element | Pattern |

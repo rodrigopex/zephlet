@@ -19,8 +19,8 @@ manifest:
       path: modules/lib/zephlet
       west-commands: west/west-commands.yml
 
-    # Only needed with CONFIG_ZEPHLETS_SHELL=y — see Dependencies. Drop
-    # this entry if you are not enabling the shell frontend.
+    # Needed with CONFIG_ZEPHLETS_SHELL=y or CONFIG_ZEPHLETS_LUA=y.
+    # Omit this entry only when both frontends are disabled.
     - name: zephyr-nanopb-textformat
       url: https://github.com/rodrigopex/zephyr-nanopb-textformat
       revision: v0.8.1
@@ -305,6 +305,23 @@ descriptor — 1068 B across 23 messages in the example app. No static RAM;
 that has at least one field, since one reachable only as a submessage still
 needs one.
 
+## Lua frontend
+
+`CONFIG_ZEPHLETS_LUA=y` exposes every instance to a Lua script as the
+`zephlets` module, through lua_zephyr's `zephyr.async` scheduler. No app
+wiring beyond `zephlet_lua_run()` in `main()`:
+
+```lua
+local z = require("zephlets")
+z.tick_fast.events:connect(function(ev, meta) z.ui_main:blink(100) end)
+```
+
+Commands take a required `timeout_ms` and return `resp` or
+`nil, "<ERRNO>", rc`. Connections are fixed once the script's main chunk
+returns. Every handler runs in one persistent coroutine, and no Lua runs in
+listener context. Full guide (event transport, limits, LuaLS):
+[`frontends/lua/README.md`](frontends/lua/README.md).
+
 ## West commands
 
 | Command | Purpose |
@@ -339,16 +356,18 @@ authority over this table.
 - Zephyr RTOS (with `zbus`, `nanopb` modules).
 - Python packages: `proto-schema-parser`, `jinja2`, `copier`.
 - [`zephyr-nanopb-textformat`](https://github.com/rodrigopex/zephyr-nanopb-textformat)
-  — **only with `CONFIG_ZEPHLETS_SHELL=y`**, which `select`s it. The shell
-  frontend takes each RPC's request as a protobuf text-format message and
-  hands parsing and printing to this library, so every field shape works
-  (`optional`, `repeated`, submessage, nested) without codegen walking
-  fields.
+  — **only with `CONFIG_ZEPHLETS_SHELL=y` or `CONFIG_ZEPHLETS_LUA=y`**, each
+  of which `select`s it. The shell frontend takes each RPC's request as a
+  protobuf text-format message and hands parsing and printing to this
+  library, so every field shape works (`optional`, `repeated`, submessage,
+  nested) without codegen walking fields. The Lua frontend uses only its
+  message descriptors, for the conversion between Lua tables and nanopb
+  structs.
 
   It must be in *your* west manifest: if it is absent the `select` has no
   symbol to resolve and the frontend has no `nanopb_textformat.h` to
-  include. Nothing else in the infra needs it, so a project with the shell
-  frontend off can leave it out entirely.
+  include. Nothing else in the infra needs it, so a project with both the
+  shell and the Lua frontend off can leave it out entirely.
 
   `CONFIG_ZEPHLETS_SHELL` selects both halves of it —
   `NANOPB_TEXTFORMAT_PARSE` and `NANOPB_TEXTFORMAT_PRINT` — since an RPC's
@@ -374,6 +393,13 @@ authority over this table.
   wider than 32 bits, and larger `CONFIG_SHELL_CMD_BUFF_SIZE` /
   `CONFIG_SHELL_BACKEND_SERIAL_RX_RING_BUFFER_SIZE` for a wide message,
   since naming every field makes text format verbose.
+
+- [`lua_zephyr`](https://github.com/zano-systems/lua_zephyr): **only with
+  `CONFIG_ZEPHLETS_LUA=y`**, which `depends on` its `LUA_ASYNC`. Pin it by
+  SHA with `submodules: true`. It was tested against `58c47e5`
+  (`feat/async-coroutine-scheduler`). The Lua frontend also `select`s
+  `NANOPB_TEXTFORMAT`, for its descriptors only, so the textformat library
+  above must be in the manifest too.
 
 ## Example app
 
