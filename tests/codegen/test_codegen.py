@@ -737,9 +737,9 @@ def test_lua_meta_annotates_every_shape(tmp_path):
 	assert "---@field unit pb.Gauge.Unit" in meta
 	assert "---@field label string" in meta
 	assert "---@field Unit pb.Gauge.Unit" in meta
-	assert "---@param policy fun(ev: pb.Gauge.Events, meta: zephlets.EventMeta)" in meta
+	assert "---@param policy fun(ev: pb.Gauge.Events, inst: zephlets.gauge)" in meta
 	assert "function _gauge:add_policy(policy) end" in meta
-	assert "---@return pb.Gauge.Events|nil ev" in meta
+	assert "---@return pb.Gauge.Events|nil ev read-only" in meta
 	assert "function _gauge:await(timeout_ms) end" in meta
 	assert "function _gauge:config(req, timeout_ms) end" in meta
 	assert "function _gauge:reset(timeout_ms) end" in meta

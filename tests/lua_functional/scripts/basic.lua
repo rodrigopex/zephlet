@@ -252,30 +252,33 @@ a:burst({count = 1, value = 1}, 100)
 
 local log = {}
 local routes = {}
+local names = {[a] = "probe_a", [b] = "probe_b"}
+local first_ev
 local threads = {}
 local in_handler = false
 local overlapped = false
 
 local function record(tag)
-	return function(ev, meta)
+	return function(ev, inst)
 		if in_handler then
 			overlapped = true
 		end
-		log[#log + 1] = string.format("%s:%s:%d", tag, meta.name, ev.seq)
-		routes[#routes + 1] = meta.source
+		first_ev = first_ev or ev
+		log[#log + 1] = string.format("%s:%s:%d", tag, names[inst], ev.seq)
+		routes[#routes + 1] = inst
 		threads[#threads + 1] = coroutine.running()
 	end
 end
 
 a:add_policy(record("a1"))
-a:add_policy(function(ev, meta)
+a:add_policy(function(ev)
 	in_handler = true
 	if ev.value == 9 then
 		-- Park the dispatcher; events keep arriving meanwhile.
 		require("zephyr.async").sleep(30)
 	end
 	in_handler = false
-	log[#log + 1] = string.format("a2:%d:%d:%s", ev.seq, meta.dropped, tostring(ev.alarm))
+	log[#log + 1] = string.format("a2:%d:%s", ev.seq, tostring(ev.alarm))
 end)
 b:add_policy(function(ev)
 	error("boom " .. ev.seq)
@@ -301,17 +304,32 @@ return function()
 
 	wait_for(2, "the event emitted before the seal")
 	eq(log[1], "a1:probe_a:1", "pre-seal event, first handler")
-	eq(log[2], "a2:1:0:false", "pre-seal event, second handler")
+	eq(log[2], "a2:1:false", "pre-seal event, second handler")
+
+	-- Event objects: fields read from the C struct, read-only.
+	eq(first_ev.seq, 1, "event scalar field")
+	eq(first_ev.mode, a.Mode.MODE_IDLE, "event enum field")
+	eq(first_ev.inner.a, 0, "event submessage field")
+	eq(first_ev.inner.b, 0, "event submessage, second field")
+	check(first_ev.inner ~= first_ev.inner, "a submessage is built on each read")
+	raises(function() return first_ev.nope end, "probe event has no field 'nope'", "unknown event field")
+	raises(function() first_ev.seq = 2 end, "events are read-only", "events are read-only")
+	local fields = {}
+	for k in pairs(first_ev) do
+		fields[#fields + 1] = k
+	end
+	eq(table.concat(fields, ","), "seq,value,mode,alarm,inner", "pairs() over an event")
+	check(string.find(tostring(first_ev), "probe", 1, true) ~= nil, "tostring names the type")
 
 	-- Two sources, one coroutine, in emission order.
 	a:burst({count = 2, value = 2}, 100)
 	b:burst({count = 2, value = 3}, 100)
 	wait_for(8, "two bursts")
 	eq(table.concat(log, ",", 3, 8),
-		"a1:probe_a:2,a2:2:0:false,a1:probe_a:3,a2:3:0:true,b2:probe_b:1,b2:probe_b:2",
+		"a1:probe_a:2,a2:2:false,a1:probe_a:3,a2:3:true,b2:probe_b:1,b2:probe_b:2",
 		"routing and order")
-	eq(routes[2], a, "meta.source is the instance")
-	eq(routes[4], b, "meta.source of the second source")
+	eq(routes[2], a, "a policy gets its instance")
+	eq(routes[4], b, "the instance of the second source")
 	check(threads[1] == threads[4] and threads[1] ~= coroutine.running(),
 		"every handler runs in the one dispatcher coroutine")
 
@@ -323,8 +341,8 @@ return function()
 	a:burst({count = 3, value = 9}, 100)
 	wait_for(14, "events behind a parked handler")
 	check(not overlapped, "a handler is never re-entered while parked")
-	eq(log[10], "a2:4:0:false", "first event after the park")
-	eq(log[14], "a2:6:0:false", "last event behind the park")
+	eq(log[10], "a2:4:false", "first event after the park")
+	eq(log[14], "a2:6:false", "last event behind the park")
 
 	-- A source with no policy is filtered, not counted as dropped.
 	idle:burst({count = 3, value = 0}, 100)

@@ -32,6 +32,8 @@
 #include <zephyr/sys/atomic.h>
 #include <zephyr/zbus/zbus.h>
 
+#include <nanopb_textformat.h>
+
 #include "zephlet_lua_priv.h"
 
 LOG_MODULE_DECLARE(zlet_lua);
@@ -57,7 +59,8 @@ static atomic_t bell_pending;
 
 struct zlet_lua_slot {
 	uint16_t idx;
-	uint32_t seq;
+	/** Bytes of payload in use: the event struct's size. */
+	uint16_t len;
 	uint8_t payload[CONFIG_ZEPHLETS_LUA_SLOT_SIZE] __aligned(8);
 };
 
@@ -80,10 +83,11 @@ void zlet_lua_count_drop(struct zephlet_lua_instance *inst, atomic_t *counter, c
 
 void zephlet_lua_stage(struct zephlet_lua_instance *inst, const void *ev, size_t size)
 {
-	uint32_t seq = (uint32_t)atomic_inc(&inst->stats.seq) + 1U;
+	struct zephlet_lua_instance *overwritten = NULL;
 	struct zlet_lua_slot *slot;
 	k_spinlock_key_t key;
 
+	(void)atomic_inc(&inst->stats.emitted);
 	if ((atomic_get(&zlet_lua_sealed) != 0) &&
 	    ((atomic_get(&inst->flags) & ZEPHLET_LUA_F_CONNECTED) == 0)) {
 		return;
@@ -91,16 +95,30 @@ void zephlet_lua_stage(struct zephlet_lua_instance *inst, const void *ev, size_t
 
 	key = k_spin_lock(&staging_lock);
 	if (staging_len == ARRAY_SIZE(staging)) {
-		k_spin_unlock(&staging_lock, key);
-		zlet_lua_count_drop(inst, &inst->stats.staged_drop, "staging full");
-		return;
+		if (atomic_get(&zlet_lua_sealed) != 0) {
+			k_spin_unlock(&staging_lock, key);
+			zlet_lua_count_drop(inst, &inst->stats.staged_drop, "staging full");
+			return;
+		}
+		/* Before the seal nothing empties staging, and nothing is known yet
+		 * about which sources matter: keep the newest events, so the ones the
+		 * main chunk's commands cause are not crowded out by earlier ones. */
+		overwritten = zlet_lua_instance_get(staging[staging_head].idx);
+		staging_head = (staging_head + 1U) % ARRAY_SIZE(staging);
+		staging_len--;
 	}
 	slot = &staging[(staging_head + staging_len) % ARRAY_SIZE(staging)];
 	slot->idx = (uint16_t)zlet_lua_instance_index(inst);
-	slot->seq = seq;
-	memcpy(slot->payload, ev, MIN(size, sizeof(slot->payload)));
+	slot->len = (uint16_t)MIN(size, sizeof(slot->payload));
+	memcpy(slot->payload, ev, slot->len);
 	staging_len++;
 	k_spin_unlock(&staging_lock, key);
+
+	if (overwritten != NULL) {
+		/* Counted at seal, and only for a source that turns out to have a
+		 * consumer: the others' events would have been purged anyway. */
+		(void)atomic_inc(&overwritten->preseal_drop);
+	}
 
 	if (atomic_cas(&bell_pending, 0, 1)) {
 		struct zlet_lua_bell msg = {.n = 1};
@@ -171,7 +189,6 @@ void zlet_lua_shutdown(void)
 static const char fifo_key;
 
 static uint16_t fifo_src[CONFIG_ZEPHLETS_LUA_FIFO_DEPTH];
-static uint32_t fifo_seq[CONFIG_ZEPHLETS_LUA_FIFO_DEPTH];
 static size_t fifo_head;
 static size_t fifo_len;
 
@@ -185,12 +202,12 @@ static int l_convert(lua_State *L)
 {
 	const struct zephlet_lua_instance *inst = lua_touserdata(L, 1);
 
-	zlet_lua_push_msg(L, inst->type->events_tf, drain_slot.payload);
+	zlet_lua_push_event(L, inst->type, drain_slot.payload);
 
 	return 1;
 }
 
-/* Convert drain_slot to a table; under a protected call, since it allocates. */
+/* Wrap drain_slot as an event object; under a protected call, since it allocates. */
 static bool convert(lua_State *L, struct zephlet_lua_instance *inst)
 {
 	lua_pushcfunction(L, l_convert);
@@ -202,6 +219,26 @@ static bool convert(lua_State *L, struct zephlet_lua_instance *inst)
 	}
 
 	return true;
+}
+
+/* Does drain_slot hold exactly one events struct of @p inst's type? */
+static bool slot_fits(const struct zephlet_lua_instance *inst)
+{
+	const struct pb_tf_msg *tf = inst->type->events_tf;
+
+	return (tf == NULL) || (drain_slot.len == tf->struct_size);
+}
+
+/* drain_slot's event is lost to every consumer it was going to. */
+static void drop_slot(struct zephlet_lua_instance *inst, bool to_fifo, bool to_await,
+		      const char *why)
+{
+	if (to_fifo) {
+		zlet_lua_count_drop(inst, &inst->stats.fifo_drop, why);
+	}
+	if (to_await) {
+		zlet_lua_count_drop(inst, &inst->stats.await_drop, why);
+	}
 }
 
 void zlet_lua_drain(lua_State *L)
@@ -235,25 +272,28 @@ void zlet_lua_drain(lua_State *L)
 		if (!to_fifo && !to_await) {
 			continue;
 		}
+		/* The generated hook stages sizeof() its events struct and a
+		 * BUILD_ASSERT keeps that within the slot, so only a direct
+		 * zephlet_lua_stage() call can get here with another size: never
+		 * read a struct out of the wrong number of bytes. */
+		if (!slot_fits(inst)) {
+			drop_slot(inst, to_fifo, to_await,
+				  "staged size is not the events struct's");
+			continue;
+		}
 		if (!convert(L, inst)) {
-			if (to_fifo) {
-				zlet_lua_count_drop(inst, &inst->stats.fifo_drop, "out of memory");
-			}
-			if (to_await) {
-				zlet_lua_count_drop(inst, &inst->stats.await_drop, "out of memory");
-			}
+			drop_slot(inst, to_fifo, to_await, "out of memory");
 			continue;
 		}
 
 		if (to_await) {
-			zlet_lua_await_route(L, drain_slot.idx, drain_slot.seq);
+			zlet_lua_await_route(L, drain_slot.idx);
 		}
 		if (to_fifo) {
 			size_t tail = (fifo_head + fifo_len) % ARRAY_SIZE(fifo_src);
 
 			lua_rawseti(L, -2, (lua_Integer)tail + 1);
 			fifo_src[tail] = drain_slot.idx;
-			fifo_seq[tail] = drain_slot.seq;
 			fifo_len++;
 		} else {
 			lua_pop(L, 1);
@@ -271,7 +311,7 @@ static int l_drain(lua_State *L)
 	return 0;
 }
 
-/* core.pop() -> handlers, event, meta; or nil when the FIFO is empty. */
+/* core.pop() -> handlers, event, instance; or nil when the FIFO is empty. */
 static int l_pop(lua_State *L)
 {
 	struct zephlet_lua_instance *inst;
@@ -284,8 +324,8 @@ static int l_pop(lua_State *L)
 		return 1;
 	}
 
-	/* Taken off first: if building meta runs out of memory, the event is lost
-	 * (and counted by core.lost()) rather than retried forever. */
+	/* Taken off first: if pushing the instance runs out of memory, the event
+	 * is lost (and counted by core.lost()) rather than retried forever. */
 	idx = fifo_src[head];
 	fifo_head = (fifo_head + 1U) % ARRAY_SIZE(fifo_src);
 	fifo_len--;
@@ -300,18 +340,7 @@ static int l_pop(lua_State *L)
 	lua_rawseti(L, -3, (lua_Integer)head + 1);
 	lua_remove(L, -2);
 
-	lua_createtable(L, 0, 4);
 	zlet_lua_push_instance(L, inst);
-	lua_setfield(L, -2, "source");
-	lua_pushstring(L, inst->z->name);
-	lua_setfield(L, -2, "name");
-	lua_pushinteger(L, (lua_Integer)fifo_seq[head]);
-	lua_setfield(L, -2, "seq");
-	/* Every event of a connected source is staged or counted as dropped, so
-	 * the gap in its sequence is exactly what it lost since the last one. */
-	lua_pushinteger(L, (lua_Integer)(fifo_seq[head] - inst->last_seq - 1U));
-	lua_setfield(L, -2, "dropped");
-	inst->last_seq = fifo_seq[head];
 
 	(void)atomic_inc(&inst->stats.delivered);
 	pop_inflight = -1;
@@ -324,8 +353,9 @@ static int l_lost(lua_State *L)
 {
 	if (pop_inflight >= 0) {
 		struct zephlet_lua_instance *inst = zlet_lua_instance_get((size_t)pop_inflight);
+		const char *err = lua_tostring(L, 1);
 
-		LOG_ERR("%s: event lost: %s", inst->z->name, luaL_optstring(L, 1, "?"));
+		LOG_ERR("%s: event lost: %s", inst->z->name, (err != NULL) ? err : "?");
 		zlet_lua_count_drop(inst, &inst->stats.fifo_drop, "out of memory");
 		pop_inflight = -1;
 	}
@@ -333,21 +363,18 @@ static int l_lost(lua_State *L)
 	return 0;
 }
 
-/* core.handler_error(name, err) */
+/* core.handler_error(inst, err) */
 static int l_handler_error(lua_State *L)
 {
-	const char *name = luaL_checkstring(L, 1);
-	const char *err = luaL_optstring(L, 2, "(error object is not a string)");
+	struct zephlet_lua_instance *inst = zlet_lua_to_instance(L, 1);
+	/* Never raises: it runs in the dispatcher's loop, outside any pcall. */
+	const char *err = lua_tostring(L, 2);
 
-	for (size_t i = 0U; i < zlet_lua_instance_count(); i++) {
-		struct zephlet_lua_instance *inst = zlet_lua_instance_get(i);
-
-		if (strcmp(inst->z->name, name) == 0) {
-			(void)atomic_inc(&inst->stats.handler_err);
-			break;
-		}
+	if (inst != NULL) {
+		(void)atomic_inc(&inst->stats.handler_err);
 	}
-	LOG_ERR("%s handler: %s", name, err);
+	LOG_ERR("%s policy: %s", (inst != NULL) ? inst->z->name : "?",
+		(err != NULL) ? err : "(error object is not a string)");
 
 	return 0;
 }
@@ -370,7 +397,8 @@ static int l_bell(lua_State *L)
  */
 static int l_idle(lua_State *L)
 {
-	if (IS_ENABLED(CONFIG_ZEPHLETS_LUA_GC_IDLE_STEP)) {
+	/* Not while the script has stopped the collector: a step would run anyway. */
+	if (IS_ENABLED(CONFIG_ZEPHLETS_LUA_GC_IDLE_STEP) && (lua_gc(L, LUA_GCISRUNNING) != 0)) {
 		(void)lua_gc(L, LUA_GCSTEP, 0);
 	}
 

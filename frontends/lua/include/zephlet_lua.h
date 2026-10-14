@@ -11,7 +11,7 @@
  *
  * @code{.lua}
  * local z = require("zephlets")
- * z.tick_fast:add_policy(function(ev, meta) z.ui_main:blink(100) end)
+ * z.tick_fast:add_policy(function(ev) z.ui_main:blink(100) end)
  * @endcode
  *
  * The script's zephyr.async tasks can instead wait for events in sequence,
@@ -74,8 +74,8 @@ struct zephlet_lua_type {
 
 /** @brief Per-instance counters, readable from Lua with `z.stats()`. */
 struct zephlet_lua_stats {
-	/** Events emitted by the instance, dropped ones included; `meta.seq`. */
-	atomic_t seq;
+	/** Events emitted by the instance, dropped ones included. */
+	atomic_t emitted;
 	/** Events dropped because every staging slot was taken. */
 	atomic_t staged_drop;
 	/** Events dropped because the Lua-heap FIFO was full or out of memory. */
@@ -103,8 +103,8 @@ struct zephlet_lua_instance {
 	/** ZEPHLET_LUA_F_* */
 	atomic_t flags;
 	struct zephlet_lua_stats stats;
-	/** `seq` of the last event handed to a policy; `meta.dropped` is the gap. */
-	uint32_t last_seq;
+	/** Internal: events overwritten in staging before the seal, not yet counted. */
+	atomic_t preseal_drop;
 };
 
 /** The instance's events are staged: it has a policy or an awaiting task. */

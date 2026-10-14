@@ -12,11 +12,11 @@ local tick      = z.tick_timer_based_impl
 local tampering = z.tampering_emul_impl
 local ui        = z.ui_fake_impl
 
-tick:add_policy(function(ev, meta)
+tick:add_policy(function(ev)
     ui:blink(100)
 end)
 
-tampering:add_policy(function(ev, meta)
+tampering:add_policy(function(ev)
     if ev.proximity_tamper_detected then
         ui:blink(100)
     end
@@ -49,7 +49,10 @@ int main(void)
    `58c47e5bdb40f7cdaea3a05db2b5fcc81226b5a6`, the head of
    `feat/async-coroutine-scheduler`. If the module is missing,
    `CONFIG_ZEPHLETS_LUA` cannot be enabled (`depends on LUA_ASYNC`) and
-   nothing Lua is built.
+   nothing Lua is built. Put
+   [zephyr-nanopb-textformat](https://github.com/rodrigopex/zephyr-nanopb-textformat)
+   in the manifest too, pinned by tag: `CONFIG_ZEPHLETS_LUA` selects
+   `NANOPB_TEXTFORMAT` for its message descriptors.
 2. Kconfig:
 
    ```
@@ -80,14 +83,16 @@ name in an iterable section; the application declares no list of them.
 | `z.<instance>` | The instance object. An unknown name raises an error. |
 | `inst:<rpc>(timeout_ms)` | A command whose request is `Empty`. |
 | `inst:<rpc>(req, timeout_ms)` | A command with a request table. |
-| `inst:add_policy(fn)` | Adds a policy: `fn(ev, meta)` runs for every event of `inst`. |
-| `inst:await([timeout_ms])` | From a `zephyr.async` task: the next event of `inst`, as `ev, meta`. |
-| `z.await_any(insts[, timeout_ms])` | From a task: the next event of any instance in the array `insts`. |
+| `inst:add_policy(fn)` | Adds a policy: `fn(ev, inst)` runs for every event of `inst`. |
+| `inst:await([timeout_ms])` | From a `zephyr.async` task: the next event of `inst`. |
+| `z.await_any(insts[, timeout_ms])` | From a task: the next event of any instance in the array `insts`, as `ev, inst`. |
 | `inst.<Enum>.<VALUE>` | Proto enum constants, read-only. Proto names are kept verbatim. |
 | `z.FOREVER` | `-1`, the `timeout_ms` that means `K_FOREVER`. |
-| `z.stats()` | Per-instance counters, keyed by instance name. |
+| `z.stats()` | Per-instance counters, keyed by instance name. They saturate at `math.maxinteger` (2^31 - 1). |
 
-The module, the instances and the enum tables are all read-only.
+The module, the instances and the enum tables are all read-only. An instance
+named `stats`, `FOREVER` or `await_any` cannot be reached from Lua, since the
+module's own fields win; the frontend logs a warning at start for one.
 
 ### Commands
 
@@ -118,7 +123,7 @@ end
 
 ### Messages as tables
 
-Request, response and event tables follow the proto field names:
+Request, response and event fields follow the proto field names:
 
 | Proto | Lua |
 |---|---|
@@ -147,12 +152,21 @@ the same caveat. The field's own range is checked exactly: `-2^63` fits an
 ### Events and policies
 
 ```lua
-tick:add_policy(function(ev, meta)
-    -- ev:   the event table, e.g. ev.timestamp
-    -- meta: {source = <instance>, name = "tick_timer_based_impl",
-    --        seq = <per-instance number>, dropped = <events lost before this one>}
+tick:add_policy(function(ev, inst)
+    -- ev:   the event, e.g. ev.timestamp
+    -- inst: the instance that emitted it, here tick
 end)
 ```
+
+- **An event is a read-only object, not a table.** It holds a copy of the C
+  events struct, one allocation, and converts a field only when the script
+  reads it, following [Messages as tables](#messages-as-tables). A
+  submessage or repeated field is a new table on each read, so keep it in a
+  local when using it more than once. Reading a field the event does not
+  have raises an error, as does writing one. `pairs(ev)` walks the present
+  fields in tag order. Every consumer of an event gets the same object.
+- **No per-event metadata.** Drops are reported by the `z.stats()` counters
+  only; the source of an event is the second argument.
 
 - **Policies are static.** `add_policy` works only while the script's main
   chunk runs. Once the chunk returns the policies are sealed, and a later
@@ -193,18 +207,17 @@ return function()
 
     async.spawn(function()
         while true do
-            local ev, meta = tick:await()            -- parks this task only
-            if meta.dropped > 0 then print("lost", meta.dropped) end
+            local ev = tick:await()                  -- parks this task only
             ui:blink(100)
         end
     end)
 
     async.spawn(function()
         while true do
-            local ev, meta = z.await_any({tick, tampering}, 5000)
+            local ev, inst = z.await_any({tick, tampering}, 5000)
             if ev == nil then
-                print("quiet for 5 s")               -- meta == "timeout"
-            elseif meta.source == tampering then
+                print("quiet for 5 s")               -- inst == "timeout"
+            elseif inst == tampering then
                 ui:blink(100)
             end
         end
@@ -212,22 +225,26 @@ return function()
 end
 ```
 
-- **`inst:await([timeout_ms])`** returns the next event of `inst` as
-  `ev, meta`, the same values a policy gets, or `nil, "timeout"`. `nil` or
+- **`inst:await([timeout_ms])`** returns the next event of `inst`, the same
+  object a policy gets, or `nil, "timeout"`. `nil` or
   `z.FOREVER` waits forever, and `0` does not wait. It parks the calling task,
   as `chan:await` does, never the thread.
 - **`z.await_any(insts[, timeout_ms])`** waits on several instances at once,
-  like `observer:wait_msg`, and returns their events oldest first.
-  `meta.source` and `meta.name` say which instance sent each one.
+  like `observer:wait_msg`, and returns their events oldest first, as
+  `ev, inst`, where `inst` is the instance that sent it.
 - **Each task has its own queue per instance**, created by its first await on
   that instance. From then on every event of the instance is kept until the
   task takes it, including while the task does something else, up to
   `ZEPHLETS_LUA_AWAIT_DEPTH`. When the queue is full the newest event is
-  dropped, counted as `await_drop`, and reported to the task as
-  `meta.dropped`. Events from before the first await are not delivered.
+  dropped and counted as `await_drop`. The queue starts when the first await
+  publishes it, and gets the events still in staging at that moment too.
+  Events a policy's FIFO already took are not copied again, and those emitted
+  while the instance had no consumer at all were never staged: they are gone.
 - **Several tasks may await one instance**, and an instance may have policies
-  too. Every consumer gets every event. They share the event table, so treat
-  it as read-only.
+  too. Every consumer gets every event, as the same read-only object, as long
+  as staging, the policy FIFO, its own queue and the Lua heap have room for
+  it. An event that does not fit is a counted drop (see
+  [Limits and memory](#limits-and-memory)).
 - **Only from a task, after the seal.** Awaiting in the main chunk raises an
   error. Inside a `coroutine.wrap()`/`resume()` it raises as soon as it would
   park, as `zephyr.async` does for its own waits.
@@ -266,24 +283,36 @@ end
 | Return | Cause |
 |---|---|
 | `-EALREADY` | The frontend was already started, by any thread. |
-| `-ENOMEM` | The Lua state could not be created. |
+| `-ENOMEM` | The heap (`ZEPHLETS_LUA_HEAP_SIZE`) is too small to start: for the Lua state, the libraries, the frontend's prelude or the main chunk. |
 | `-ENOEXEC` | The script did not load (a syntax error, which is logged). |
-| `-EINVAL` | The main chunk raised, or returned something other than nil or a function. |
-| `-EFAULT` | The scheduler stopped on a fault. |
+| `-EINVAL` | The main chunk raised an error other than running out of memory, or returned something other than nil or a function. |
+| `-EFAULT` | The scheduler stopped on a fault, or the frontend's own prelude did not load or run (mixed Lua versions). |
+
+Once it has returned, for whatever reason, the frontend stays stopped: the
+listeners no longer stage events, so nothing fills up or counts drops.
 
 ## Architecture
 
-```
-zephlet emit ─► chan_<inst>_events
-                    │  (zbus async listener, system workqueue)
-                    ▼
-        forwarding listener ── copy ──► C staging slots ── doorbell ──► zlet_lua_bell
-                                            (fixed, RAM)                (zbus channel)
-                                                                             │
-                ┌───────────────── zephyr.async loop, owner thread ──────────┘
-                ▼
-     pump task ── drain ─┬─► Lua-heap FIFO ──► dispatcher task ──► policy(ev, meta)
-   (or any waiter)       └─► per-task queues ──► task in inst:await() / z.await_any()
+```mermaid
+flowchart TD
+    emit["zephlet emit"] --> chan["chan_#lt;inst#gt;_events"]
+    chan -- "zbus async listener<br/>(system workqueue)" --> fwd["forwarding listener"]
+    fwd -- copy --> staging[("C staging slots<br/>fixed, RAM")]
+    fwd -- "doorbell" --> bell["zlet_lua_bell<br/>zbus channel"]
+
+    subgraph owner ["zephyr.async loop, owner thread"]
+        drain["drain<br/>(pump task, or any waiter)"]
+        fifo[("Lua-heap FIFO")]
+        queues[("per-task queues")]
+        dispatch["dispatcher task"]
+        policy["policy(ev, inst)"]
+        waiter["task in inst:await()<br/>or z.await_any()"]
+        drain --> fifo --> dispatch --> policy
+        drain --> queues --> waiter
+    end
+
+    bell -. wakes .-> drain
+    staging --> drain
 ```
 
 - **No Lua runs in zbus listener context.** The forwarding listener, emitted
@@ -342,10 +371,10 @@ sequenceDiagram
 
 | Kconfig | Default | Cost and effect |
 |---|---|---|
-| `ZEPHLETS_LUA_HEAP_SIZE` | 32768 | Static RAM for the Lua heap: the script, the queued event tables and policy lists. |
+| `ZEPHLETS_LUA_HEAP_SIZE` | 32768 | Static RAM for the Lua heap: the script, the queued events and policy lists. |
 | `ZEPHLETS_LUA_SLOT_SIZE` | 64 | Payload of one staging slot. Every events struct must fit, which is checked at build time. |
 | `ZEPHLETS_LUA_STAGING_DEPTH` | 8 | Staging slots. Static RAM is `(SLOT_SIZE + 8) × DEPTH`. |
-| `ZEPHLETS_LUA_FIFO_DEPTH` | 32 | Events queued as Lua tables. Costs 6 B of static RAM each, plus each queued table on the Lua heap. |
+| `ZEPHLETS_LUA_FIFO_DEPTH` | 32 | Events queued for the policies. Costs 2 B of static RAM each, plus each queued event on the Lua heap. |
 | `ZEPHLETS_LUA_AWAIT_DEPTH` | 8 | Events kept per awaiting task and instance, on the Lua heap. |
 | `ZEPHLETS_LUA_SCRATCH_SIZE` | 256 | Two static buffers for a command's request and response. Every RPC must fit, which is checked at build time. |
 | `ZEPHLETS_LUA_PUMP` | y | The pump task: keeps staging empty while a policy is parked. About 1 KB of heap. |
@@ -370,17 +399,19 @@ channel), after a full collection:
 
 The figures are `sys_heap` bytes, chunk overhead included. The last row
 includes the task that took the readings. With the defaults (pump, 8 tasks,
-8 channels) the total is 19.5 KB: the pump costs about 0.5 KB, the larger
-scheduler caps about 0.9 KB. A spawn beyond `LUA_ASYNC_MAX_TASKS` fails at
+8 channels) the total is 19.5 KB. A spawn beyond `LUA_ASYNC_MAX_TASKS` fails at
 run time, so leave room for every task alive at once. Every task
 coroutine costs about 1 KB, and the scheduler state grows with
 `LUA_ASYNC_MAX_TASKS` × `LUA_ASYNC_MAX_CHANNELS`.
 
-Each instance also has one record in RAM (flags, counters, last sequence
-number) and one async listener.
+Each instance also has one record in RAM (flags and counters, `emitted`
+among them) and one async listener.
 
-The frontend uses 2 of `CONFIG_LUA_ASYNC_MAX_TASKS` tasks, 3 with an async
-main; this is checked at build time. `ZEPHLETS_LUA_PUMP=n` drops the pump
+The frontend's own tasks take 2 of `CONFIG_LUA_ASYNC_MAX_TASKS`, the
+dispatcher and the pump, or 1 with `ZEPHLETS_LUA_PUMP=n`, and the build
+requires one more, for the script's async main. A script that only adds
+policies still pays for that slot: the build cannot see what its chunk
+returns. `ZEPHLETS_LUA_PUMP=n` drops the pump
 task, about 1 KB of heap, when no policy parks: while one does, its source's
 later events wait in staging instead of the FIFO, so `STAGING_DEPTH` bounds
 them. Size `LUA_ASYNC_MAX_TASKS` to the tasks alive at once (each costs
@@ -389,8 +420,10 @@ so `LUA_ASYNC_MAX_CHANNELS=1` is enough unless the script awaits zbus
 channels of its own. It uses one of
 `CONFIG_LUA_ASYNC_MAX_CHANNELS` and one runtime zbus observer.
 
-**When a queue is full, the newest event is dropped and the drop is
-reported, never silently.**
+**After the seal, when a queue is full, the newest event is dropped and the
+drop is reported, never silently.** Before the seal, staging overwrites its
+oldest event instead, and counts that as `staged_drop` only for an instance
+that has a policy at the seal; see "Events emitted before the seal" above.
 
 | Where | Counter | Also |
 |---|---|---|
@@ -399,17 +432,16 @@ reported, never silently.**
 | An awaiting task's queue full, or out of memory | `await_drop` | Same |
 | Doorbell refused (zbus message pool exhausted) | `doorbell_fail` | Recovered by the next event or by `POLL_MS` |
 
-The next event delivered from that source reports what was lost before it, as
-`meta.dropped`. That value is the gap in the source's sequence numbers, so it
-is exact. Policies and each awaiting task count the gap separately.
 `z.stats()` also reports `emitted`, `delivered` (to policies) and
 `handler_err`.
 
 **Allocations on the event path.** The listener allocates nothing on the Lua
-heap. Per delivered event, the drain allocates the event table (and its nested
-tables) and `pop` allocates the `meta` table. Both are bounded by
-`FIFO_DEPTH`, and both run under protected calls: an out-of-memory error drops
-the event and counts it, and the scheduler does not fault. A zbus net_buf
+heap. Per event, the drain allocates one event object, shared by every
+consumer, under a protected call: an out-of-memory error drops the event and
+counts it, and the scheduler does not fault. Measured on mps2/an385 with the
+GC stopped, a one-field event costs about 93 B of heap through a policy or
+an awaiting task, the doorbell's own message included; with event and meta
+tables it was about 360 B. A zbus net_buf
 carries each event to the async listener, and another carries the doorbell.
 Both come from `ZBUS_MSG_SUBSCRIBER_NET_BUF_POOL_SIZE`, which you may need to
 raise for bursts. lua_zephyr's allocator prints "Something went wrong with
@@ -420,17 +452,20 @@ from with an emergency GC. Frequent messages mean the heap is too small.
 
 Each build writes `build/zephlets_lua/`:
 
-- `zephlets_base.lua`: shared classes (`zephlets.EventMeta`,
-  `zephlets.Stats`, `pb.Lifecycle.Status`).
-- `<prefix>_lua_meta.lua`, one per zephlet type, generated from its proto:
-  message classes with optional/repeated markers, `---@enum`, the instance
-  class with every command's signature, and a typed `add_policy`.
+- `zephlets_base.lua`: shared classes (`zephlets.Stats`,
+  `pb.Lifecycle.Status`).
+- `<prefix>_lua_meta.lua`, one per zephlet type the build links, generated
+  from its proto: message classes with optional/repeated markers, `---@enum`,
+  the instance class with every command's signature, and a typed
+  `add_policy`. The files of a type removed or renamed since an earlier build
+  are deleted.
 - `zephlets_instances.lua`: the `zephlets` module with one field per instance.
   Codegen never sees instance names, which exist only in `ZEPHLET_NEW(...)`
   calls, so this file is written *after the link*. The per-instance record's
   symbol is `__zlet_lua__<type>__<instance>`, and a post-build step reads
   those symbols from the ELF. The file therefore lists exactly the instances
-  that were built.
+  that were built. That step needs `pyelftools` in the build's Python: it is
+  in Zephyr's own requirements, and in `codegen/requirements.txt`.
 
 Point LuaLS at it in the script's directory:
 

@@ -452,19 +452,19 @@ static int l_stats(lua_State *L)
 		const struct zephlet_lua_stats *s = &inst->stats;
 
 		lua_createtable(L, 0, 7);
-		lua_pushinteger(L, (lua_Integer)atomic_get(&s->seq));
+		push_counter(L, &s->emitted);
 		lua_setfield(L, -2, "emitted");
-		lua_pushinteger(L, (lua_Integer)atomic_get(&s->delivered));
+		push_counter(L, &s->delivered);
 		lua_setfield(L, -2, "delivered");
-		lua_pushinteger(L, (lua_Integer)atomic_get(&s->staged_drop));
+		push_counter(L, &s->staged_drop);
 		lua_setfield(L, -2, "staged_drop");
-		lua_pushinteger(L, (lua_Integer)atomic_get(&s->fifo_drop));
+		push_counter(L, &s->fifo_drop);
 		lua_setfield(L, -2, "fifo_drop");
-		lua_pushinteger(L, (lua_Integer)atomic_get(&s->doorbell_fail));
+		push_counter(L, &s->doorbell_fail);
 		lua_setfield(L, -2, "doorbell_fail");
-		lua_pushinteger(L, (lua_Integer)atomic_get(&s->handler_err));
+		push_counter(L, &s->handler_err);
 		lua_setfield(L, -2, "handler_err");
-		lua_pushinteger(L, (lua_Integer)atomic_get(&s->await_drop));
+		push_counter(L, &s->await_drop);
 		lua_setfield(L, -2, "await_drop");
 		lua_setfield(L, -2, inst->z->name);
 	}
@@ -539,6 +539,20 @@ void zlet_lua_register(lua_State *L)
 	lua_rawsetp(L, LUA_REGISTRYINDEX, &handlers_key);
 	lua_newtable(L);
 	lua_rawsetp(L, LUA_REGISTRYINDEX, &cache_key);
+
+	zlet_lua_event_register(L);
+
+	/* The module's own fields come first, and codegen never sees instance
+	 * names, so say it here when one cannot be reached. */
+	STRUCT_SECTION_FOREACH(zephlet_lua_instance, inst) {
+		for (size_t i = 0U; i < ARRAY_SIZE(module_keys); i++) {
+			if (strcmp(inst->z->name, module_keys[i]) == 0) {
+				LOG_WRN("instance '%s' is unreachable from Lua: zephlets.%s is "
+					"the module's own",
+					inst->z->name, module_keys[i]);
+			}
+		}
+	}
 }
 
 void zlet_lua_seal(lua_State *L)

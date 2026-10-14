@@ -69,10 +69,10 @@ return function()
 	async.sleep(20)
 	local got = {}
 	for i = 1, 3 do
-		local e, meta = a:await(0)
-		got[i] = e and string.format("%d:%d:%s", e.value, meta.dropped, meta.name) or "nil"
+		local e, extra = a:await(0)
+		got[i] = e and (tostring(e.value) .. (extra == nil and "" or "+")) or "nil"
 	end
-	eq(table.concat(got, ","), "7:0:probe_a,7:0:probe_a,7:0:probe_a", "queued while away")
+	eq(table.concat(got, ","), "7,7,7", "queued while away; await returns the event alone")
 	eq(select(2, a:await(0)), "timeout", "queue empty again")
 
 	-- A spawned task wakes on each event; two tasks both get every event.
@@ -80,12 +80,11 @@ return function()
 		return async.spawn(function()
 			local seqs = {}
 			for i = 1, n do
-				local e, meta = inst:await(1000)
+				local e, err = inst:await(1000)
 				if e == nil then
-					return nil, meta
+					return nil, err
 				end
-				check(meta.source == inst, "meta.source")
-				seqs[i] = meta.seq
+				seqs[i] = e.seq
 			end
 			return table.concat(seqs, ",")
 		end)
@@ -118,8 +117,9 @@ return function()
 	local any = async.spawn(function()
 		local names = {}
 		for i = 1, 3 do
-			local e, meta = z.await_any({a, b}, 1000)
-			names[i] = e and meta.name or tostring(meta)
+			local e, inst = z.await_any({a, b}, 1000)
+			names[i] = e and (inst == a and "probe_a" or inst == b and "probe_b" or "?")
+				or tostring(inst)
 		end
 		return table.concat(names, ",")
 	end)
@@ -133,8 +133,8 @@ return function()
 		a:await(0)
 	end
 
-	-- A full queue drops the newest, and the next event reports the gap. Its
-	-- source has no policy: awaiting alone turns its staging on.
+	-- A full queue drops the newest, counted in z.stats(). Its source has no
+	-- policy: awaiting alone turns its staging on.
 	eq(select(2, idle:await(0)), "timeout", "idle queue starts empty")
 	idle:burst({count = 6, value = 0}, 100)
 	async.sleep(20)
@@ -145,8 +145,7 @@ return function()
 	eq(n, 4, "a full queue keeps AWAIT_DEPTH events")
 	eq(z.stats().probe_idle.await_drop, 2, "the rest are counted")
 	idle:burst({count = 1, value = 0}, 100)
-	local e, meta = idle:await(100)
-	eq(e ~= nil and meta.dropped, 2, "meta.dropped reports the gap")
+	check(idle:await(100) ~= nil, "delivery resumes after a full queue")
 
 	print(string.format("lua suite await: %d passed, %d failed", passed, failed))
 end

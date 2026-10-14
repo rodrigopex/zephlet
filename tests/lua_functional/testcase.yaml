@@ -47,7 +47,7 @@ tests:
         - "lua suite basic: \\d+ passed, 0 failed"
         - "second zephlet_lua_coordinate\\(\\): EALREADY"
   zephlet.lua_functional.overflow:
-    # Staging and FIFO both full: drops are counted and reported in meta.
+    # Staging and FIFO both full: drops are counted in z.stats().
     extra_configs:
       - CONFIG_TEST_LUA_SUITE="overflow"
       - CONFIG_ZEPHLETS_LUA_STAGING_DEPTH=4
@@ -66,6 +66,15 @@ tests:
       type: one_line
       regex:
         - "lua suite await: \\d+ passed, 0 failed"
+  zephlet.lua_functional.policy_error:
+    # Policies whose error objects cannot be formatted: the dispatcher keeps
+    # running, and every failure is counted.
+    extra_configs:
+      - CONFIG_TEST_LUA_SUITE="policy_error"
+    harness_config:
+      type: one_line
+      regex:
+        - "lua suite policy_error: \\d+ passed, 0 failed"
   zephlet.lua_functional.bad_chunk:
     # A main chunk that raises: zephlet_lua_coordinate() returns -EINVAL.
     extra_configs:

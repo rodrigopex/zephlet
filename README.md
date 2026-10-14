@@ -313,7 +313,7 @@ wiring beyond `zephlet_lua_coordinate()` in `main()`:
 
 ```lua
 local z = require("zephlets")
-z.tick_fast:add_policy(function(ev, meta) z.ui_main:blink(100) end)
+z.tick_fast:add_policy(function(ev) z.ui_main:blink(100) end)
 ```
 
 Commands take a required `timeout_ms` and return `resp` or

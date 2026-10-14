@@ -2,7 +2,7 @@
  * inst:await() and zephlets.await_any(): per-task event queues.
  *
  * A task's first await on an instance gives it a queue for that instance: a
- * userdata with the sequence numbers, whose uservalue holds the event tables.
+ * userdata with the arrival order, whose uservalue holds the event objects.
  * From then on the drain hands every event of the instance to each of its
  * queues; a full queue drops the newest and counts it.
  *
@@ -28,9 +28,6 @@ struct zlet_lua_queue {
 	uint16_t idx;
 	uint16_t head;
 	uint16_t len;
-	/** `seq` of the last event taken, or of the instance at the first await. */
-	uint32_t last;
-	uint32_t seq[DEPTH];
 	/** Arrival order across instances, for await_any. */
 	uint32_t serial[DEPTH];
 };
@@ -41,7 +38,59 @@ static const char queues_key;
 
 static uint32_t serial;
 
-void zlet_lua_await_route(lua_State *L, size_t idx, uint32_t seq)
+/*
+ * A task that has returned, failed or been cancelled: zephyr.async has moved
+ * its results out or closed it, so its thread has no frame and an empty stack.
+ */
+static bool task_finished(lua_State *L, lua_State *co)
+{
+	lua_Debug ar;
+
+	if ((co == NULL) || (co == L) || (lua_status(co) == LUA_YIELD)) {
+		return false;
+	}
+	if (lua_status(co) != LUA_OK) {
+		return true;
+	}
+
+	return (lua_getstack(co, 0, &ar) == 0) && (lua_gettop(co) == 0);
+}
+
+bool zlet_lua_await_prune(lua_State *L, size_t idx)
+{
+	struct zephlet_lua_instance *inst = zlet_lua_instance_get(idx);
+	bool live = false;
+
+	lua_rawgetp(L, LUA_REGISTRYINDEX, &queues_key);
+	if (lua_rawgeti(L, -1, (lua_Integer)idx + 1) == LUA_TTABLE) {
+		lua_pushnil(L);
+		while (lua_next(L, -2) != 0) {
+			lua_pop(L, 1);
+			if (task_finished(L, lua_tothread(L, -1))) {
+				/* Clearing a field during the traversal is allowed. */
+				lua_pushvalue(L, -1);
+				lua_pushnil(L);
+				lua_rawset(L, -4);
+			} else {
+				live = true;
+			}
+		}
+	}
+	lua_pop(L, 2);
+
+	if (!live) {
+		/* Nobody waits any more: stop converting, and unless a policy needs
+		 * them, stop staging, until a task awaits the instance again. */
+		(void)atomic_and(&inst->flags, ~ZEPHLET_LUA_F_AWAITED);
+		if ((atomic_get(&inst->flags) & ZEPHLET_LUA_F_POLICY) == 0) {
+			(void)atomic_and(&inst->flags, ~ZEPHLET_LUA_F_CONNECTED);
+		}
+	}
+
+	return live;
+}
+
+void zlet_lua_await_route(lua_State *L, size_t idx)
 {
 	struct zephlet_lua_instance *inst = zlet_lua_instance_get(idx);
 	int ev = lua_gettop(L);
@@ -66,7 +115,6 @@ void zlet_lua_await_route(lua_State *L, size_t idx, uint32_t seq)
 			lua_pushvalue(L, ev);
 			lua_rawseti(L, -2, (lua_Integer)tail + 1);
 			lua_pop(L, 1);
-			q->seq[tail] = seq;
 			q->serial[tail] = serial;
 			q->len++;
 		}
@@ -101,22 +149,34 @@ static void push_queue(lua_State *L, struct zephlet_lua_instance *inst)
 	}
 	lua_pop(L, 1);
 
-	/* Hand the events staged so far to their current consumers first: the new
-	 * queue starts with the next one. */
-	zlet_lua_drain(L);
-	(void)atomic_or(&inst->flags, ZEPHLET_LUA_F_CONNECTED | ZEPHLET_LUA_F_AWAITED);
-
 	q = lua_newuserdatauv(L, sizeof(*q), 1);
 	memset(q, 0, sizeof(*q));
 	q->idx = (uint16_t)idx;
-	q->last = (uint32_t)atomic_get(&inst->stats.seq);
 	lua_createtable(L, DEPTH, 0);
 	lua_setiuservalue(L, -2, 1);
 
+	/* Those allocations can run a __gc that awaits this instance from this
+	 * task, and so made a queue already: keep that one. */
+	(void)lua_pushthread(L);
+	if (lua_rawget(L, -3) == LUA_TUSERDATA) {
+		lua_remove(L, -2);
+		lua_remove(L, -2);
+		return;
+	}
+	lua_pop(L, 1);
+
+	/* Stored before the flags are set, with nothing that allocates between:
+	 * from the moment the instance is staged again, a prune sees this queue. */
 	(void)lua_pushthread(L);
 	lua_pushvalue(L, -2);
 	lua_rawset(L, -4);
+	(void)atomic_or(&inst->flags, ZEPHLET_LUA_F_CONNECTED | ZEPHLET_LUA_F_AWAITED);
 	lua_remove(L, -2);
+
+	/* Only now, so the new queue gets what is still in staging too. What the
+	 * policy FIFO took already stays there, and what the listener filtered out
+	 * while the instance had no consumer is gone. */
+	zlet_lua_drain(L);
 }
 
 static struct zephlet_lua_instance *check_instance(lua_State *L, int idx, const char *what)
@@ -201,7 +261,7 @@ static int l_prepare(lua_State *L)
 }
 
 /*
- * core.take(deadline, queue...) -> ev, meta | nil, "timeout" | nil, nil, park
+ * core.take(deadline, queue...) -> ev, inst | nil, "timeout" | nil, nil, park
  *
  * Drains staging, then returns the oldest event of the queues. Otherwise says
  * how long to park on the doorbell: park is nil for as long as it takes.
@@ -225,28 +285,14 @@ static int l_take(lua_State *L)
 	}
 
 	if (best != NULL) {
-		struct zephlet_lua_instance *inst = zlet_lua_instance_get(best->idx);
 		uint16_t h = best->head;
-		uint32_t seq = best->seq[h];
-		int32_t gap = (int32_t)(seq - best->last - 1U);
 
 		lua_getiuservalue(L, best_at, 1);
 		lua_rawgeti(L, -1, (lua_Integer)h + 1);
-
-		/* meta first: if it cannot be allocated, the event stays queued. */
-		lua_createtable(L, 0, 4);
-		zlet_lua_push_instance(L, inst);
-		lua_setfield(L, -2, "source");
-		lua_pushstring(L, inst->z->name);
-		lua_setfield(L, -2, "name");
-		lua_pushinteger(L, (lua_Integer)seq);
-		lua_setfield(L, -2, "seq");
-		lua_pushinteger(L, (gap > 0) ? gap : 0);
-		lua_setfield(L, -2, "dropped");
-
+		/* The instance object is cached: pushing it does not allocate. */
+		zlet_lua_push_instance(L, zlet_lua_instance_get(best->idx));
 		lua_pushnil(L);
 		lua_rawseti(L, -4, (lua_Integer)h + 1);
-		best->last = seq;
 		best->head = (h + 1U) % DEPTH;
 		best->len--;
 

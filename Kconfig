@@ -387,7 +387,7 @@ config ZEPHLETS_LUA
       commands as methods, and adds policies -- handlers -- for their events:
 
         local z = require("zephlets")
-        z.tick_fast:add_policy(function(ev, meta)
+        z.tick_fast:add_policy(function(ev)
             z.ui_main:blink(100)
         end)
 
@@ -407,7 +407,9 @@ config ZEPHLETS_LUA_HEAP_SIZE
     default 32768
     help
       Size of the heap the Lua state allocates from: the script, its
-      tables, and the queued event tables of the Lua-heap FIFO.
+      tables, and the events queued for policies and awaiting tasks.
+      With CONFIG_SYS_HEAP_SMALL_ONLY, the 32-bit default when SRAM is
+      256 KB or less, it can be at most 262136 bytes.
 
 config ZEPHLETS_LUA_SLOT_SIZE
     int "Staging slot payload size (bytes)"
@@ -425,17 +427,16 @@ config ZEPHLETS_LUA_STAGING_DEPTH
     help
       Events held between the forwarding listener (system workqueue) and
       the Lua thread. Costs SLOT_SIZE plus 8 bytes of RAM each. When every
-      slot is taken a new event is dropped, counted in z.stats() and
-      reported to the next handler call of its source as meta.dropped.
+      slot is taken a new event is dropped and counted in z.stats().
 
 config ZEPHLETS_LUA_FIFO_DEPTH
     int "Lua-heap event FIFO depth"
     default 32
     range 1 1024
     help
-      Events converted to Lua tables and waiting for the dispatcher. They
-      live on the Lua heap, so a handler that parks (async.sleep) does not
-      stall staging. When the FIFO is full a new event is dropped and
+      Events converted to Lua event objects and waiting for the
+      dispatcher. They live on the Lua heap, so a policy that parks
+      (async.sleep) does not stall staging. When the FIFO is full a new event is dropped and
       counted, as for staging.
 
 config ZEPHLETS_LUA_AWAIT_DEPTH
@@ -446,8 +447,8 @@ config ZEPHLETS_LUA_AWAIT_DEPTH
       A task's first inst:await() or zephlets.await_any() on an instance
       gives it a queue for that instance's events, on the Lua heap. Every
       event from then on is queued until the task takes it; when the
-      queue is full a new event is dropped, counted as await_drop in
-      z.stats() and reported to the task as meta.dropped.
+      queue is full a new event is dropped and counted as await_drop in
+      z.stats().
 
 config ZEPHLETS_LUA_SCRATCH_SIZE
     int "Command request/response buffer size (bytes)"

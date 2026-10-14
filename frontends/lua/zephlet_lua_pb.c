@@ -222,6 +222,51 @@ static void push_value(lua_State *L, const struct pb_tf_field *f, const void *sr
 	}
 }
 
+/* Push field @p f of @p msg; false, with nothing pushed, when it is absent. */
+static bool push_field(lua_State *L, const struct pb_tf_msg *tf, const void *msg,
+		       const struct pb_tf_field *f, int depth)
+{
+	pb_field_iter_t it;
+
+	if (!field_supported(f) || !locate(tf, msg, f, &it)) {
+		return false;
+	}
+
+	switch (PB_TF_HT(f->rules)) {
+	case PB_TF_HT_REQUIRED:
+	case PB_TF_HT_SINGULAR:
+		break;
+	case PB_TF_HT_OPTIONAL:
+		if ((it.pSize == NULL) || !*(const bool *)it.pSize) {
+			return false;
+		}
+		break;
+	case PB_TF_HT_ONEOF:
+		if ((it.pSize == NULL) || (*(const pb_size_t *)it.pSize != (pb_size_t)f->tag)) {
+			return false;
+		}
+		break;
+	case PB_TF_HT_REPEATED: {
+		pb_size_t n = (it.pSize != NULL) ? *(const pb_size_t *)it.pSize : 0U;
+
+		n = MIN(n, it.array_size);
+		lua_createtable(L, (int)n, 0);
+		for (pb_size_t e = 0U; e < n; e++) {
+			push_value(L, f, (const char *)it.pData + ((size_t)e * it.data_size),
+				   it.data_size, depth);
+			lua_rawseti(L, -2, (lua_Integer)e + 1);
+		}
+		return true;
+	}
+	default:
+		return false;
+	}
+
+	push_value(L, f, it.pData, it.data_size, depth);
+
+	return true;
+}
+
 static void push_msg_at(lua_State *L, const struct pb_tf_msg *tf, const void *msg, int depth)
 {
 	if (depth > ZLET_LUA_PB_MAX_DEPTH) {
@@ -236,53 +281,58 @@ static void push_msg_at(lua_State *L, const struct pb_tf_msg *tf, const void *ms
 
 	for (uint16_t i = 0U; i < tf->count; i++) {
 		const struct pb_tf_field *f = &tf->fields[i];
-		pb_field_iter_t it;
 
-		if (!field_supported(f) || !locate(tf, msg, f, &it)) {
-			continue;
+		if (push_field(L, tf, msg, f, depth)) {
+			lua_setfield(L, -2, f->name);
 		}
-
-		switch (PB_TF_HT(f->rules)) {
-		case PB_TF_HT_REQUIRED:
-		case PB_TF_HT_SINGULAR:
-			push_value(L, f, it.pData, it.data_size, depth);
-			break;
-		case PB_TF_HT_OPTIONAL:
-			if ((it.pSize == NULL) || !*(const bool *)it.pSize) {
-				continue;
-			}
-			push_value(L, f, it.pData, it.data_size, depth);
-			break;
-		case PB_TF_HT_ONEOF:
-			if ((it.pSize == NULL) ||
-			    (*(const pb_size_t *)it.pSize != (pb_size_t)f->tag)) {
-				continue;
-			}
-			push_value(L, f, it.pData, it.data_size, depth);
-			break;
-		case PB_TF_HT_REPEATED: {
-			pb_size_t n = (it.pSize != NULL) ? *(const pb_size_t *)it.pSize : 0U;
-
-			n = MIN(n, it.array_size);
-			lua_createtable(L, (int)n, 0);
-			for (pb_size_t e = 0U; e < n; e++) {
-				push_value(L, f,
-					   (const char *)it.pData + ((size_t)e * it.data_size),
-					   it.data_size, depth);
-				lua_rawseti(L, -2, (lua_Integer)e + 1);
-			}
-			break;
-		}
-		default:
-			continue;
-		}
-		lua_setfield(L, -2, f->name);
 	}
 }
 
 void zlet_lua_push_msg(lua_State *L, const struct pb_tf_msg *tf, const void *msg)
 {
 	push_msg_at(L, tf, msg, 0);
+}
+
+int zlet_lua_push_msg_field(lua_State *L, const struct pb_tf_msg *tf, const void *msg,
+			    const char *name)
+{
+	for (uint16_t i = 0U; (tf != NULL) && (i < tf->count); i++) {
+		const struct pb_tf_field *f = &tf->fields[i];
+
+		if ((f->name != NULL) && (strcmp(f->name, name) == 0)) {
+			luaL_checkstack(L, 4, "zephlets: message");
+			return push_field(L, tf, msg, f, 0) ? 1 : 0;
+		}
+	}
+
+	return -1;
+}
+
+int zlet_lua_next_msg_field(lua_State *L, const struct pb_tf_msg *tf, const void *msg, int from)
+{
+	for (int i = from; (tf != NULL) && (i < (int)tf->count); i++) {
+		const struct pb_tf_field *f = &tf->fields[i];
+
+		luaL_checkstack(L, 5, "zephlets: message");
+		lua_pushstring(L, f->name);
+		if (push_field(L, tf, msg, f, 0)) {
+			return i;
+		}
+		lua_pop(L, 1);
+	}
+
+	return -1;
+}
+
+int zlet_lua_msg_field_index(const struct pb_tf_msg *tf, const char *name)
+{
+	for (int i = 0; (tf != NULL) && (i < (int)tf->count); i++) {
+		if ((tf->fields[i].name != NULL) && (strcmp(tf->fields[i].name, name) == 0)) {
+			return i;
+		}
+	}
+
+	return -1;
 }
 
 /* ----- Lua -> C --------------------------------------------------------- */

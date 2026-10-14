@@ -39,7 +39,14 @@ LOG_MODULE_REGISTER(zlet_lua, CONFIG_ZEPHLET_LOG_LEVEL);
 #define INTERNAL_TASKS (IS_ENABLED(CONFIG_ZEPHLETS_LUA_PUMP) ? 2 : 1)
 
 BUILD_ASSERT(CONFIG_LUA_ASYNC_MAX_TASKS >= INTERNAL_TASKS + 1,
-	     "the Lua frontend needs its own scheduler tasks, plus 1 for the script's async main");
+	     "the Lua frontend needs its own scheduler tasks, plus 1 reserved for the script's "
+	     "async main: a policies-only script pays for it too, as the build cannot see what "
+	     "the chunk returns");
+
+/* A small-only sys_heap fails its init assert past this size, at boot. */
+BUILD_ASSERT(!IS_ENABLED(CONFIG_SYS_HEAP_SMALL_ONLY) || CONFIG_ZEPHLETS_LUA_HEAP_SIZE <= 262136,
+	     "CONFIG_ZEPHLETS_LUA_HEAP_SIZE exceeds what CONFIG_SYS_HEAP_SMALL_ONLY supports "
+	     "(262136 bytes): lower it, or select CONFIG_SYS_HEAP_AUTO");
 
 K_HEAP_DEFINE(heap, CONFIG_ZEPHLETS_LUA_HEAP_SIZE);
 

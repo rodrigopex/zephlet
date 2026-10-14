@@ -3,13 +3,6 @@
 -- the messages of the shared zephlet.proto. Copied next to the generated
 -- per-type files after each build.
 
----@class zephlets.EventMeta
----@field source table   the instance that emitted the event
----@field name string    its name
----@field seq integer    per-instance event number, counting dropped events
----@field dropped integer events of this instance lost since the last one delivered
----                        to this consumer
-
 ---@class zephlets.Stats
 ---@field emitted integer       events the instance emitted
 ---@field delivered integer     events handed to its handlers
