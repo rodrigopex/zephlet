@@ -297,11 +297,13 @@ zephlet emit ─► chan_<inst>_events
   cannot be awaited directly. A burst rings it once. A lost or coalesced
   doorbell loses no event, because each wakeup drains everything staged.
 - **Two internal tasks.** Both the pump and the dispatcher drain staging,
-  converting each event to a table with its source's descriptor. Events of an
+  wrapping each event in a read-only object, whose fields its source's
+  descriptor converts when read. Events of an
   instance with policies go into the Lua-heap FIFO; those of an awaited
   instance go into each awaiting task's queue. The pump exists so that staging
-  keeps emptying while the dispatcher is parked inside a policy. The
-  dispatcher is the one persistent policy coroutine.
+  keeps emptying while the dispatcher is parked inside a policy
+  (`ZEPHLETS_LUA_PUMP`). The dispatcher is the one persistent policy
+  coroutine.
 - **Awaiting tasks wait on the doorbell too.** `await` drains, takes from the
   task's queues, and otherwise parks in `chan:await` on the doorbell, waking
   up for every doorbell and at least every `POLL_MS`. The queues and routing
@@ -346,13 +348,15 @@ sequenceDiagram
 | `ZEPHLETS_LUA_FIFO_DEPTH` | 32 | Events queued as Lua tables. Costs 6 B of static RAM each, plus each queued table on the Lua heap. |
 | `ZEPHLETS_LUA_AWAIT_DEPTH` | 8 | Events kept per awaiting task and instance, on the Lua heap. |
 | `ZEPHLETS_LUA_SCRATCH_SIZE` | 256 | Two static buffers for a command's request and response. Every RPC must fit, which is checked at build time. |
+| `ZEPHLETS_LUA_PUMP` | y | The pump task: keeps staging empty while a policy is parked. About 1 KB of heap. |
 | `ZEPHLETS_LUA_GC_PAUSE` | 100 | Heap growth, in % of what the last collection kept, before the next cycle starts. Lua's default of 250 only collects when an allocation fails on a heap this size. |
 | `ZEPHLETS_LUA_GC_IDLE_STEP` | y | One GC step each time the dispatcher runs out of events, so a burst's garbage does not stay on the heap. |
 | `ZEPHLETS_LUA_POLL_MS` | 1000 | How long an event can wait unnoticed after a refused doorbell. `0` turns the poll off. |
 | `MAIN_STACK_SIZE` | 8192 (overridden) | The Lua VM and every command's handler run on this stack. |
 
 **Heap budget.** Measured on mps2/an385 with the example application (three
-instances, two policies, an async main), after a full collection:
+instances, two policies, an async main; `prj_lua.conf`: no pump, 5 tasks, 1
+channel), after a full collection:
 
 | | Live |
 |---|---|
@@ -361,11 +365,14 @@ instances, two policies, an async main), after a full collection:
 | Frontend: registry tables and prelude | 3.1 KB |
 | `app.lua` code | 2.8 KB |
 | Its main chunk: module, instances, type metatables, `string`, policies | 3.5 KB |
-| `zephyr.async` running: scheduler state, the tasks, doorbell ring | 5.3 KB |
-| **Total** | **19.5 KB**, 22.2 KB peak |
+| `zephyr.async` running: scheduler state, the tasks, doorbell ring | 3.9 KB |
+| **Total** | **18.1 KB**, 20.9 KB peak |
 
 The figures are `sys_heap` bytes, chunk overhead included. The last row
-includes the task that took the readings. Every task
+includes the task that took the readings. With the defaults (pump, 8 tasks,
+8 channels) the total is 19.5 KB: the pump costs about 0.5 KB, the larger
+scheduler caps about 0.9 KB. A spawn beyond `LUA_ASYNC_MAX_TASKS` fails at
+run time, so leave room for every task alive at once. Every task
 coroutine costs about 1 KB, and the scheduler state grows with
 `LUA_ASYNC_MAX_TASKS` × `LUA_ASYNC_MAX_CHANNELS`.
 
@@ -373,7 +380,13 @@ Each instance also has one record in RAM (flags, counters, last sequence
 number) and one async listener.
 
 The frontend uses 2 of `CONFIG_LUA_ASYNC_MAX_TASKS` tasks, 3 with an async
-main; this is checked at build time. It uses one of
+main; this is checked at build time. `ZEPHLETS_LUA_PUMP=n` drops the pump
+task, about 1 KB of heap, when no policy parks: while one does, its source's
+later events wait in staging instead of the FIFO, so `STAGING_DEPTH` bounds
+them. Size `LUA_ASYNC_MAX_TASKS` to the tasks alive at once (each costs
+heap in the scheduler state even unused); the frontend awaits one channel,
+so `LUA_ASYNC_MAX_CHANNELS=1` is enough unless the script awaits zbus
+channels of its own. It uses one of
 `CONFIG_LUA_ASYNC_MAX_CHANNELS` and one runtime zbus observer.
 
 **When a queue is full, the newest event is dropped and the drop is

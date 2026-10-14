@@ -457,6 +457,18 @@ config ZEPHLETS_LUA_SCRATCH_SIZE
       request and response structs while it runs. A type whose structs do
       not fit fails the build with a message naming the RPC.
 
+config ZEPHLETS_LUA_PUMP
+    bool "Pump task"
+    default y
+    help
+      An internal zephyr.async task that empties staging whenever a
+      doorbell rings, even while the dispatcher is parked inside a policy.
+      Without it, staging is emptied only by the dispatcher and by tasks
+      waiting in inst:await(), so while a policy parks (async.sleep, a
+      join) events wait in staging, up to STAGING_DEPTH, instead of the
+      Lua-heap FIFO. Turn it off when no policy parks to save one task,
+      about 1 KB of the Lua heap.
+
 config ZEPHLETS_LUA_GC_PAUSE
     int "Lua GC pause (%)"
     default 100

@@ -8,7 +8,7 @@
  *      commands. zephyr.async is not available yet.
  *   4. Seal: policies freeze. An instance with none stops staging until a
  *      task awaits it.
- *   5. zephyr.async loop with the pump and dispatcher tasks, plus the function
+ *   5. zephyr.async loop with the dispatcher and pump tasks, plus the function
  *      the chunk returned, if any. Its tasks may await instances' events.
  *
  * Zephlet instances are initialised before any of this, by the zephlet
@@ -35,8 +35,11 @@
 
 LOG_MODULE_REGISTER(zlet_lua, CONFIG_ZEPHLET_LOG_LEVEL);
 
-BUILD_ASSERT(CONFIG_LUA_ASYNC_MAX_TASKS >= 3,
-	     "the Lua frontend needs 2 scheduler tasks, plus 1 for the script's async main");
+/* The dispatcher, and the pump unless it is configured out. */
+#define INTERNAL_TASKS (IS_ENABLED(CONFIG_ZEPHLETS_LUA_PUMP) ? 2 : 1)
+
+BUILD_ASSERT(CONFIG_LUA_ASYNC_MAX_TASKS >= INTERNAL_TASKS + 1,
+	     "the Lua frontend needs its own scheduler tasks, plus 1 for the script's async main");
 
 K_HEAP_DEFINE(heap, CONFIG_ZEPHLETS_LUA_HEAP_SIZE);
 
@@ -81,6 +84,7 @@ static int run(lua_State *L, const char *buf, size_t len, const char *chunkname)
 {
 	int tb;
 	int ntasks;
+	bool has_main;
 	int rc;
 
 	lua_pushcfunction(L, traceback);
@@ -108,16 +112,20 @@ static int run(lua_State *L, const char *buf, size_t len, const char *chunkname)
 			luaL_typename(L, -1));
 		return -EINVAL;
 	}
-	ntasks = lua_gettop(L) - tb + 2;
+	has_main = lua_gettop(L) > tb;
+	ntasks = (has_main ? 1 : 0) + INTERNAL_TASKS;
 
 	zlet_lua_seal(L);
 
 	lua_rawgetp(L, LUA_REGISTRYINDEX, &zlet_lua_prelude_key);
-	lua_getfield(L, -1, "pump");
-	lua_getfield(L, -2, "dispatch");
-	lua_remove(L, -3);
-	/* [tb, main?, pump, dispatch]: the script's task, if any, goes last. */
-	if (ntasks == 3) {
+	if (IS_ENABLED(CONFIG_ZEPHLETS_LUA_PUMP)) {
+		lua_getfield(L, -1, "pump");
+		lua_insert(L, -2);
+	}
+	lua_getfield(L, -1, "dispatch");
+	lua_remove(L, -2);
+	/* [tb, main?, pump?, dispatch]: the script's task, if any, goes last. */
+	if (has_main) {
 		lua_rotate(L, tb + 1, -1);
 	}
 
