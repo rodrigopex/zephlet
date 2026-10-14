@@ -21,6 +21,8 @@
 #
 #       Emitted into build dir:
 #           ${CMAKE_BINARY_DIR}/modules/<prefix>/<prefix>_interface.{h,c}
+#           ... plus the per-frontend <prefix>_{coap,lua}_interface.{h,c}
+#           and the LuaLS annotations <prefix>_lua_meta.lua
 #
 # Adapters in v0.3 are NOT generated. They are written by hand using
 # the ZEPHLET_ADAPTER_DEFINE macro (see zephlet.h) under a Kconfig +
@@ -47,7 +49,7 @@ function(zephyr_zephlet_generate)
   set(CODEGEN_SCRIPT
       "${ZEPHYR_ZEPHLET_MODULE_DIR}/codegen/generate_zephlet.py")
   set(TEMPLATE_GLOB
-      "${ZEPHYR_ZEPHLET_MODULE_DIR}/codegen/templates/zephlet_interface*.jinja")
+      "${ZEPHYR_ZEPHLET_MODULE_DIR}/codegen/templates/zephlet_*.jinja")
   file(GLOB _zg_TEMPLATES ${TEMPLATE_GLOB})
 
   set(_zg_PROTO "${CMAKE_CURRENT_SOURCE_DIR}/${_zg_PREFIX}.proto")
@@ -56,13 +58,18 @@ function(zephyr_zephlet_generate)
   set(_zg_GEN_C "${_zg_GEN_DIR}/${_zg_PREFIX}_interface.c")
   set(_zg_GEN_COAP_H "${_zg_GEN_DIR}/${_zg_PREFIX}_coap_interface.h")
   set(_zg_GEN_COAP_C "${_zg_GEN_DIR}/${_zg_PREFIX}_coap_interface.c")
+  set(_zg_GEN_LUA_H "${_zg_GEN_DIR}/${_zg_PREFIX}_lua_interface.h")
+  set(_zg_GEN_LUA_C "${_zg_GEN_DIR}/${_zg_PREFIX}_lua_interface.c")
+  set(_zg_GEN_LUA_META "${_zg_GEN_DIR}/${_zg_PREFIX}_lua_meta.lua")
+  set(_zg_OUTPUTS ${_zg_GEN_H} ${_zg_GEN_C} ${_zg_GEN_COAP_H} ${_zg_GEN_COAP_C}
+                  ${_zg_GEN_LUA_H} ${_zg_GEN_LUA_C} ${_zg_GEN_LUA_META})
 
   # Register proto for nanopb (top-level CMakeLists consumes the list).
   set_property(GLOBAL APPEND PROPERTY PROTO_FILES_LIST "${_zg_PROTO}")
 
   file(MAKE_DIRECTORY "${_zg_GEN_DIR}")
   add_custom_command(
-    OUTPUT ${_zg_GEN_H} ${_zg_GEN_C} ${_zg_GEN_COAP_H} ${_zg_GEN_COAP_C}
+    OUTPUT ${_zg_OUTPUTS}
     COMMAND ${PYTHON_EXECUTABLE} ${CODEGEN_SCRIPT}
         --proto ${_zg_PROTO}
         --output-dir ${_zg_GEN_DIR}
@@ -72,8 +79,7 @@ function(zephyr_zephlet_generate)
     COMMENT "zephlet v0.3: generating ${_zg_PREFIX}_interface"
     VERBATIM)
 
-  add_custom_target(${_zg_PREFIX}_codegen
-    DEPENDS ${_zg_GEN_H} ${_zg_GEN_C} ${_zg_GEN_COAP_H} ${_zg_GEN_COAP_C})
+  add_custom_target(${_zg_PREFIX}_codegen DEPENDS ${_zg_OUTPUTS})
 
   # Any Zephyr library may #include the generated <prefix>_interface.h,
   # directly or transitively: the zephlet's own library, the user's
@@ -116,6 +122,9 @@ function(zephyr_zephlet_generate)
   # opt-in decision lives entirely in Python; CMake just gates on
   # Kconfig.
   zephyr_library_sources_ifdef(CONFIG_ZEPHLETS_COAP ${_zg_GEN_COAP_C})
+  # Same for the Lua bindings. The LuaLS annotations are never compiled; the
+  # frontend's post-build step collects every *_lua_meta.lua it finds.
+  zephyr_library_sources_ifdef(CONFIG_ZEPHLETS_LUA ${_zg_GEN_LUA_C})
   foreach(_src IN LISTS _zg_SOURCES)
     zephyr_library_sources("${CMAKE_CURRENT_SOURCE_DIR}/${_src}")
   endforeach()

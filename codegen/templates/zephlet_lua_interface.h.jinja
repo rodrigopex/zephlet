@@ -1,0 +1,43 @@
+/* GENERATED FILE — DO NOT EDIT. Source: {{ prefix }}.proto. */
+
+#ifndef GENERATED_{{ prefix|upper }}_LUA_INTERFACE_H_
+#define GENERATED_{{ prefix|upper }}_LUA_INTERFACE_H_
+
+/**
+ * @file
+ * @brief Lua frontend bindings for the `{{ type_snake }}` zephlet.
+ *
+ * Included by {{ prefix }}_interface.h only under CONFIG_ZEPHLETS_LUA, so a
+ * build with the frontend off never sees this file.
+ */
+
+#include "zephlet_lua.h"
+
+/** Commands, event descriptor and enums of `{{ type_snake }}`, for Lua. */
+extern const struct zephlet_lua_type {{ type_snake }}_lua_type;
+
+/*
+ * Per-instance hook, expanded by ZEPHLET_NEW for every `{{ type_snake }}`
+ * instance. Registers the instance with the Lua frontend and forwards its
+ * events into the frontend's staging slots. The forwarding listener runs on
+ * the system workqueue and only copies: no Lua runs there.
+ *
+ * The record's symbol encodes `<type>__<instance>`, which the post-build
+ * LuaLS step reads back from the ELF.
+ */
+#define _ZLET_LUA_HOOK_{{ type_snake }}(_name)                                                    \
+	BUILD_ASSERT(sizeof(struct {{ type_snake }}_events) <= CONFIG_ZEPHLETS_LUA_SLOT_SIZE,      \
+		     "{{ type_snake }} events exceed CONFIG_ZEPHLETS_LUA_SLOT_SIZE");                 \
+	STRUCT_SECTION_ITERABLE(zephlet_lua_instance, __zlet_lua__{{ type_snake }}__##_name) = {   \
+		.z = &_name,                                                                       \
+		.type = &{{ type_snake }}_lua_type,                                                \
+	};                                                                                         \
+	static void _zlet_lua_fwd_##_name(const struct zephlet *z,                                 \
+					  const struct {{ type_snake }}_events *ev)                \
+	{                                                                                          \
+		ARG_UNUSED(z);                                                                     \
+		zephlet_lua_stage(&__zlet_lua__{{ type_snake }}__##_name, ev, sizeof(*ev));        \
+	}                                                                                          \
+	ZEPHLET_EVENTS_LISTENER(_name, {{ type_snake }}, _zlet_lua_fwd_##_name)
+
+#endif /* GENERATED_{{ prefix|upper }}_LUA_INTERFACE_H_ */

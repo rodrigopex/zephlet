@@ -1,0 +1,51 @@
+---@meta
+-- GENERATED FILE — DO NOT EDIT. Source: {{ prefix }}.proto.
+-- LuaLS annotations for the `{{ type_snake }}` zephlet's Lua bindings.
+-- Instance names come from zephlets_instances.lua, written after the build.
+
+{% for enum in enums %}
+---@enum pb.{{ enum.qualified }}
+local _{{ type_snake }}_enum_{{ loop.index0 }} = {
+{% for value in enum['values'] %}
+	{{ value[0] }} = {{ value[1] }},
+{% endfor %}
+}
+
+{% endfor %}
+{% for m in lua_messages %}
+---@class {{ m.class }}
+{% for f in m.fields %}
+---@field {{ f.name }}{% if f.optional %}?{% endif %} {{ f.type }}
+{% endfor %}
+
+{% endfor %}
+---@class zephlets.{{ type_snake }}.EventSource
+local _{{ type_snake }}_events = {}
+
+---Register a handler for every event of this instance. Startup only: calling
+---it after the script's main chunk returns raises an error.
+---@param handler fun(ev: {{ lua_events_class }}, meta: zephlets.EventMeta)
+function _{{ type_snake }}_events:connect(handler) end
+
+---@class zephlets.{{ type_snake }}
+---@field events zephlets.{{ type_snake }}.EventSource
+{% for enum in enums %}
+---@field {{ enum.name }} pb.{{ enum.qualified }}
+{% endfor %}
+local _{{ type_snake }} = {}
+
+{% for cmd in commands %}
+{% if not cmd.req_is_empty %}
+---@param req {{ cmd.lua_req_class }}
+{% endif %}
+---@param timeout_ms integer 0 = no wait, zephlets.FOREVER = wait forever
+{% if cmd.resp_is_empty %}
+---@return true|nil ok
+{% else %}
+---@return {{ cmd.lua_resp_class }}|nil resp
+{% endif %}
+---@return string? err errno name, e.g. "EINVAL"
+---@return integer? rc negative errno
+function _{{ type_snake }}:{{ cmd.name }}({% if not cmd.req_is_empty %}req, {% endif %}timeout_ms) end
+
+{% endfor %}

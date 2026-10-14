@@ -634,3 +634,139 @@ def test_discoverable_missing_method_is_rejected(tmp_path):
 	assert result.returncode != 0, result.stdout
 	for missing in ("stop", "get_status", "config", "get_config"):
 		assert missing in result.stderr, result.stderr
+
+
+_LUA_PROTO = """
+syntax = "proto3";
+import "nanopb.proto";
+import "zephlet.proto";
+option (nanopb_fileopt).long_names = false;
+
+message Gauge {
+  enum Unit { UNIT_NONE = 0; UNIT_MV = 1; }
+  message Inner { int32 a = 1; }
+  message Config {
+    optional uint32 limit = 1;
+    repeated int32 samples = 2 [(nanopb).max_count = 4];
+    Inner inner = 3;
+    Unit unit = 4;
+    string label = 5 [(nanopb).max_size = 8];
+  }
+  message Events { uint32 seq = 1; }
+}
+
+service GaugeApi {
+  rpc start      (Empty)        returns (Lifecycle.Status);
+  rpc get_status (Empty)        returns (Lifecycle.Status);
+  rpc config     (Gauge.Config) returns (Gauge.Config);
+  rpc reset      (Empty)        returns (Empty);
+  rpc put        (Gauge.Config) returns (Empty);
+}
+"""
+
+
+def _run_lua_codegen(tmp_path, text=_LUA_PROTO):
+	proto = tmp_path / "zlet_gauge.proto"
+	proto.write_text(text)
+	_run_codegen(proto, tmp_path, type_name="gauge", prefix="zlet_gauge")
+	return tmp_path
+
+
+def test_lua_hook_chained_and_gated(tmp_path):
+	"""The Lua hook joins the per-type aggregator, and the Lua header is
+	only included under CONFIG_ZEPHLETS_LUA -- otherwise the hook is empty,
+	so a build with the frontend off sees no Lua at all."""
+	out = _run_lua_codegen(tmp_path)
+	header = (out / "zlet_gauge_interface.h").read_text()
+
+	assert ("_ZLET_SHELL_HOOK_gauge(_name); \\\n\t_ZLET_LUA_HOOK_gauge(_name);"
+		in header)
+	gated = header.index("#if defined(CONFIG_ZEPHLETS_LUA)")
+	assert header.index('#include "zlet_gauge_lua_interface.h"') > gated
+	assert ("#define _ZLET_LUA_HOOK_gauge(_name) /* empty: CONFIG_ZEPHLETS_LUA disabled */"
+		in header)
+
+	lua_h = (out / "zlet_gauge_lua_interface.h").read_text()
+	assert "#define _ZLET_LUA_HOOK_gauge(_name)" in lua_h
+	assert ("STRUCT_SECTION_ITERABLE(zephlet_lua_instance, __zlet_lua__gauge__##_name)"
+		in lua_h)
+	assert "ZEPHLET_EVENTS_LISTENER(_name, gauge, _zlet_lua_fwd_##_name)" in lua_h
+	assert "sizeof(struct gauge_events) <= CONFIG_ZEPHLETS_LUA_SLOT_SIZE" in lua_h
+
+
+def test_lua_bindings_call_typed_wrappers(tmp_path):
+	"""One trampoline per RPC, through the generated typed wrapper, with
+	descriptors and struct sizes per shape."""
+	source = (_run_lua_codegen(tmp_path) / "zlet_gauge_lua_interface.c").read_text()
+
+	assert "return gauge_reset(z, timeout);" in source
+	assert "return gauge_start(z, (struct lifecycle_status *)resp, timeout);" in source
+	assert "return gauge_put(z, (const struct gauge_config *)req, timeout);" in source
+	assert "return gauge_config(z, (const struct gauge_config *)req," in source
+
+	row = source[source.index('.name = "config"'):]
+	row = row[:row.index("},")]
+	assert ".req_tf = &gauge_config_t_tf" in row
+	assert ".resp_tf = &gauge_config_t_tf" in row
+	assert ".req_size = sizeof(struct gauge_config)" in row
+
+	row = source[source.index('.name = "reset"'):]
+	row = row[:row.index("},")]
+	assert ".req_tf = NULL" in row and ".req_size = 0U" in row
+	assert ".resp_tf = NULL" in row and ".resp_size = 0U" in row
+
+	assert ".resp_tf = &lifecycle_status_t_tf" in source
+	assert ".events_tf = &gauge_events_t_tf" in source
+	assert '{"UNIT_MV", 1},' in source
+	assert '.name = "Unit"' in source
+	assert ("sizeof(struct gauge_config) <= CONFIG_ZEPHLETS_LUA_SCRATCH_SIZE"
+		in source)
+
+
+def test_lua_meta_annotates_every_shape(tmp_path):
+	"""LuaLS classes follow presence: `optional` scalars and submessages may be
+	nil, repeated fields are arrays, enums are typed, commands take a
+	required timeout."""
+	meta = (_run_lua_codegen(tmp_path) / "zlet_gauge_lua_meta.lua").read_text()
+
+	assert "---@enum pb.Gauge.Unit" in meta
+	assert "---@class pb.Gauge.Config" in meta
+	assert "---@field limit? integer" in meta
+	assert "---@field samples integer[]" in meta
+	assert "---@field inner? pb.Gauge.Inner" in meta
+	assert "---@field unit pb.Gauge.Unit" in meta
+	assert "---@field label string" in meta
+	assert "---@field Unit pb.Gauge.Unit" in meta
+	assert "---@param handler fun(ev: pb.Gauge.Events, meta: zephlets.EventMeta)" in meta
+	assert "function _gauge:config(req, timeout_ms) end" in meta
+	assert "function _gauge:reset(timeout_ms) end" in meta
+	assert "---@return pb.Lifecycle.Status|nil resp" in meta
+
+
+def test_lua_bindings_leave_interface_c_untouched(tmp_path):
+	"""The core TU carries no Lua: everything lives in the separate file
+	CMake compiles only under CONFIG_ZEPHLETS_LUA."""
+	source = (_run_lua_codegen(tmp_path) / "zlet_gauge_interface.c").read_text()
+
+	assert "lua" not in source.lower()
+
+
+@pytest.mark.parametrize("clash, needle", [
+	("rpc Unit (Empty) returns (Empty);", "collides"),
+	("rpc noop (Empty) returns (Empty);\n}\nmessage Other { enum Unit { U = 0; } }\n//",
+	 "share the name"),
+])
+def test_lua_enum_name_clash_is_rejected(tmp_path, clash, needle):
+	"""Enums are reached by bare name on each instance, so an enum named like
+	an rpc, or two enums sharing a name, could not both be reached."""
+	text = _LUA_PROTO.replace("rpc put        (Gauge.Config) returns (Empty);",
+				  "rpc put        (Gauge.Config) returns (Empty);\n  " + clash)
+	proto = tmp_path / "zlet_gauge.proto"
+	proto.write_text(text)
+	result = subprocess.run(
+		[sys.executable, str(_CODEGEN), "--proto", str(proto),
+		 "--output-dir", str(tmp_path), "--type", "gauge", "--prefix", "zlet_gauge"],
+		check=False, capture_output=True, text=True)
+
+	assert result.returncode != 0, result.stdout
+	assert needle in result.stderr, result.stderr

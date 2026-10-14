@@ -431,6 +431,122 @@ def collect_tf_messages(tree) -> list[dict]:
     return out
 
 
+_LUA_SCALAR_TYPES = {
+    "bool": "boolean",
+    "string": "string",
+    "bytes": "string",
+    "float": "number",
+    "double": "number",
+}
+for _t in ("int32", "sint32", "sfixed32", "uint32", "fixed32",
+           "int64", "sint64", "sfixed64", "uint64", "fixed64"):
+    _LUA_SCALAR_TYPES[_t] = "integer"
+
+# Names the Lua frontend already gives an instance's own fields; an enum of
+# the same name could never be reached through `inst.<Enum>`.
+_LUA_RESERVED_INSTANCE_KEYS = {"events"}
+
+
+def collect_qualified_names(*element_lists) -> dict:
+    """Map id(AST node) -> qualified proto name (`Ui.Config`) for every
+    message and enum, so a field's resolved type can be named the same way
+    wherever it is referenced."""
+    names = {}
+
+    def walk(elements, prefix):
+        for element in elements:
+            kind = element.__class__.__name__
+            if kind not in ("Message", "Enum"):
+                continue
+            qualified = f"{prefix}.{element.name}" if prefix else element.name
+            names[id(element)] = qualified
+            if kind == "Message":
+                walk(element.elements, qualified)
+
+    for elements in element_lists:
+        walk(elements, "")
+
+    return names
+
+
+def collect_enums(tree) -> list[dict]:
+    """Every enum declared in the proto, nested or top-level, in declaration
+    order, as {'name': <bare name>, 'qualified': ..., 'values': [(name, n)]}."""
+    out: list[dict] = []
+
+    def walk(elements, prefix):
+        for element in elements:
+            kind = element.__class__.__name__
+            if kind == "Enum":
+                qualified = f"{prefix}.{element.name}" if prefix else element.name
+                values = [(v.name, int(v.number)) for v in element.elements
+                          if v.__class__.__name__ == "EnumValue"]
+                out.append({"name": element.name, "qualified": qualified,
+                            "values": values})
+            elif kind == "Message":
+                qualified = f"{prefix}.{element.name}" if prefix else element.name
+                walk(element.elements, qualified)
+
+    walk(tree.file_elements, "")
+
+    return out
+
+
+def _lua_field_type(field, index, qualified_names) -> str:
+    """The LuaLS type of one field's value, cardinality aside."""
+    entry = index.get(field.type) or index.get(field.type.split(".")[-1])
+    if entry is not None:
+        return "pb." + qualified_names[id(entry[1])]
+
+    return _LUA_SCALAR_TYPES.get(field.type, "any")
+
+
+def collect_lua_messages(tree, index, qualified_names) -> list[dict]:
+    """Every message declared in the proto, as LuaLS class rows.
+
+    A field is marked optional (`name?`) when it may be absent from the table
+    the frontend builds: an explicit `optional` scalar, a submessage (proto3
+    tracks its presence, so nanopb gives it a `has_` flag), or a oneof
+    member. Repeated fields become arrays and are always present.
+    """
+    out: list[dict] = []
+
+    def walk(elements):
+        for element in elements:
+            if element.__class__.__name__ != "Message":
+                continue
+            walk(element.elements)
+
+            oneof_members = set()
+            for inner in element.elements:
+                if inner.__class__.__name__ == "OneOf":
+                    oneof_members.update(
+                        id(e) for e in inner.elements
+                        if e.__class__.__name__ == "Field")
+
+            fields = []
+            for field in _message_fields(element):
+                cardinality = str(getattr(field, "cardinality", "") or "").upper()
+                lua_type = _lua_field_type(field, index, qualified_names)
+                entry = index.get(field.type) or index.get(field.type.split(".")[-1])
+                is_msg = entry is not None and entry[0] == "Message"
+                if "REPEATED" in cardinality:
+                    fields.append({"name": field.name, "type": f"{lua_type}[]",
+                                   "optional": False})
+                    continue
+                optional = ("OPTIONAL" in cardinality or is_msg
+                            or id(field) in oneof_members)
+                fields.append({"name": field.name, "type": lua_type,
+                               "optional": optional})
+
+            out.append({"class": "pb." + qualified_names[id(element)],
+                        "fields": fields})
+
+    walk(tree.file_elements)
+
+    return out
+
+
 def nanopb_descriptor(c_name: str) -> str:
     """
     Nanopb with --c-style appends '_t_msg' to the message descriptor symbol.
@@ -598,6 +714,52 @@ def parse_proto(proto_path: str) -> dict:
     commands_base = [c for c in commands if c["name"] in base_set]
     commands_custom = [c for c in commands if c["name"] not in base_set]
 
+    # Lua frontend: which messages carry a text-format descriptor (only those
+    # with at least one field do), so a method row can point at it or say
+    # NULL. Lifecycle.Status is the one shared message that has one; its
+    # descriptor is defined by the infra itself (zephlet_textformat.c).
+    tf_messages = collect_tf_messages(tree)
+    tf_names = {m["lc"] for m in tf_messages} | {"lifecycle_status"}
+    shared_elements = load_shared_elements()
+    qualified_names = collect_qualified_names(tree.file_elements, shared_elements)
+
+    for cmd, method in zip(commands, (m for m in service.elements
+                                      if m.__class__.__name__ == "Method")):
+        def lua_class(type_ref):
+            if type_ref == "Empty":
+                return "pb.Empty"
+            entry = type_index.get(type_ref) or type_index.get(type_ref.split(".")[-1])
+            return "pb." + qualified_names[id(entry[1])] if entry else "table"
+
+        input_type = getattr(method.input_type, "type",
+                             getattr(method.input_type, "name", str(method.input_type)))
+        output_type = getattr(method.output_type, "type",
+                              getattr(method.output_type, "name", str(method.output_type)))
+        cmd["lua_req_tf"] = (f"&{cmd['req_c_name']}_t_tf"
+                             if cmd["req_c_name"] in tf_names else "NULL")
+        cmd["lua_resp_tf"] = (f"&{cmd['resp_c_name']}_t_tf"
+                              if cmd["resp_c_name"] in tf_names else "NULL")
+        cmd["lua_req_class"] = lua_class(input_type)
+        cmd["lua_resp_class"] = lua_class(output_type)
+
+    enums = collect_enums(tree)
+    seen = {}
+    for enum in enums:
+        if enum["name"] in seen:
+            print(f"{proto_path}: enums '{seen[enum['name']]}' and "
+                  f"'{enum['qualified']}' share the name '{enum['name']}'; the "
+                  "Lua frontend exposes enums by bare name on each instance.",
+                  file=sys.stderr)
+            sys.exit(1)
+        seen[enum["name"]] = enum["qualified"]
+        if enum["name"] in declared or enum["name"] in _LUA_RESERVED_INSTANCE_KEYS:
+            print(f"{proto_path}: enum '{enum['qualified']}' collides with an "
+                  f"rpc or reserved Lua instance field named '{enum['name']}'.",
+                  file=sys.stderr)
+            sys.exit(1)
+
+    events_lc = f"{camel_to_snake(owning_type)}_events"
+
     return {
         "owning_type_camel": owning_type,
         "type_snake": camel_to_snake(owning_type),
@@ -608,14 +770,18 @@ def parse_proto(proto_path: str) -> dict:
         "num_methods_including_reserved": commands[-1]["method_id"] + 1,
         "coap_opt_in": coap_opt_in,
         "coap_discoverable": coap_discoverable,
-        "tf_messages": collect_tf_messages(tree),
+        "tf_messages": tf_messages,
+        "enums": enums,
+        "lua_events_tf": f"&{events_lc}_t_tf" if events_lc in tf_names else "NULL",
+        "lua_events_class": f"pb.{owning_type}.Events",
+        "lua_messages": collect_lua_messages(tree, type_index, qualified_names),
     }
 
 
 def render_templates(ctx: dict, prefix: str, template_dir: str,
-                     output_dir: str) -> tuple[str, str, str, str]:
+                     output_dir: str) -> list[str]:
     """
-    Render the four per-zephlet artifacts:
+    Render the per-zephlet artifacts:
       <prefix>_interface.{h,c}      — always populated (core dispatch).
       <prefix>_coap_interface.{h,c} — populated only when the proto opts in;
                                       empty stubs otherwise. CMake compiles
@@ -623,6 +789,13 @@ def render_templates(ctx: dict, prefix: str, template_dir: str,
                                       `CONFIG_ZEPHLETS_COAP=y`, so the empty
                                       stub is a 0-symbol TU for non-opted
                                       types.
+      <prefix>_lua_interface.{h,c}  — Lua frontend bindings. The header is
+                                      included, and the .c compiled, only
+                                      under `CONFIG_ZEPHLETS_LUA=y`.
+      <prefix>_lua_meta.lua         — LuaLS annotations for the type; never
+                                      compiled, collected after the build.
+
+    Returns the written paths, in that order.
     """
     env = Environment(
         loader=FileSystemLoader(template_dir),
@@ -630,33 +803,28 @@ def render_templates(ctx: dict, prefix: str, template_dir: str,
         lstrip_blocks=True,
         keep_trailing_newline=True,
     )
-    header_tpl = env.get_template("zephlet_interface.h.jinja")
-    source_tpl = env.get_template("zephlet_interface.c.jinja")
-    coap_header_tpl = env.get_template("zephlet_coap_interface.h.jinja")
-    coap_source_tpl = env.get_template("zephlet_coap_interface.c.jinja")
+    outputs = [
+        ("zephlet_interface.h.jinja", f"{prefix}_interface.h"),
+        ("zephlet_interface.c.jinja", f"{prefix}_interface.c"),
+        ("zephlet_coap_interface.h.jinja", f"{prefix}_coap_interface.h"),
+        ("zephlet_coap_interface.c.jinja", f"{prefix}_coap_interface.c"),
+        ("zephlet_lua_interface.h.jinja", f"{prefix}_lua_interface.h"),
+        ("zephlet_lua_interface.c.jinja", f"{prefix}_lua_interface.c"),
+        ("zephlet_lua_meta.lua.jinja", f"{prefix}_lua_meta.lua"),
+    ]
 
     ctx = {**ctx, "prefix": prefix}
-    header = header_tpl.render(**ctx)
-    source = source_tpl.render(**ctx)
-    coap_header = coap_header_tpl.render(**ctx)
-    coap_source = coap_source_tpl.render(**ctx)
-
     os.makedirs(output_dir, exist_ok=True)
-    header_path = os.path.join(output_dir, f"{prefix}_interface.h")
-    source_path = os.path.join(output_dir, f"{prefix}_interface.c")
-    coap_header_path = os.path.join(output_dir, f"{prefix}_coap_interface.h")
-    coap_source_path = os.path.join(output_dir, f"{prefix}_coap_interface.c")
 
-    with open(header_path, "w") as f:
-        f.write(header)
-    with open(source_path, "w") as f:
-        f.write(source)
-    with open(coap_header_path, "w") as f:
-        f.write(coap_header)
-    with open(coap_source_path, "w") as f:
-        f.write(coap_source)
+    paths = []
+    for template_name, file_name in outputs:
+        text = env.get_template(template_name).render(**ctx)
+        path = os.path.join(output_dir, file_name)
+        with open(path, "w") as f:
+            f.write(text)
+        paths.append(path)
 
-    return header_path, source_path, coap_header_path, coap_source_path
+    return paths
 
 
 def main() -> int:
@@ -690,13 +858,8 @@ def main() -> int:
     script_dir = os.path.dirname(os.path.abspath(__file__))
     template_dir = os.path.join(script_dir, "templates")
 
-    header_path, source_path, coap_header_path, coap_source_path = \
-        render_templates(ctx, args.prefix, template_dir, args.output_dir)
-
-    print(f"generated: {header_path}")
-    print(f"generated: {source_path}")
-    print(f"generated: {coap_header_path}")
-    print(f"generated: {coap_source_path}")
+    for path in render_templates(ctx, args.prefix, template_dir, args.output_dir):
+        print(f"generated: {path}")
     return 0
 
 

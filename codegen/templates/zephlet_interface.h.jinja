@@ -76,7 +76,8 @@ extern const struct zephlet_api {{ type_snake }}_api;
  * final `;`) needs a clean statement boundary to start from. */
 #define _ZLET_FRONTEND_HOOKS_{{ type_snake }}(_name) \
 	_ZLET_COAP_HOOK_{{ type_snake }}(_name); \
-	_ZLET_SHELL_HOOK_{{ type_snake }}(_name);
+	_ZLET_SHELL_HOOK_{{ type_snake }}(_name); \
+	_ZLET_LUA_HOOK_{{ type_snake }}(_name);
 
 {% if coap_opt_in %}
 /* Frontend overrides are included first so their `#define` of the
@@ -115,6 +116,14 @@ PB_TF_DECLARE({{ m.lc }}_t);
 #define _ZLET_SHELL_HOOK_{{ type_snake }}(_name) ZLET_SHELL_INSTANCE({{ type_snake }}, _name)
 #else
 #define _ZLET_SHELL_HOOK_{{ type_snake }}(_name) /* empty: CONFIG_ZEPHLETS_SHELL disabled */
+#endif
+
+/* Like the shell, the Lua frontend has no per-service opt-in: every instance
+ * is reachable from Lua whenever CONFIG_ZEPHLETS_LUA is on. */
+#if defined(CONFIG_ZEPHLETS_LUA)
+#include "{{ prefix }}_lua_interface.h"
+#else
+#define _ZLET_LUA_HOOK_{{ type_snake }}(_name) /* empty: CONFIG_ZEPHLETS_LUA disabled */
 #endif
 
 /* ----- Synchronous command wrappers ------------------------------------ */

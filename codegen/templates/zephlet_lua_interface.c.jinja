@@ -1,0 +1,95 @@
+/* GENERATED FILE — DO NOT EDIT. Source: {{ prefix }}.proto. */
+
+/*
+ * Lua frontend bindings for the `{{ type_snake }}` zephlet. Compiled only
+ * under CONFIG_ZEPHLETS_LUA.
+ *
+ * One trampoline per RPC calls the generated typed wrapper, so a Lua command
+ * takes exactly the path a C caller does. The frontend owns the request and
+ * response storage; the trampoline only casts it to the right struct.
+ */
+
+#include "{{ prefix }}_interface.h"
+
+#include <zephyr/kernel.h>
+
+#include "zephlet_lua.h"
+#include "zephlet_textformat.h"
+
+{% for cmd in commands %}
+{% if not cmd.req_is_empty %}
+BUILD_ASSERT(sizeof(struct {{ cmd.req_c_name }}) <= CONFIG_ZEPHLETS_LUA_SCRATCH_SIZE,
+	     "{{ type_snake }}.{{ cmd.name }} request exceeds CONFIG_ZEPHLETS_LUA_SCRATCH_SIZE");
+{% endif %}
+{% if not cmd.resp_is_empty %}
+BUILD_ASSERT(sizeof(struct {{ cmd.resp_c_name }}) <= CONFIG_ZEPHLETS_LUA_SCRATCH_SIZE,
+	     "{{ type_snake }}.{{ cmd.name }} response exceeds CONFIG_ZEPHLETS_LUA_SCRATCH_SIZE");
+{% endif %}
+{% endfor %}
+
+{% for cmd in commands %}
+static int {{ type_snake }}_lua_{{ cmd.name }}(const struct zephlet *z, const void *req, void *resp, k_timeout_t timeout)
+{
+{% if cmd.req_is_empty and cmd.resp_is_empty %}
+	ARG_UNUSED(req);
+	ARG_UNUSED(resp);
+	return {{ type_snake }}_{{ cmd.name }}(z, timeout);
+{% elif cmd.req_is_empty %}
+	ARG_UNUSED(req);
+	return {{ type_snake }}_{{ cmd.name }}(z, (struct {{ cmd.resp_c_name }} *)resp, timeout);
+{% elif cmd.resp_is_empty %}
+	ARG_UNUSED(resp);
+	return {{ type_snake }}_{{ cmd.name }}(z, (const struct {{ cmd.req_c_name }} *)req, timeout);
+{% else %}
+	return {{ type_snake }}_{{ cmd.name }}(z, (const struct {{ cmd.req_c_name }} *)req,
+			     (struct {{ cmd.resp_c_name }} *)resp, timeout);
+{% endif %}
+}
+
+{% endfor %}
+static const struct zephlet_lua_method {{ type_snake }}_lua_methods[] = {
+{% for cmd in commands %}
+	{
+		.name = "{{ cmd.name }}",
+		.invoke = {{ type_snake }}_lua_{{ cmd.name }},
+		.req_tf = {{ cmd.lua_req_tf }},
+		.resp_tf = {{ cmd.lua_resp_tf }},
+		.req_size = {% if cmd.req_is_empty %}0U{% else %}sizeof(struct {{ cmd.req_c_name }}){% endif %},
+		.resp_size = {% if cmd.resp_is_empty %}0U{% else %}sizeof(struct {{ cmd.resp_c_name }}){% endif %},
+	},
+{% endfor %}
+};
+
+{% for enum in enums %}
+static const struct zephlet_lua_enum_value {{ type_snake }}_lua_enum_{{ loop.index0 }}[] = {
+{% for value in enum['values'] %}
+	{"{{ value[0] }}", {{ value[1] }}},
+{% endfor %}
+};
+
+{% endfor %}
+{% if enums %}
+static const struct zephlet_lua_enum {{ type_snake }}_lua_enums[] = {
+{% for enum in enums %}
+	{
+		.name = "{{ enum.name }}",
+		.values = {{ type_snake }}_lua_enum_{{ loop.index0 }},
+		.count = ARRAY_SIZE({{ type_snake }}_lua_enum_{{ loop.index0 }}),
+	},
+{% endfor %}
+};
+
+{% endif %}
+const struct zephlet_lua_type {{ type_snake }}_lua_type = {
+	.name = "{{ type_snake }}",
+	.methods = {{ type_snake }}_lua_methods,
+	.num_methods = ARRAY_SIZE({{ type_snake }}_lua_methods),
+	.events_tf = {{ lua_events_tf }},
+{% if enums %}
+	.enums = {{ type_snake }}_lua_enums,
+	.num_enums = ARRAY_SIZE({{ type_snake }}_lua_enums),
+{% else %}
+	.enums = NULL,
+	.num_enums = 0U,
+{% endif %}
+};
