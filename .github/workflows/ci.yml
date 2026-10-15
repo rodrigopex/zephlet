@@ -116,6 +116,26 @@ jobs:
             --jobs 1 \
             -O /tmp/twister-out-infra
 
+      - name: Check the Lua frontend suites ran
+        # lua_functional needs the lua_zephyr module, which comes from the
+        # app's manifest; without it twister skips the suites rather than
+        # failing. Fail here instead, so a manifest change cannot drop them.
+        run: |
+          python3 - <<'PY'
+          import json
+          report = json.load(open("/tmp/twister-out-infra/twister.json"))
+          lua = [s for s in report["testsuites"]
+                 if s["name"].startswith("zephlet.lua_functional.")]
+          ran = [s for s in lua if s["status"] == "passed"]
+          for s in lua:
+              print(f"{s['status']:>8}  {s['name']}")
+          if not lua or len(ran) != len(lua):
+              raise SystemExit("lua_functional did not run in full")
+          PY
+
+      - name: Run codegen unit tests
+        run: pytest -v modules/lib/zephlet/tests/codegen/
+
       - name: Run CoAPS/DTLS test on native_sim/native/64
         # NON-GATING. The DTLS-PSK frontend is verified locally (handshake,
         # RPC round-trip, wrong-PSK rejection over the offloaded-sockets
