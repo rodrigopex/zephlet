@@ -653,16 +653,15 @@ def test_textformat_descriptors_gated_on_the_library(tmp_path):
 	assert source.count("PB_TF_DEFINE(") == block.count("PB_TF_DEFINE(")
 
 
-def test_textformat_descriptor_not_emitted_for_field_less_message(tmp_path):
-	"""nanopb emits a struct and an empty FIELDLIST even for a bare
-	namespace wrapper like `message Tick { ... }`, whose descriptor
-	would cost flash and describe nothing. `Empty` is skipped for the
-	same reason — and it lives in the shared zephlet.proto anyway, whose
-	one shell-reaching message the infra defines by hand."""
+def test_textformat_descriptor_emitted_for_field_less_message(tmp_path):
+	"""Every message of the proto gets a descriptor, a field-less one too,
+	such as an empty Config or the namespace wrapper `message Tick { ... }`.
+	The shared zephlet.proto's messages are not this proto's: `Empty` gets
+	none, and the infra defines the one for Lifecycle.Status by hand."""
 	_run_codegen(_FIXTURES / "tick_no_opt.proto", tmp_path)
 	source = (tmp_path / "zlet_tick_interface.c").read_text()
 
-	assert "PB_TF_DEFINE(TICK, tick_t);" not in source
+	assert "PB_TF_DEFINE(TICK, tick_t);" in source
 	assert "PB_TF_DEFINE(EMPTY" not in source
 	assert "PB_TF_DEFINE(LIFECYCLE_STATUS" not in source
 
@@ -756,8 +755,8 @@ service OneofApi {
 	assert "PB_TF_DEFINE(ONEOF_CONFIG, oneof_config_t);" in source
 	# A oneof alongside an ordinary field must not double-count either.
 	assert source.count("PB_TF_DEFINE(ONEOF_MIXED, oneof_mixed_t);") == 1
-	# Genuinely field-less messages are still skipped; the nested one is not.
-	assert "PB_TF_DEFINE(ONEOF_WRAPPER, oneof_wrapper_t);" not in source
+	# A field-less message gets one too, and so does the one nested in it.
+	assert "PB_TF_DEFINE(ONEOF_WRAPPER, oneof_wrapper_t);" in source
 	assert "PB_TF_DEFINE(ONEOF_WRAPPER_INNER, oneof_wrapper_inner_t);" in source
 
 
