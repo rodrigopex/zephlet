@@ -113,6 +113,26 @@ return function()
 	async.sleep(10)
 	eq(table.concat(policy_seen, ","), "1,2", "policy still gets every event")
 
+	-- The first await drains after it subscribes: an event of a connected
+	-- instance still in staging reaches the new queue, with no yield between
+	-- the emit and the await, and the policy gets it once.
+	local first = async.spawn(function()
+		b:burst({count = 1, value = 3}, 100)
+		local e = b:await(100)
+		return e and e.value
+	end)
+	local ok5, v5 = first:join(500)
+	eq(ok5 and v5, 3, "first await gets the event still in staging")
+	async.sleep(10)
+	eq(table.concat(policy_seen, ","), "1,2,3", "the policy gets it once")
+
+	-- A staged event of the wrong size is dropped and counted, not read.
+	local fifo_drop = z.stats().probe_b.fifo_drop
+	b:stage_short(100)
+	async.sleep(10)
+	eq(z.stats().probe_b.fifo_drop - fifo_drop, 1, "a short staged event is a counted drop")
+	eq(#policy_seen, 3, "and never reaches the policy")
+
 	-- await_any: several sources, oldest first.
 	local any = async.spawn(function()
 		local names = {}
@@ -132,6 +152,90 @@ return function()
 	for _ = 1, 2 do
 		a:await(0)
 	end
+
+	-- No timeout, or nil, waits forever.
+	local woke = {}
+	local function waiter(name, fn)
+		return async.spawn(function()
+			local e, inst = fn()
+			woke[name] = true
+			return e ~= nil and (inst == nil or inst == a)
+		end)
+	end
+	local w1 = waiter("await()", function() return a:await() end)
+	local w2 = waiter("await(nil)", function() return a:await(nil) end)
+	local w3 = waiter("await_any()", function() return z.await_any({a, b}) end)
+	local w4 = waiter("await_any(nil)", function() return z.await_any({a, b}, nil) end)
+	async.sleep(200)
+	check(next(woke) == nil, "no timeout: still parked after 200 ms")
+	a:burst({count = 1, value = 0}, 100)
+	for name, w in pairs({["await()"] = w1, ["await(nil)"] = w2,
+			["await_any()"] = w3, ["await_any(nil)"] = w4}) do
+		local ok, got = w:join(500)
+		check(ok and got == true, name .. " without a timeout gets the event")
+	end
+	a:await(0)
+
+	-- A finished task's queue does not keep collecting events: with the
+	-- collector stopped, nothing frees it, so only the drain can tell.
+	local once = async.spawn(function()
+		return idle:await(0)
+	end)
+	once:join(500)
+	collectgarbage("stop")
+	local emitted = z.stats().probe_idle.emitted
+	idle:burst({count = 6, value = 0}, 100)
+	async.sleep(20)
+	eq(z.stats().probe_idle.emitted - emitted, 6, "events emitted after the task finished")
+	eq(z.stats().probe_idle.await_drop, 0, "no queue left to fill")
+	collectgarbage("restart")
+
+	-- A __gc that runs while a task's first await of probe_idle allocates its
+	-- queue: it emits on probe_idle, then awaits probe_a, whose drain sees
+	-- that event. The new queue must count as live by then, or the drain
+	-- turns probe_idle's staging off under the parked task. Nothing makes the
+	-- collector run there on demand, so finalizers keep re-arming and each try
+	-- is a fresh task, until one fires inside that await.
+	local inside, fired = false, false
+	local gcmt = {}
+	gcmt.__gc = function(o)
+		if inside and not fired then
+			fired = true
+			idle:burst({count = 1, value = 0}, 0)
+			a:await(0)
+		end
+		setmetatable(o, gcmt)
+	end
+	local pause = collectgarbage("param", "pause", 0)
+	local stepsize = collectgarbage("param", "stepsize", 64)
+	local tries, got = 0, nil
+	while not fired and tries < 200 do
+		tries = tries + 1
+		for _ = 1, 8 do
+			setmetatable({}, gcmt)
+		end
+		local t = async.spawn(function()
+			inside = true
+			idle:await(0)
+			inside = false
+			if not fired then
+				return nil
+			end
+			while idle:await(0) ~= nil do
+			end
+			idle:burst({count = 1, value = 0}, 100)
+			return idle:await(100) ~= nil
+		end)
+		local ok, r = t:join(500)
+		got = ok and r
+	end
+	collectgarbage("param", "pause", pause)
+	collectgarbage("param", "stepsize", stepsize)
+	gcmt.__gc = nil
+	collectgarbage()
+	check(fired, "a __gc ran inside a first await")
+	check(got == true, "a first await survives a __gc that drains")
+	a:await(0)
 
 	-- A full queue drops the newest, counted in z.stats(). Its source has no
 	-- policy: awaiting alone turns its staging on.

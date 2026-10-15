@@ -243,10 +243,12 @@ end
 ```
 
 - **`inst:await([timeout_ms])`** returns the next event of `inst`, the same
-  object a policy gets, or `nil, "timeout"`. `nil` or
-  `z.FOREVER` waits forever, and `0` does not wait. It parks the calling task,
+  object a policy gets, or `nil, "timeout"`. Without a timeout, or with
+  `nil` or `z.FOREVER`, it waits forever: `tick:await()` returns only when tick
+  emits. `0` does not wait. It parks the calling task,
   as `chan:await` does, never the thread.
 - **`z.await_any(insts[, timeout_ms])`** waits on several instances at once,
+  with the same timeout rules (`z.await_any({tick, tampering})` waits forever),
   like `observer:wait_msg`, and returns their events oldest first, as
   `ev, inst`, where `inst` is the instance that sent it.
 - **Each task has its own queue per instance**, created by its first await on
