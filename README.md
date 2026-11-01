@@ -243,6 +243,31 @@ Resources:
 - `GET /zlet/apis`, `/zlet/<type>/apis`, `/zlet/<type>/instances` and
   `/.well-known/core`: discovery.
 
+### Block-wise responses
+
+`CONFIG_ZEPHLETS_COAP_BLOCK2=y` sends a response longer than one block as
+RFC 7959 Block2 blocks; a link MTU below the datagram (6LoWPAN, a UART link)
+calls for it.
+
+| Kconfig | Default | Effect |
+|---|---|---|
+| `ZEPHLETS_COAP_BLOCK2_SIZE` | `64` | Largest block: 16 to 1024, a power of two. A client's Block2 option asks for a smaller one. |
+| `ZEPHLETS_COAP_BLOCK2_ENTRIES` | `2` | rpc responses kept at once. |
+| `ZEPHLETS_COAP_BLOCK2_MAX_SIZE` | `512` | Largest rpc response kept; a longer one answers 4.13. |
+| `ZEPHLETS_COAP_BLOCK2_LIFETIME_MS` | `10000` | Time a kept response stays after block 0. |
+
+- An rpc (POST) runs once per transfer: its response is kept for the client,
+  keyed by the client's address, the URI path and query and the request
+  payload. A later block comes from that copy.
+- A later block with no kept response answers 4.08; the client starts again
+  at block 0. A block past the end answers 4.02.
+- Discovery (GET) builds its body again for each block; the ETag is the
+  body's CRC-32.
+- `/.well-known/core` takes Zephyr's `COAP_WELL_KNOWN_BLOCK_WISE`, at the same
+  block size.
+- Every block carries ETag, Block2, Size2 and the errno option. Observe
+  notifications stay single datagrams.
+
 ### The errno option
 
 Every response the frontend builds, `/.well-known/core` aside, carries

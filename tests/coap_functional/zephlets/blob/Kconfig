@@ -1,0 +1,17 @@
+config ZEPHLET_BLOB
+    bool "Blob zephlet (CoAP functional test fixture)"
+    select NANOPB
+    select ZBUS
+    select ZBUS_ASYNC_LISTENER
+    help
+      Enable the `blob` zephlet used by the Block2 scenario: `read`
+      returns a body longer than one block and counts its runs, so the
+      test sees how many times a block-wise transfer ran the rpc.
+
+if ZEPHLET_BLOB
+
+module = ZEPHLET_BLOB
+module-str = zlet_blob
+source "subsys/logging/Kconfig.template.log_config"
+
+endif

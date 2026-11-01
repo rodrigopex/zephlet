@@ -9,6 +9,7 @@
 #include <zephyr/net/coap.h>
 #include <zephyr/net/coap_service.h>
 
+#include "zephlet_coap_block2.h"
 #include "zephlet_coap_consts.h"
 #include "zephlet_coap_translate.h"
 
@@ -30,11 +31,9 @@ LOG_MODULE_DECLARE(zlet_coap);
  * as samples and other server resources. */
 #define ZEPHLET_COAP_SEND_BUF_SIZE CONFIG_COAP_SERVER_MESSAGE_SIZE
 
-/* TODO: block-wise transfer (RFC 7959). Not implemented: every zephlet
- * response is a single nanopb message bounded by its `<MSG>_SIZE`, and no
- * measured payload has exceeded the single-datagram budget
- * (ZEPHLET_COAP_SEND_BUF_SIZE). Add Block2 only when a real response is
- * shown to overflow it — pre-building it now would be dead complexity. */
+/* With CONFIG_ZEPHLETS_COAP_BLOCK2, zephlet_coap_send_payload_ct() hands a
+ * response longer than one block to zephlet_coap_block2_send(). A link MTU
+ * below the datagram budget (6LoWPAN, a UART link) is what calls for it. */
 
 static int build_response_header(const struct coap_packet *req, uint8_t *buf, size_t buf_size,
 				 uint8_t code, struct coap_packet *out)
@@ -84,9 +83,22 @@ int zephlet_coap_send_payload_ct(struct coap_resource *res, struct coap_packet *
 		return zephlet_coap_send_error(res, req, addr, addr_len, rc);
 	}
 
+	uint8_t code = zephlet_coap_map_return_code(rc, true);
+
+#if defined(CONFIG_ZEPHLETS_COAP_BLOCK2)
+	int sent = zephlet_coap_block2_send(res, req, addr, addr_len, code, rc, ct_id, payload,
+					    payload_len);
+
+	if (sent == -EMSGSIZE) {
+		return zephlet_coap_send_error(res, req, addr, addr_len, -EMSGSIZE);
+	}
+	if (sent != 0) {
+		return (sent > 0) ? 0 : sent;
+	}
+#endif
+
 	uint8_t buf[ZEPHLET_COAP_SEND_BUF_SIZE];
 	struct coap_packet response;
-	uint8_t code = zephlet_coap_map_return_code(rc, true);
 
 	int err = build_response_header(req, buf, sizeof(buf), code, &response);
 	if (err < 0) {

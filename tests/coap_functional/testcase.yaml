@@ -104,6 +104,19 @@ tests:
     harness_config:
       pytest_root:
         - "pytest/test_connmgr.py"
+  zephlet.coap_functional.block2:
+    # Blocks of 16 bytes: the blob rpc response and the discovery bodies
+    # span several; the rpc and discovery suites run again over Block2.
+    extra_configs:
+      - CONFIG_ZEPHLETS_COAP_PORT=5709
+      - CONFIG_ZEPHLETS_COAP_BLOCK2=y
+      - CONFIG_ZEPHLETS_COAP_BLOCK2_SIZE=16
+      - CONFIG_ZEPHLET_BLOB=y
+    harness_config:
+      pytest_root:
+        - "pytest/test_block2.py"
+        - "pytest/test_rpc.py"
+        - "pytest/test_discovery.py"
   zephlet.coap_functional.dtls:
     # CoAPS (DTLS-PSK) on 5684. The pytest drives libcoap's coap-client
     # (aiocoap has no PSK-DTLS binding here); CI installs libcoap3-bin.
