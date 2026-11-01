@@ -24,7 +24,8 @@
 #define ZEPHLET_COAP_CT_TEXT_PLAIN 0
 
 /** Custom CoAP option number carrying the raw POSIX errno verbatim
- *  (signed 32-bit).
+ *  (signed 32-bit), as the target's libc numbers it: a client on another
+ *  libc translates by the target's numbering (README, "The errno option").
  *
  *  Properties (per RFC 7252 §5.4.6 — encoded in the option number's
  *  low bits, NOT free parameters):
