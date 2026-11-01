@@ -1,4 +1,4 @@
-"""Smoke test: the Zephyr binary listens on UDP/5683 and the CoAP server
+"""Smoke test: the Zephyr binary listens on its CONFIG_ZEPHLETS_COAP_PORT and the CoAP server
 returns `4.04 Not Found` for an unknown path. Proves the aiocoap fixture
 reaches the Zephyr stack end-to-end via the host-side `eth_native_tap`.
 """

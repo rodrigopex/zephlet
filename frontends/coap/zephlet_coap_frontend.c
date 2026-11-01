@@ -49,7 +49,8 @@ LOG_MODULE_REGISTER(zlet_coap, CONFIG_ZEPHLET_LOG_LEVEL);
  *
  * With `CONFIG_ZEPHLETS_COAP_DTLS=y` the service is bound over DTLS on
  * the secure port and authenticated with a PSK the integrator supplies
- * via Kconfig; otherwise it is plain CoAP over UDP on 5683.
+ * via Kconfig; otherwise it is plain CoAP over UDP on
+ * `CONFIG_ZEPHLETS_COAP_PORT`. Either binds `CONFIG_ZEPHLETS_COAP_ADDR`.
  */
 
 /*
@@ -77,8 +78,8 @@ static const sec_tag_t zlet_coap_sec_tags[] = {
 /* The service's sec_tag_list_size is forwarded verbatim as the
  * setsockopt(TLS_SEC_TAG_LIST) option length, which is a byte count — use
  * sizeof, not ARRAY_SIZE, or coap_service_start() rejects it with -EINVAL. */
-COAPS_SERVICE_DEFINE(zlet_coap_service, "0.0.0.0", &zlet_coap_port, ZLET_COAP_SERVICE_FLAGS,
-		     zlet_coap_sec_tags, sizeof(zlet_coap_sec_tags));
+COAPS_SERVICE_DEFINE(zlet_coap_service, CONFIG_ZEPHLETS_COAP_ADDR, &zlet_coap_port,
+		     ZLET_COAP_SERVICE_FLAGS, zlet_coap_sec_tags, sizeof(zlet_coap_sec_tags));
 
 /**
  * @brief Register the CoAPS pre-shared key before the service binds.
@@ -117,9 +118,10 @@ SYS_INIT(zlet_coap_dtls_psk_init, APPLICATION, 0);
 
 #else
 
-static uint16_t zlet_coap_port = 5683;
+static uint16_t zlet_coap_port = CONFIG_ZEPHLETS_COAP_PORT;
 
-COAP_SERVICE_DEFINE(zlet_coap_service, "0.0.0.0", &zlet_coap_port, ZLET_COAP_SERVICE_FLAGS);
+COAP_SERVICE_DEFINE(zlet_coap_service, CONFIG_ZEPHLETS_COAP_ADDR, &zlet_coap_port,
+		    ZLET_COAP_SERVICE_FLAGS);
 
 #endif /* CONFIG_ZEPHLETS_COAP_DTLS */
 

@@ -57,7 +57,11 @@ ZEPHLET_NEW(silent, silent_inst, &silent_inst_cfg, &silent_inst_data, silent_ini
 
 int main(void)
 {
-	LOG_INF("zephlet coap functional host up on UDP/5683");
+#if defined(CONFIG_ZEPHLETS_COAP_DTLS)
+	LOG_INF("zephlet coap functional host up on UDP/%d", CONFIG_ZEPHLETS_COAP_SECURE_PORT);
+#else
+	LOG_INF("zephlet coap functional host up on UDP/%d", CONFIG_ZEPHLETS_COAP_PORT);
+#endif
 
 #if defined(CONFIG_NET_CONNECTION_MANAGER)
 	/*

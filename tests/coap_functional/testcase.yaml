@@ -7,18 +7,30 @@ common:
     - native_sim/native/64
 tests:
   zephlet.coap_functional.smoke:
+    # a port per scenario: twister runs them in parallel
+    extra_configs:
+      - CONFIG_ZEPHLETS_COAP_PORT=5701
     harness_config:
       pytest_root:
         - "pytest/test_smoke.py"
   zephlet.coap_functional.rpc:
+    # a port per scenario: twister runs them in parallel
+    extra_configs:
+      - CONFIG_ZEPHLETS_COAP_PORT=5702
     harness_config:
       pytest_root:
         - "pytest/test_rpc.py"
   zephlet.coap_functional.hardening:
+    # a port per scenario: twister runs them in parallel
+    extra_configs:
+      - CONFIG_ZEPHLETS_COAP_PORT=5703
     harness_config:
       pytest_root:
         - "pytest/test_hardening.py"
   zephlet.coap_functional.discovery:
+    # a port per scenario: twister runs them in parallel
+    extra_configs:
+      - CONFIG_ZEPHLETS_COAP_PORT=5704
     harness_config:
       pytest_root:
         - "pytest/test_discovery.py"
@@ -26,11 +38,15 @@ tests:
     # Tiny discovery buffer forces the `/instances` handler over the
     # limit so the truncation case asserts 4.13.
     extra_configs:
+      - CONFIG_ZEPHLETS_COAP_PORT=5705
       - CONFIG_ZEPHLETS_COAP_DISCOVERY_BUF_SIZE=16
     harness_config:
       pytest_root:
         - "pytest/test_discovery_truncate.py"
   zephlet.coap_functional.observe:
+    # a port per scenario: twister runs them in parallel
+    extra_configs:
+      - CONFIG_ZEPHLETS_COAP_PORT=5706
     harness_config:
       pytest_root:
         - "pytest/test_observe.py"
@@ -42,6 +58,7 @@ tests:
     # Same UART-to-stdio routing as .connmgr, needed for the `shell`
     # fixture to reach the console over this harness.
     extra_configs:
+      - CONFIG_ZEPHLETS_COAP_PORT=5707
       - CONFIG_ZEPHLETS_SHELL=y
       - CONFIG_UART_NATIVE_PTY_0_ON_STDINOUT=y
     harness_config:
@@ -60,6 +77,7 @@ tests:
     # disconnect rather than leaking one block per cycle.
     timeout: 90
     extra_configs:
+      - CONFIG_ZEPHLETS_COAP_PORT=5708
       - CONFIG_NET_CONNECTION_MANAGER=y
       - CONFIG_NET_NATIVE_OFFLOADED_SOCKETS_CONNECTIVITY_SIM=y
       - CONFIG_NET_IPV4=y

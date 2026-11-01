@@ -142,6 +142,26 @@ config ZEPHLETS_COAP_DTLS_PSK_KEY
 
 endif # ZEPHLETS_COAP_DTLS
 
+config ZEPHLETS_COAP_PORT
+    int "CoAP (UDP) port"
+    depends on ZEPHLETS_COAP && !ZEPHLETS_COAP_DTLS
+    default 5683
+    help
+      UDP port the plain CoAP service binds. RFC 7252 registers 5683 for
+      the "coap" scheme. Images on one host, such as native_sim test
+      scenarios run in parallel, each need a port of their own.
+
+config ZEPHLETS_COAP_ADDR
+    string "Local address the CoAP service binds"
+    depends on ZEPHLETS_COAP
+    default "0.0.0.0"
+    help
+      Address handed to COAP_SERVICE_DEFINE() or COAPS_SERVICE_DEFINE().
+      - "0.0.0.0": IPv4 any; with IPv4 off, Zephyr's coap_service binds
+        IPv6 any instead.
+      - "::": IPv6 any, on a dual-stack node too.
+      - A unicast address: that address only.
+
 config MBEDTLS_HEAP_SIZE
     # The stock mbedTLS heap is too small for a DTLS-PSK handshake. Size it
     # for the CoAPS server out of the box (still integrator-overridable).
