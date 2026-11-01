@@ -142,6 +142,77 @@ config ZEPHLETS_COAP_DTLS_PSK_KEY
 
 endif # ZEPHLETS_COAP_DTLS
 
+config ZEPHLETS_COAP_PORT
+    int "CoAP (UDP) port"
+    depends on ZEPHLETS_COAP && !ZEPHLETS_COAP_DTLS
+    default 5683
+    help
+      UDP port the plain CoAP service binds. RFC 7252 registers 5683 for
+      the "coap" scheme. Images on one host, such as native_sim test
+      scenarios run in parallel, each need a port of their own.
+
+config ZEPHLETS_COAP_BLOCK2
+    bool "Block-wise responses (RFC 7959 Block2)"
+    depends on ZEPHLETS_COAP
+    select CRC
+    imply COAP_WELL_KNOWN_BLOCK_WISE
+    help
+      A response longer than ZEPHLETS_COAP_BLOCK2_SIZE goes out in blocks,
+      or in the smaller blocks a client asks for.
+      - An rpc response (POST) is kept for the client; a later block comes
+        from that copy, and the rpc runs once per transfer.
+      - A discovery response (GET) is built again for each block.
+      - /.well-known/core takes Zephyr's COAP_WELL_KNOWN_BLOCK_WISE.
+      Observe notifications stay single datagrams.
+
+if ZEPHLETS_COAP_BLOCK2
+
+config ZEPHLETS_COAP_BLOCK2_SIZE
+    int "Block size in bytes"
+    default 64
+    help
+      Largest block the frontend sends: 16, 32, 64, 128, 256, 512 or 1024.
+      A client's Block2 option can ask for a smaller one.
+
+config ZEPHLETS_COAP_BLOCK2_ENTRIES
+    int "rpc responses kept for block-wise transfer"
+    default 2
+    range 1 16
+    help
+      Each entry holds one response of up to ZEPHLETS_COAP_BLOCK2_MAX_SIZE
+      bytes for one client. A new response takes an expired entry, else
+      the one that expires first.
+
+config ZEPHLETS_COAP_BLOCK2_MAX_SIZE
+    int "Largest rpc response kept, in bytes"
+    default 512
+    help
+      An rpc response longer than this and longer than one block answers
+      4.13.
+
+config ZEPHLETS_COAP_BLOCK2_LIFETIME_MS
+    int "Time a kept rpc response stays, in ms"
+    default 10000
+    help
+      Counted from block 0. A later block asked after it answers 4.08,
+      and the client starts the transfer again.
+
+endif # ZEPHLETS_COAP_BLOCK2
+
+config COAP_WELL_KNOWN_BLOCK_WISE_SIZE
+    default ZEPHLETS_COAP_BLOCK2_SIZE if ZEPHLETS_COAP_BLOCK2
+
+config ZEPHLETS_COAP_ADDR
+    string "Local address the CoAP service binds"
+    depends on ZEPHLETS_COAP
+    default "0.0.0.0"
+    help
+      Address handed to COAP_SERVICE_DEFINE() or COAPS_SERVICE_DEFINE().
+      - "0.0.0.0": IPv4 any; with IPv4 off, Zephyr's coap_service binds
+        IPv6 any instead.
+      - "::": IPv6 any, on a dual-stack node too.
+      - A unicast address: that address only.
+
 config MBEDTLS_HEAP_SIZE
     # The stock mbedTLS heap is too small for a DTLS-PSK handshake. Size it
     # for the CoAPS server out of the box (still integrator-overridable).

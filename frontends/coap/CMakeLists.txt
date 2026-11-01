@@ -8,6 +8,7 @@ if(CONFIG_ZEPHLETS_COAP)
         zephlet_coap_discovery.c
         zephlet_coap_observe.c
     )
+    zephyr_library_sources_ifdef(CONFIG_ZEPHLETS_COAP_BLOCK2 zephlet_coap_block2.c)
     zephyr_include_directories(include)
 
     # `COAP_SERVICE_DEFINE(zlet_coap_service, ...)` plus each codegen-emitted

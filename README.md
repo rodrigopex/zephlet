@@ -225,6 +225,63 @@ Public surface (see [`zephlet_coord.h`](zephlet_coord.h)):
 | `zephlet_coord_resolve(c)` | Finalise an await; idempotent against the timeout path. |
 | `zephlet_coord_done(c)` | Mark the flow idle. |
 
+## CoAP frontend
+
+`CONFIG_ZEPHLETS_COAP=y` serves every type that sets `coap` (see
+[Frontend options](#frontend-options)).
+
+| Kconfig | Default | Effect |
+|---|---|---|
+| `ZEPHLETS_COAP_ADDR` | `"0.0.0.0"` | Local address of the service; with IPv4 off, Zephyr binds IPv6 any. `"::"` binds IPv6 any on a dual-stack node. |
+| `ZEPHLETS_COAP_PORT` | `5683` | UDP port of plain CoAP. |
+| `ZEPHLETS_COAP_SECURE_PORT` | `5684` | UDP port with `ZEPHLETS_COAP_DTLS=y`. |
+
+Resources:
+
+- `POST /zlet/<type>/<instance>/<rpc>`: the request and the response are the
+  nanopb encodings of the rpc's messages, Content-Format 65001.
+- `GET /zlet/apis`, `/zlet/<type>/apis`, `/zlet/<type>/instances` and
+  `/.well-known/core`: discovery.
+
+### Block-wise responses
+
+`CONFIG_ZEPHLETS_COAP_BLOCK2=y` sends a response longer than one block as
+RFC 7959 Block2 blocks; a link MTU below the datagram (6LoWPAN, a UART link)
+calls for it.
+
+| Kconfig | Default | Effect |
+|---|---|---|
+| `ZEPHLETS_COAP_BLOCK2_SIZE` | `64` | Largest block: 16 to 1024, a power of two. A client's Block2 option asks for a smaller one. |
+| `ZEPHLETS_COAP_BLOCK2_ENTRIES` | `2` | rpc responses kept at once. |
+| `ZEPHLETS_COAP_BLOCK2_MAX_SIZE` | `512` | Largest rpc response kept; a longer one answers 4.13. |
+| `ZEPHLETS_COAP_BLOCK2_LIFETIME_MS` | `10000` | Time a kept response stays after block 0. |
+
+- An rpc (POST) runs once per transfer: its response is kept for the client,
+  keyed by the client's address, the URI path and query and the request
+  payload. A later block comes from that copy.
+- A later block with no kept response answers 4.08; the client starts again
+  at block 0. A block past the end answers 4.02.
+- Discovery (GET) builds its body again for each block; the ETag is the
+  body's CRC-32.
+- `/.well-known/core` takes Zephyr's `COAP_WELL_KNOWN_BLOCK_WISE`, at the same
+  block size.
+- Every block carries ETag, Block2, Size2 and the errno option. Observe
+  notifications stay single datagrams.
+
+### The errno option
+
+Every response the frontend builds, `/.well-known/core` aside, carries
+option 65052 (`ZEPHLET_COAP_OPT_ERRNO`): the return code, a signed 32-bit
+integer, as the target's libc numbers it.
+
+- The response code maps the return code; `-ENOSYS` onto 4.05, `-EINVAL` onto
+  4.00, unmapped codes onto 5.00 (`zephlet_coap_map_return_code()`).
+- The option's number is the target libc's: `ENOTSUP` is 134 with picolibc and
+  newlib, 95 with glibc (`native_sim`). A client on another libc translates by
+  the target's libc, not by its own `errno.h`.
+- A response code that only one errno maps onto (4.00, 4.04, 4.05, 4.09,
+  5.04) names that errno without the option.
+
 ## Shell frontend
 
 `CONFIG_ZEPHLETS_SHELL=y` puts every instance's RPCs under one `zlet` root

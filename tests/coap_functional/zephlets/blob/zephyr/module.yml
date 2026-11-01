@@ -1,0 +1,4 @@
+name: zlet_blob
+build:
+  cmake: .
+  kconfig: Kconfig

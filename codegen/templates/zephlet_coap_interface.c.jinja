@@ -19,6 +19,7 @@
 #include <pb_encode.h>
 
 #include "zephlet.h"
+#include "zephlet_coap_block2.h"
 #include "zephlet_coap_consts.h"
 #include "zephlet_coap_observe.h"
 #include "zephlet_coap_send.h"
@@ -100,6 +101,15 @@ static int {{ type_snake }}_coap_rpc_post(struct coap_resource *res, struct coap
 {
 	const struct zephlet *z;
 	char method[CONFIG_ZEPHLETS_COAP_MAX_SEGMENT_LEN + 1];
+
+#if defined(CONFIG_ZEPHLETS_COAP_BLOCK2)
+	/* A later block of a kept response: the rpc does not run again */
+	int cont = zephlet_coap_block2_continue(res, req, addr, addr_len);
+
+	if (cont != 0) {
+		return (cont > 0) ? 0 : cont;
+	}
+#endif
 
 	int err = {{ type_snake }}_resolve(req, &z, method, sizeof(method));
 	if (err != 0) {

@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+import "nanopb.proto";
+import "zephlet.proto";
+
+option (nanopb_fileopt).long_names = false;
+
+message Blob {
+  message Config {
+    uint32 size = 1;
+  }
+
+  message Events {
+    int32 timestamp = 1;
+  }
+
+  /* read response: size bytes 0, 1, 2, ... and the run count. */
+  message Chunk {
+    bytes data = 1 [(nanopb).max_size = 200];
+    uint32 runs = 2;
+  }
+}
+
+service BlobApi {
+  rpc start(Empty) returns (Lifecycle.Status);
+  rpc stop(Empty) returns (Lifecycle.Status);
+  rpc get_status(Empty) returns (Lifecycle.Status);
+  rpc config(Blob.Config) returns (Blob.Config);
+  rpc get_config(Empty) returns (Blob.Config);
+  rpc read(Empty) returns (Blob.Chunk);
+}

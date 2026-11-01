@@ -4,7 +4,8 @@ The Zephyr binary runs on `native_sim` with the native-simulator
 offloaded sockets driver (`CONFIG_NET_NATIVE_OFFLOADED_SOCKETS=y`),
 so its `socket()`/`bind()` calls forward into the host BSD stack and
 the CoAP server listens on a real host socket. The pytest fixture
-reaches the guest at `127.0.0.1:5683` with no TAP setup, no root,
+reaches the guest at `127.0.0.1`, on the scenario's
+`CONFIG_ZEPHLETS_COAP_PORT`, with no TAP setup, no root,
 and no host-side networking config — works identically on bare
 Linux, Docker, and Colima.
 """
@@ -14,6 +15,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
+from pathlib import Path
 
 import pytest
 import pytest_asyncio
@@ -60,9 +63,41 @@ def _events_uri(host: str, port: int, instance: str, type_name: str = "tick") ->
 	return f"coap://{host}:{port}/zlet/{type_name}/{instance}/events"
 
 
+def _build_dir(request) -> str | None:
+	"""The DUT's build directory: from the harness config (newer twister),
+	or from --build-dir (older twister)."""
+	harness = getattr(request.config, "twister_harness_config", None)
+	if harness is not None and harness.devices:
+		cfg = harness.devices[0]
+		for attr in ("app_build_dir", "build_dir"):
+			if getattr(cfg, attr, None):
+				return str(getattr(cfg, attr))
+	try:
+		return request.config.getoption("--build-dir")
+	except ValueError:
+		return None
+
+
+def _configured_port(build_dir: str | None) -> int | None:
+	"""CONFIG_ZEPHLETS_COAP_PORT of the DUT's build, None without one."""
+	if not build_dir:
+		return None
+	cfg = Path(build_dir) / "zephyr" / ".config"
+	if not cfg.exists():
+		return None
+	m = re.search(r"^CONFIG_ZEPHLETS_COAP_PORT=(\d+)$", cfg.read_text(), re.MULTILINE)
+	return int(m.group(1)) if m else None
+
+
 @pytest.fixture(scope="session")
-def coap_endpoint() -> tuple[str, int]:
-	return COAP_HOST, COAP_PORT
+def coap_endpoint(request) -> tuple[str, int]:
+	"""ZEPHLET_COAP_PORT if set, else the DUT's CONFIG_ZEPHLETS_COAP_PORT,
+	else 5683. Each scenario takes its own port, so twister runs them in
+	parallel."""
+	if "ZEPHLET_COAP_PORT" in os.environ:
+		return COAP_HOST, COAP_PORT
+	port = _configured_port(_build_dir(request))
+	return COAP_HOST, port if port is not None else COAP_PORT
 
 
 @pytest_asyncio.fixture(scope="function")

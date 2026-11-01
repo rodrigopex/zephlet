@@ -11,6 +11,9 @@
 #include "zlet_silent.h"
 #include "zlet_tick.h"
 #include "zlet_ui.h"
+#if defined(CONFIG_ZEPHLET_BLOB)
+#include "zlet_blob.h"
+#endif
 
 LOG_MODULE_REGISTER(zlet_coap_functional, LOG_LEVEL_INF);
 
@@ -55,9 +58,22 @@ static struct silent_config silent_inst_cfg = {
 static struct silent_data silent_inst_data;
 ZEPHLET_NEW(silent, silent_inst, &silent_inst_cfg, &silent_inst_data, silent_init_fn);
 
+#if defined(CONFIG_ZEPHLET_BLOB)
+/* Block2 scenario: a read response of 120 bytes, several blocks of 16 */
+static struct blob_config blob_inst_cfg = {
+	.size = 120,
+};
+static struct blob_data blob_inst_data;
+ZEPHLET_NEW(blob, blob_inst, &blob_inst_cfg, &blob_inst_data, blob_init_fn);
+#endif
+
 int main(void)
 {
-	LOG_INF("zephlet coap functional host up on UDP/5683");
+#if defined(CONFIG_ZEPHLETS_COAP_DTLS)
+	LOG_INF("zephlet coap functional host up on UDP/%d", CONFIG_ZEPHLETS_COAP_SECURE_PORT);
+#else
+	LOG_INF("zephlet coap functional host up on UDP/%d", CONFIG_ZEPHLETS_COAP_PORT);
+#endif
 
 #if defined(CONFIG_NET_CONNECTION_MANAGER)
 	/*
