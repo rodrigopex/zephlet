@@ -63,6 +63,7 @@ int zephlet_coord_kick(struct zephlet_coord *c)
 		return -EBUSY;
 	}
 	c->current = c->entry;
+	c->await_flags = 0U;
 	k_spin_unlock(&c->lock, key);
 
 	k_work_submit_to_queue(&zephlet_coord_workq, &c->work);
@@ -73,6 +74,7 @@ int zephlet_coord_kick(struct zephlet_coord *c)
 void zephlet_coord_next(struct zephlet_coord *c, zephlet_coord_step_fn fn)
 {
 	c->current = fn;
+	c->await_flags = 0U;
 	k_work_submit_to_queue(&zephlet_coord_workq, &c->work);
 	LOG_DBG("next %p step=%p", c, fn);
 }
@@ -84,6 +86,7 @@ void zephlet_coord_done(struct zephlet_coord *c)
 	if (c->kick_pending) {
 		c->kick_pending = false;
 		c->current = c->entry;
+		c->await_flags = 0U;
 		k_spin_unlock(&c->lock, key);
 
 		k_work_submit_to_queue(&zephlet_coord_workq, &c->work);
@@ -95,7 +98,19 @@ void zephlet_coord_done(struct zephlet_coord *c)
 	LOG_DBG("done %p", c);
 }
 
-static const struct zbus_channel *zephlet_coord_async_claim(struct zephlet_coord_async *async)
+uint8_t zephlet_coord_await_result(const struct zephlet_coord *c)
+{
+	return c->await_flags;
+}
+
+/*
+ * Claim the armed await for one path and record its outcome. The
+ * winner reads a non-NULL chan, clears it, and writes the outcome under
+ * the lock; every later path sees NULL and must bail. The outcome is in
+ * place before the winner queues the next step.
+ */
+static const struct zbus_channel *zephlet_coord_async_claim(struct zephlet_coord_async *async,
+							    uint8_t outcome)
 {
 	const struct zbus_channel *chan = NULL;
 
@@ -103,6 +118,7 @@ static const struct zbus_channel *zephlet_coord_async_claim(struct zephlet_coord
 		if (async->chan != NULL) {
 			chan = async->chan;
 			async->chan = NULL;
+			async->base.await_flags = outcome;
 		}
 	}
 	return chan;
@@ -116,6 +132,7 @@ void zephlet_coord_await(struct zephlet_coord *c, const struct zbus_channel *cha
 	int err;
 
 	c->current = next;
+	c->await_flags = ZEPHLET_COORD_AWAIT_FLAG_PENDING;
 
 	err = zbus_chan_add_obs(chan, async->obs, K_MSEC(CONFIG_ZEPHLETS_COORD_ASYNC_ZBUS_TIMEOUT));
 	if (err < 0) {
@@ -160,28 +177,61 @@ void zephlet_coord_cleanup_dispatch(struct k_work *w)
 	k_work_submit_to_queue(&zephlet_coord_workq, &async->base.work);
 }
 
-void zephlet_coord_resolve(struct zephlet_coord *c)
+bool zephlet_coord_claim_event(struct zephlet_coord *c)
 {
 	struct zephlet_coord_async *async = CONTAINER_OF(c, struct zephlet_coord_async, base);
-	const struct zbus_channel *chan = zephlet_coord_async_claim(async);
+	const struct zbus_channel *chan =
+		zephlet_coord_async_claim(async, ZEPHLET_COORD_AWAIT_FLAG_MATCHED);
 
 	if (chan == NULL) {
-		LOG_DBG("resolve %p: already claimed", c);
+		LOG_DBG("event %p: already claimed", c);
+		return false;
+	}
+
+	async->pending_rm = chan;
+	return true;
+}
+
+void zephlet_coord_finish_event(struct zephlet_coord *c)
+{
+	struct zephlet_coord_async *async = CONTAINER_OF(c, struct zephlet_coord_async, base);
+
+	LOG_DBG("resolved %p: flags=0x%02x", c, c->await_flags);
+
+	k_work_cancel_delayable(&async->timer);
+	k_work_submit_to_queue(&zephlet_coord_workq, &async->cleanup_work);
+}
+
+static void zephlet_coord_end_await(struct zephlet_coord *c, uint8_t outcome)
+{
+	struct zephlet_coord_async *async = CONTAINER_OF(c, struct zephlet_coord_async, base);
+	const struct zbus_channel *chan = zephlet_coord_async_claim(async, outcome);
+
+	if (chan == NULL) {
+		LOG_DBG("end %p: already claimed", c);
 		return;
 	}
 
-	k_work_cancel_delayable(&async->timer);
 	async->pending_rm = chan;
-	k_work_submit_to_queue(&zephlet_coord_workq, &async->cleanup_work);
+	zephlet_coord_finish_event(c);
+}
 
-	LOG_DBG("resolved %p on event", c);
+void zephlet_coord_resolve(struct zephlet_coord *c)
+{
+	zephlet_coord_end_await(c, ZEPHLET_COORD_AWAIT_FLAG_RESOLVED);
+}
+
+void zephlet_coord_cancel(struct zephlet_coord *c)
+{
+	zephlet_coord_end_await(c, ZEPHLET_COORD_AWAIT_FLAG_CANCELLED);
 }
 
 void zephlet_coord_await_timeout(struct k_work *w)
 {
 	struct k_work_delayable *dwork = k_work_delayable_from_work(w);
 	struct zephlet_coord_async *async = CONTAINER_OF(dwork, struct zephlet_coord_async, timer);
-	const struct zbus_channel *chan = zephlet_coord_async_claim(async);
+	const struct zbus_channel *chan =
+		zephlet_coord_async_claim(async, ZEPHLET_COORD_AWAIT_FLAG_TIMED_OUT);
 	int err;
 
 	if (chan == NULL) {
