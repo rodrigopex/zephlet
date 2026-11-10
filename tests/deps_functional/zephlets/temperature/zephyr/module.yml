@@ -1,0 +1,4 @@
+name: zlet_temperature
+build:
+  cmake: .
+  kconfig: Kconfig

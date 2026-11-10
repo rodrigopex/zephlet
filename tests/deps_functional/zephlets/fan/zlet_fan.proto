@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+import "nanopb.proto";
+import "zephlet.proto";
+
+option (nanopb_fileopt).long_names = false;
+
+message Fan {
+  message Config {
+    uint32 max_percent = 1;
+  }
+
+  message Events {
+    uint32 percent = 1;
+  }
+
+  message Speed {
+    uint32 percent = 1;
+  }
+}
+
+service FanApi {
+  rpc get_status(Empty) returns (Lifecycle.Status);
+  rpc set_speed(Fan.Speed) returns (Empty);
+  rpc get_speed(Empty) returns (Fan.Speed);
+}

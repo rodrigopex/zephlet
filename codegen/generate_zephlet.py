@@ -63,6 +63,26 @@ def camel_to_snake(name: str) -> str:
 # Keys of a zephlet's options file. Every one is a boolean, false unless set.
 ZEPHLET_OPTIONS = ("coap", "coap_discoverable", "lua")
 
+# The service key that declares a required provider. Repeatable, and the
+# one key whose value is not a boolean: `requires:[<name>=]<type>` in the
+# options file, `option (zephlet.requires) = { type: "<type>" name: "<name>" }`
+# in the proto. Both places add to one list, in that order.
+REQUIRES = "requires"
+
+# Every key a service line or a service body may set.
+SERVICE_KEYS = ZEPHLET_OPTIONS + (REQUIRES,)
+
+_C_IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+# A dependency name becomes a C struct field, so it must not be a keyword.
+_C_KEYWORDS = frozenset("""
+    auto break case char const continue default do double else enum extern
+    float for goto if inline int long register restrict return short signed
+    sizeof static struct switch typedef union unsigned void volatile while
+    _Alignas _Alignof _Atomic _Bool _Complex _Generic _Imaginary _Noreturn
+    _Static_assert _Thread_local bool true false
+""".split())
+
 # Keys set on one rpc, `TickApi.config shell:false`, with their defaults.
 ZEPHLET_METHOD_OPTIONS = {"shell": True}
 
@@ -85,6 +105,7 @@ def _read_options_file(path: str, service_name: str,
     that rpc's options. See read_zephlet_options() for the syntax.
     """
     opts = dict.fromkeys(ZEPHLET_OPTIONS, False)
+    opts[REQUIRES] = []
     method_opts = {name: dict(ZEPHLET_METHOD_OPTIONS) for name in method_names}
     if not os.path.exists(path):
         return opts, method_opts
@@ -118,17 +139,25 @@ def _read_options_file(path: str, service_name: str,
                                f"{service_name}")
             known = tuple(ZEPHLET_METHOD_OPTIONS)
         else:
-            known = ZEPHLET_OPTIONS
-        for token in re.sub(r"\s*:\s*", ":", rest).split():
+            known = SERVICE_KEYS
+        for token in re.sub(r"\s*([:=])\s*", r"\1", rest).split():
             key, sep, value = token.partition(":")
             if not sep or key not in known:
-                other = ZEPHLET_OPTIONS if dot else tuple(ZEPHLET_METHOD_OPTIONS)
+                other = SERVICE_KEYS if dot else tuple(ZEPHLET_METHOD_OPTIONS)
                 where = (f"set {key} on the service line `{service_mask} ...`"
                          if dot else
                          f"set {key} per rpc, `{service_mask}.<rpc> ...`")
                 hint = f"; {where}" if sep and key in other else ""
                 _options_error(path, lineno, f"unknown option '{token}'; known: "
                                + ", ".join(known) + hint)
+            if key == REQUIRES:
+                name, eq, dep_type = value.rpartition("=")
+                if not dep_type or (eq and not name):
+                    _options_error(path, lineno, f"{key}: expected "
+                                   f"`requires:[<name>=]<type>`, got '{token}'")
+                opts[REQUIRES].append({"type": dep_type, "name": name or None,
+                                       "where": f"{path}:{lineno}"})
+                continue
             if value not in ("true", "false"):
                 _options_error(path, lineno, f"{key}: expected true or false, "
                                f"got '{value}'")
@@ -159,13 +188,19 @@ def read_zephlet_options(path: str, service_name: str, method_names) -> dict:
 
         TickApi.config shell:false
 
+    A service line may also declare a required provider, `requires:<type>`,
+    or `requires:<name>=<type>` to name its slot (see REQUIRES); those are
+    checked here but returned by zephlet_options() only.
+
     Such a line is still parsed and checked here, which is all @p
     method_names is for, but its effect is not in the returned dict;
     zephlet_options() returns the per-rpc options. A line whose pattern
     matches no service or no rpc is an error, as is an unknown option. A
     missing file sets nothing.
     """
-    return _read_options_file(path, service_name, method_names)[0]
+    opts = _read_options_file(path, service_name, method_names)[0]
+    del opts[REQUIRES]
+    return opts
 
 
 def _proto_option_key(proto_path: str, inner, known, other, where) -> str | None:
@@ -183,6 +218,8 @@ def _proto_option_key(proto_path: str, inner, known, other, where) -> str | None
               + (f"; set {name} {where}" if key in other else ""),
               file=sys.stderr)
         sys.exit(1)
+    if key == REQUIRES:
+        return key
     if not isinstance(inner.value, bool):
         print(f"{proto_path}: `option {name}` expects true or false (the "
               "proto parser gives no line numbers).",
@@ -191,17 +228,50 @@ def _proto_option_key(proto_path: str, inner, known, other, where) -> str | None
     return key
 
 
+def _proto_requires(proto_path: str, value) -> dict:
+    """One `option (zephlet.requires) = { type: "..." name: "..." }` value
+    as a REQUIRES entry; exit unless it is that message literal."""
+    usage = ('expects `{ type: "<type>" }` or `{ type: "<type>" name: '
+             '"<name>" }` (the proto parser gives no line numbers)')
+    if value.__class__.__name__ != "MessageLiteral":
+        print(f"{proto_path}: `option (zephlet.requires)` {usage}.",
+              file=sys.stderr)
+        sys.exit(1)
+    fields = {}
+    for field in value.elements:
+        if field.name not in ("type", "name") or field.name in fields:
+            what = "repeats" if field.name in fields else "has unknown field"
+            print(f"{proto_path}: `option (zephlet.requires)` {what} "
+                  f"'{field.name}'; it {usage}.", file=sys.stderr)
+            sys.exit(1)
+        if not isinstance(field.value, str):
+            print(f"{proto_path}: `option (zephlet.requires)`: '{field.name}' "
+                  f"must be a quoted string; it {usage}.", file=sys.stderr)
+            sys.exit(1)
+        fields[field.name] = field.value
+    if not fields.get("type"):
+        print(f"{proto_path}: `option (zephlet.requires)` has no type; it "
+              f"{usage}.", file=sys.stderr)
+        sys.exit(1)
+    return {"type": fields["type"], "name": fields.get("name"),
+            "where": proto_path}
+
+
 def read_proto_zephlet_options(proto_path: str, service) -> dict:
     """
     Return the options that @p service sets in its proto, e.g.
     `option (zephlet.lua) = true;` (declared in zephlet_options.proto), as a
-    dict holding only the keys it sets.
+    dict holding only the keys it sets. Each `option (zephlet.requires)`
+    adds one entry to a list under that key, in declaration order.
     """
     opts = {}
     for inner in service.elements:
-        key = _proto_option_key(proto_path, inner, ZEPHLET_OPTIONS,
+        key = _proto_option_key(proto_path, inner, SERVICE_KEYS,
                                 tuple(ZEPHLET_METHOD_OPTIONS), "in an rpc body")
-        if key is not None:
+        if key == REQUIRES:
+            opts.setdefault(REQUIRES, []).append(
+                _proto_requires(proto_path, inner.value))
+        elif key is not None:
             opts[key] = inner.value
     return opts
 
@@ -215,7 +285,7 @@ def read_proto_method_options(proto_path: str, method) -> dict:
     opts = {}
     for inner in getattr(method, "elements", None) or ():
         key = _proto_option_key(proto_path, inner, tuple(ZEPHLET_METHOD_OPTIONS),
-                                ZEPHLET_OPTIONS, "in the service body")
+                                SERVICE_KEYS, "in the service body")
         if key is not None:
             opts[key] = inner.value
     return opts
@@ -227,15 +297,120 @@ def zephlet_options(proto_path: str, service, methods,
     The options of @p service, and per rpc the options of each of its
     @p methods, from both places they can be set: the options file
     @p options_path, then `option (zephlet.<key>)` in the proto. As in
-    nanopb, an option set in the proto overrides the options file.
+    nanopb, an option set in the proto overrides the options file. The
+    `requires` entries of both places add up instead, the file's first.
     """
     opts, method_opts = _read_options_file(options_path, service.name,
                                            [m.name for m in methods])
-    opts.update(read_proto_zephlet_options(proto_path, service))
+    proto_opts = read_proto_zephlet_options(proto_path, service)
+    proto_requires = proto_opts.pop(REQUIRES, [])
+    opts.update(proto_opts)
+    opts[REQUIRES] = opts[REQUIRES] + proto_requires
     for method in methods:
         method_opts[method.name].update(
             read_proto_method_options(proto_path, method))
     return opts, method_opts
+
+
+def resolve_requires(entries, own_type: str) -> list[dict]:
+    """
+    Check the REQUIRES @p entries of the zephlet type @p own_type and return
+    them as `{"type", "name"}` slots in declaration order, each name
+    defaulted to its type. Exit, naming where an entry was declared, on a
+    type or name that is not a C identifier, a name that is a C keyword, a
+    zephlet that requires its own type, or two slots of one name.
+    """
+    slots = []
+    by_name = {}
+    for entry in entries:
+        where = entry["where"]
+        dep_type = entry["type"]
+        if not _C_IDENT.fullmatch(dep_type):
+            print(f"{where}: requires: type '{dep_type}' is not a zephlet type "
+                  "(a C identifier, as passed to ZEPHLET_NEW).", file=sys.stderr)
+            sys.exit(1)
+        if dep_type == own_type:
+            print(f"{where}: requires: zephlet '{own_type}' cannot require its "
+                  "own type; a type that requires itself is a synchronous "
+                  "dependency cycle.", file=sys.stderr)
+            sys.exit(1)
+        name = entry["name"] if entry["name"] is not None else dep_type
+        if not _C_IDENT.fullmatch(name) or name in _C_KEYWORDS:
+            print(f"{where}: requires: '{name}' cannot name a dependency; it "
+                  "becomes a C struct field, so it must be a C identifier and "
+                  "not a keyword.", file=sys.stderr)
+            sys.exit(1)
+        if name in by_name:
+            first = by_name[name]
+            if entry["name"] is None and first["name"] is None:
+                hint = (f"type '{dep_type}' is required twice; give each slot "
+                        f"its own name, e.g. `requires:intake={dep_type}` or "
+                        f'`{{ type: "{dep_type}" name: "intake" }}`')
+            else:
+                hint = f"dependency name '{name}' is already used"
+            print(f"{where}: requires: {hint} (first at {first['where']}).",
+                  file=sys.stderr)
+            sys.exit(1)
+        by_name[name] = entry
+        slots.append({"type": dep_type, "name": name})
+    return slots
+
+
+def check_dependency_graph(graph: dict) -> None:
+    """
+    Check the build's whole dependency graph, @p graph mapping each zephlet
+    type to the list of types it requires. Exit when a required type is not
+    in the build, or when the types form a cycle of any length (`a -> b ->
+    a`, `a -> b -> c -> a`, ...), printing the cycle. A cycle of types
+    would let a synchronous RPC wait on itself.
+    """
+    for consumer in sorted(graph):
+        for provider in graph[consumer]:
+            if provider not in graph:
+                print(f"zephlet type '{consumer}' requires '{provider}', but no "
+                      f"zephlet of type '{provider}' is in this build. Enable "
+                      f"it (e.g. CONFIG_ZEPHLET_{provider.upper()}=y) and add "
+                      "its module to the build.", file=sys.stderr)
+                sys.exit(1)
+
+    # Iterative DFS, colouring a type grey while it is on the current path.
+    white, grey, black = 0, 1, 2
+    colour = dict.fromkeys(graph, white)
+    for root in sorted(graph):
+        if colour[root] != white:
+            continue
+        path = [root]
+        stack = [iter(graph[root])]
+        colour[root] = grey
+        while stack:
+            provider = next(stack[-1], None)
+            if provider is None:
+                colour[path.pop()] = black
+                stack.pop()
+                continue
+            if colour[provider] == grey:
+                cycle = path[path.index(provider):] + [provider]
+                print("dependency cycle between zephlet types: "
+                      + " -> ".join(cycle) + ". A zephlet must not reach "
+                      "itself through (zephlet.requires).", file=sys.stderr)
+                sys.exit(1)
+            if colour[provider] == white:
+                colour[provider] = grey
+                path.append(provider)
+                stack.append(iter(graph[provider]))
+
+
+def parse_graph_args(items) -> dict:
+    """`<type>=<dep>,<dep>` arguments of --check-graph as a dict."""
+    graph = {}
+    for item in items:
+        consumer, sep, deps = item.partition("=")
+        if not sep or not consumer:
+            print(f"--check-graph: expected <type>=<dep>,..., got '{item}'",
+                  file=sys.stderr)
+            sys.exit(2)
+        graph[consumer] = [d for d in deps.split(",") if d]
+    return graph
 
 
 _BASE_METHODS_CACHE: list[str] | None = None
@@ -716,6 +891,7 @@ def parse_proto(proto_path: str, options_path: str | None = None) -> dict:
     methods = [m for m in service.elements if m.__class__.__name__ == "Method"]
     options, method_options = zephlet_options(proto_path, service, methods,
                                               options_path)
+    requires = resolve_requires(options[REQUIRES], camel_to_snake(owning_type))
     coap_opt_in = options["coap"]
     coap_discoverable = options["coap_discoverable"]
     lua_opt_in = options["lua"]
@@ -916,6 +1092,8 @@ def parse_proto(proto_path: str, options_path: str | None = None) -> dict:
         "coap_opt_in": coap_opt_in,
         "coap_discoverable": coap_discoverable,
         "lua_opt_in": lua_opt_in,
+        "requires": requires,
+        "requires_types": list(dict.fromkeys(r["type"] for r in requires)),
         "tf_messages": tf_messages,
         "enums": enums,
         "lua_events_tf": f"&{events_lc}_t_tf" if events_lc in tf_names else "NULL",
@@ -979,25 +1157,54 @@ def render_templates(ctx: dict, prefix: str, template_dir: str,
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--proto", required=True, help="Path to per-zephlet .proto")
-    p.add_argument("--output-dir", required=True,
+    p.add_argument("--proto", help="Path to per-zephlet .proto")
+    p.add_argument("--output-dir",
                    help="Directory to emit <prefix>_interface.{h,c} into")
-    p.add_argument("--type", required=True,
+    p.add_argument("--type",
                    help="Zephlet type (e.g. 'tick'). Used for symbol names "
                         "(tick_api, lis_tick, tick_<rpc>_impl, ...).")
     p.add_argument("--options",
                    help="Zephlet options file (default: the proto's path with "
                         "`.zephlet.options` for `.proto`). Optional.")
-    p.add_argument("--prefix", required=True,
+    p.add_argument("--prefix",
                    help="File-name prefix (e.g. 'zlet_tick'). "
                         "Output: <prefix>_interface.{h,c}.")
+    p.add_argument("--list-requires", action="store_true",
+                   help="Check the proto, print the types it requires (one "
+                        "per line) and write nothing. Needs --proto, --type.")
+    p.add_argument("--check-graph", nargs="*", metavar="TYPE=DEP,...",
+                   help="Check the build's dependency graph, one argument per "
+                        "zephlet type: every required type is in the build "
+                        "and no cycle exists. Takes no other option.")
     args = p.parse_args()
+
+    if args.check_graph is not None:
+        check_dependency_graph(parse_graph_args(args.check_graph))
+        return 0
+
+    needed = ("proto", "type") + (() if args.list_requires
+                                  else ("output_dir", "prefix"))
+    missing = [f"--{n.replace('_', '-')}" for n in needed
+               if getattr(args, n) is None]
+    if missing:
+        p.error("the following arguments are required: " + ", ".join(missing))
 
     if not os.path.exists(args.proto):
         print(f"Proto not found: {args.proto}", file=sys.stderr)
         return 1
 
     ctx = parse_proto(args.proto, args.options)
+    # parse_proto() checked self-dependency against the derived type;
+    # --type, which names the symbols, wins below, so check it too.
+    if args.type in ctx["requires_types"]:
+        print(f"{args.proto}: requires: zephlet '{args.type}' cannot require "
+              "its own type.", file=sys.stderr)
+        return 1
+
+    if args.list_requires:
+        for dep_type in ctx["requires_types"]:
+            print(dep_type)
+        return 0
 
     # Sanity: --type must agree with the owning message's snake-cased name.
     if ctx["type_snake"] != args.type:

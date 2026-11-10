@@ -1,0 +1,11 @@
+tests:
+  zephlet.shared.deps_walker:
+    tags: zephlet shared deps
+    harness: ztest
+    platform_allow:
+      - native_sim
+      - native_sim/native/64
+      - mps2/an385
+    integration_platforms:
+      - native_sim
+    timeout: 30

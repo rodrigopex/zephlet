@@ -18,6 +18,23 @@ import "google/protobuf/descriptor.proto";
  * overrides that file, as in nanopb.
  */
 
+/*
+ * One provider a zephlet requires, for `option (zephlet.requires)`.
+ *
+ * `type` is the provider's zephlet type: the snake-cased name codegen
+ * derives from its owning message (`tick` for `message Tick`), the same
+ * token passed to `ZEPHLET_NEW(type, ...)`. `name` is the dependency slot,
+ * a field of the generated `struct <consumer>_dependencies`; it defaults to
+ * `type`, so it is needed only to require one type more than once.
+ *
+ * The slot holds no instance: the application binds one per consumer
+ * instance with `ZEPHLET_NEW_WITH_DEPS`.
+ */
+message ZephletRequires {
+  string type = 1;
+  string name = 2;
+}
+
 extend google.protobuf.ServiceOptions {
   /*
    * Expose this service's zephlet over the CoAP frontend.
@@ -39,6 +56,18 @@ extend google.protobuf.ServiceOptions {
    * frontend adds no code or RAM for them.
    */
   bool lua = 50003;
+
+  /*
+   * A provider this zephlet calls through its public RPC wrappers.
+   * Repeatable, one per dependency slot:
+   *
+   *   option (zephlet.requires) = { type: "temperature" };
+   *   option (zephlet.requires) = { type: "fan" name: "intake" };
+   *
+   * An `import` alone never declares a dependency: a proto may import
+   * another only to reuse its messages.
+   */
+  repeated ZephletRequires requires = 50005;
 }
 
 extend google.protobuf.MethodOptions {

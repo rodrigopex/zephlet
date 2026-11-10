@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+import "nanopb.proto";
+import "zephlet.proto";
+
+option (nanopb_fileopt).long_names = false;
+
+message Temperature {
+  message Config {
+    /* Added to every reading. */
+    int32 offset_c = 1;
+  }
+
+  message Events {
+    int32 celsius = 1;
+  }
+
+  message Reading {
+    int32 celsius = 1;
+  }
+}
+
+service TemperatureApi {
+  rpc get_status(Empty) returns (Lifecycle.Status);
+  rpc read(Empty) returns (Temperature.Reading);
+  /* Simulation input: the next readings report this value. */
+  rpc set(Temperature.Reading) returns (Empty);
+}
