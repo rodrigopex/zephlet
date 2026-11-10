@@ -3,6 +3,7 @@
 #include "{{ prefix }}_interface.h"
 
 #include <errno.h>
+#include <stddef.h>
 #include <string.h>
 
 #include <zephyr/kernel.h>
@@ -101,9 +102,35 @@ static const struct zephlet_method {{ type_snake }}_methods[{{ type_upper }}_M__
 	{% endfor %}
 };
 
+{% if requires %}
+/* ----- Dependency slots -------------------------------------------------
+ * One row per `(zephlet.requires)`: the init walker reads each bound
+ * provider at `offset` in the instance's dependency record and checks it is
+ * an instance of `api`. */
+
+{% for dep_type in requires_types %}
+extern const struct zephlet_api {{ dep_type }}_api;
+{% endfor %}
+
+static const struct zephlet_dep_slot {{ type_snake }}_dep_slots[] = {
+	{% for dep in requires %}
+	{
+		.name = "{{ dep.name }}",
+		.type = "{{ dep.type }}",
+		.api = &{{ dep.type }}_api,
+		.offset = offsetof(struct {{ type_snake }}_dependencies, {{ dep.name }}),
+	},
+	{% endfor %}
+};
+
+{% endif %}
 const struct zephlet_api {{ type_snake }}_api = {
 	.methods = {{ type_snake }}_methods,
 	.num_methods = ARRAY_SIZE({{ type_snake }}_methods),
+	{% if requires %}
+	.deps = {{ type_snake }}_dep_slots,
+	.num_deps = ARRAY_SIZE({{ type_snake }}_dep_slots),
+	{% endif %}
 };
 
 /* ----- Sync listener --------------------------------------------------- */
@@ -122,6 +149,9 @@ ZBUS_LISTENER_DEFINE(lis_{{ type_snake }}, lis_{{ type_snake }}_fn);
 static int {{ type_snake }}_sync_pub(const struct zephlet *z, struct zephlet_call *call,
 				     k_timeout_t timeout)
 {
+	__ASSERT(z != NULL && z->api == &{{ type_snake }}_api,
+		 "%s is not a {{ type_snake }} instance", z != NULL ? z->name : "NULL");
+
 	struct zephlet_call *p = call;
 	int err = zbus_chan_pub(z->channel.command, &p, timeout);
 	if (err != 0) {

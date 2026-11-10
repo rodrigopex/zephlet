@@ -1,0 +1,16 @@
+config ZEPHLET_FAN
+    bool "Fan zephlet (dependency test fixture)"
+    select NANOPB
+    select ZBUS
+    select ZBUS_ASYNC_LISTENER
+    help
+      Enable the simulated `fan` zephlet, a provider that the `climate`
+      fixture requires twice, as its intake and its exhaust.
+
+if ZEPHLET_FAN
+
+module = ZEPHLET_FAN
+module-str = zlet_fan
+source "subsys/logging/Kconfig.template.log_config"
+
+endif

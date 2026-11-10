@@ -722,7 +722,7 @@ def test_shell_option_every_rpc_hidden_empties_the_hook(tmp_path):
 	("TickApi.config lua:true", "unknown option 'lua:true'; known: shell; "
 	 "set lua on the service line"),
 	("TickApi shell:false", "unknown option 'shell:false'; known: coap, "
-	 "coap_discoverable, lua; set shell per rpc, `TickApi.<rpc> ...`"),
+	 "coap_discoverable, lua, requires; set shell per rpc, `TickApi.<rpc> ...`"),
 	("TickApi.config shell:no", "shell: expected true or false"),
 ])
 def test_shell_option_file_errors(tmp_path, line, needle):
@@ -1216,3 +1216,177 @@ def test_options_file_changes_regenerate_incrementally(tmp_path):
 	options.unlink()
 	build_codegen()
 	assert exposed() == (False, False), "options file removed"
+
+
+# ----- (zephlet.requires) -------------------------------------------------
+
+
+def _requires_codegen(tmp_path, *options, file_text=None):
+	"""Generate tick with @p options in its service and @p file_text as its
+	options file; return (header, source)."""
+	proto = _proto_with_options(tmp_path, *options, file_text=file_text)
+	_run_codegen(proto, tmp_path)
+	return ((tmp_path / "zlet_tick_interface.h").read_text(),
+		(tmp_path / "zlet_tick_interface.c").read_text())
+
+
+def test_requires_absent_emits_no_dependencies(tmp_path):
+	"""A zephlet that requires nothing keeps ZEPHLET_NEW and gets no
+	dependency record, slots or api fields."""
+	header, source = _requires_codegen(tmp_path)
+	assert "#define _ZLET_HAS_DEPS_tick 0" in header
+	assert "struct tick_dependencies" not in header
+	assert "tick_dep_slots" not in source
+	assert ".deps =" not in source
+
+
+def test_requires_in_proto_emits_record_and_slots(tmp_path):
+	"""Each slot becomes a record field and a slot row; an unnamed slot is
+	named after its type, never after a file prefix."""
+	header, source = _requires_codegen(
+		tmp_path, 'requires = { type: "temperature" }',
+		'requires = { type: "fan" name: "intake" }',
+		'requires = { type: "fan" name: "exhaust" }')
+	record = header.split("struct tick_dependencies {", 1)[1].split("};", 1)[0]
+	assert re.findall(r"const struct zephlet \*(\w+);", record) == [
+		"temperature", "intake", "exhaust"]
+	assert "#define _ZLET_HAS_DEPS_tick 1" in header
+	assert "_dependencies_get" not in header
+
+	# One extern per provider type, not per slot.
+	assert source.count("extern const struct zephlet_api fan_api;") == 1
+	assert source.count("extern const struct zephlet_api temperature_api;") == 1
+	slots = re.findall(r'\.name = "(\w+)",\s*\.type = "(\w+)",\s*\.api = &(\w+),\s*'
+			   r'\.offset = offsetof\(struct tick_dependencies, (\w+)\)', source)
+	assert slots == [("temperature", "temperature", "temperature_api", "temperature"),
+			 ("intake", "fan", "fan_api", "intake"),
+			 ("exhaust", "fan", "fan_api", "exhaust")]
+	assert ".deps = tick_dep_slots," in source
+	assert ".num_deps = ARRAY_SIZE(tick_dep_slots)," in source
+
+
+def test_requires_in_options_file(codegen_module, tmp_path):
+	"""`requires:[<name>=]<type>` in the options file, spaces allowed, adds
+	the same slots, ahead of the proto's own."""
+	proto = _proto_with_options(
+		tmp_path, 'requires = { type: "led" }',
+		file_text="TickApi requires:temperature requires: intake = fan\n")
+	ctx = codegen_module.parse_proto(str(proto))
+	assert ctx["requires"] == [{"type": "temperature", "name": "temperature"},
+				   {"type": "fan", "name": "intake"},
+				   {"type": "led", "name": "led"}]
+	assert ctx["requires_types"] == ["temperature", "fan", "led"]
+
+
+def test_wrapper_asserts_instance_type(tmp_path):
+	"""Every wrapper goes through the sync-pub helper, which asserts the
+	instance is of this type."""
+	_, source = _requires_codegen(tmp_path)
+	assert ('__ASSERT(z != NULL && z->api == &tick_api,\n'
+		'\t\t "%s is not a tick instance"') in source
+
+
+@pytest.mark.parametrize("options, needle", [
+	(['requires = { type: "tick" }'], "cannot require its own type"),
+	(['requires = { type: "fan" }', 'requires = { type: "fan" }'],
+	 "type 'fan' is required twice; give each slot its own name"),
+	(['requires = { type: "fan" name: "x" }', 'requires = { type: "led" name: "x" }'],
+	 "dependency name 'x' is already used"),
+	(['requires = { type: "fan" name: "int" }'], "'int' cannot name a dependency"),
+	(['requires = { type: "fan" name: "2fast" }'], "'2fast' cannot name a dependency"),
+	(['requires = { type: "my-fan" }'], "type 'my-fan' is not a zephlet type"),
+	(['requires = { name: "fan" }'], "has no type"),
+	(['requires = { type: "fan" proto: "fan.proto" }'], "has unknown field 'proto'"),
+	(['requires = { type: "fan" type: "led" }'], "repeats 'type'"),
+	(['requires = true'], 'expects `{ type: "<type>" }`'),
+])
+def test_requires_proto_errors(tmp_path, options, needle):
+	result = _run_codegen_rc(_proto_with_options(tmp_path, *options), tmp_path)
+	assert result.returncode != 0, result.stdout
+	assert needle in result.stderr, result.stderr
+
+
+@pytest.mark.parametrize("line, needle", [
+	("TickApi requires:", "expected `requires:[<name>=]<type>`"),
+	("TickApi requires:intake=", "expected `requires:[<name>=]<type>`"),
+	("TickApi requires:=fan", "expected `requires:[<name>=]<type>`"),
+	("TickApi requires:fan requires:fan", "type 'fan' is required twice"),
+	("TickApi.config requires:fan", "unknown option 'requires:fan'; known: shell; "
+	 "set requires on the service line"),
+])
+def test_requires_options_file_errors(tmp_path, line, needle):
+	proto = _proto_with_options(tmp_path, file_text="# first\n" + line + "\n")
+	result = _run_codegen_rc(proto, tmp_path)
+	assert result.returncode != 0, result.stdout
+	assert "zlet_tick.zephlet.options:2" in result.stderr, result.stderr
+	assert needle in result.stderr, result.stderr
+
+
+def test_requires_duplicate_across_file_and_proto(tmp_path):
+	"""The file and the proto share one slot namespace; the error points at
+	both declarations."""
+	proto = _proto_with_options(tmp_path, 'requires = { type: "fan" }',
+				    file_text="TickApi requires:fan\n")
+	result = _run_codegen_rc(proto, tmp_path)
+	assert result.returncode != 0, result.stdout
+	assert "type 'fan' is required twice" in result.stderr, result.stderr
+	assert "(first at " in result.stderr and "zephlet.options:1)" in result.stderr
+
+
+def _cli(*args):
+	return subprocess.run([sys.executable, str(_CODEGEN), *args],
+			      check=False, capture_output=True, text=True)
+
+
+def test_list_requires_prints_types_and_writes_nothing(tmp_path):
+	proto = _proto_with_options(tmp_path, 'requires = { type: "fan" name: "a" }',
+				    'requires = { type: "fan" name: "b" }',
+				    'requires = { type: "temperature" }')
+	result = _cli("--list-requires", "--proto", str(proto), "--type", "tick")
+	assert result.returncode == 0, result.stderr
+	assert result.stdout.split() == ["fan", "temperature"]
+	assert not list(tmp_path.glob("*_interface.*"))
+
+
+def test_list_requires_checks_self_against_type_arg(tmp_path):
+	"""--type names the symbols, so a slot of that type is a self-cycle even
+	when the owning message derives another name."""
+	proto = _proto_with_options(tmp_path, 'requires = { type: "clock" }')
+	result = _cli("--list-requires", "--proto", str(proto), "--type", "clock")
+	assert result.returncode != 0
+	assert "cannot require its own type" in result.stderr, result.stderr
+
+
+def test_generation_still_requires_output_args(tmp_path):
+	proto = _proto_with_options(tmp_path)
+	result = _cli("--proto", str(proto), "--type", "tick")
+	assert result.returncode != 0
+	assert "--output-dir, --prefix" in result.stderr, result.stderr
+
+
+@pytest.mark.parametrize("graph", [
+	[],
+	["tick="],
+	["climate=temperature,fan", "temperature=", "fan="],
+	["a=b,c", "b=d", "c=d", "d="],
+])
+def test_check_graph_accepts_acyclic(graph):
+	result = _cli("--check-graph", *graph)
+	assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("graph, needle", [
+	(["climate=temperature,fan", "temperature="],
+	 "zephlet type 'climate' requires 'fan', but no zephlet of type 'fan' is in "
+	 "this build. Enable it (e.g. CONFIG_ZEPHLET_FAN=y)"),
+	(["a=b", "b=a"], "dependency cycle between zephlet types: a -> b -> a."),
+	(["a=b", "b=c", "c=a"], "dependency cycle between zephlet types: a -> b -> c -> a."),
+	(["x=", "a=x,b", "b=c", "c=d", "d=b"],
+	 "dependency cycle between zephlet types: b -> c -> d -> b."),
+	(["a=a"], "dependency cycle between zephlet types: a -> a."),
+	(["a"], "expected <type>=<dep>,..., got 'a'"),
+])
+def test_check_graph_errors(graph, needle):
+	result = _cli("--check-graph", *graph)
+	assert result.returncode != 0, result.stdout
+	assert needle in result.stderr, result.stderr

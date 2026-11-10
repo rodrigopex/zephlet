@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+import "nanopb.proto";
+import "zephlet.proto";
+import "zephlet_options.proto";
+
+option (nanopb_fileopt).long_names = false;
+
+message Climate {
+  message Config {
+    int32 setpoint_c = 1;
+  }
+
+  message Events {
+    uint32 percent = 1;
+  }
+
+  message Decision {
+    int32 celsius = 1;
+    uint32 percent = 2;
+  }
+}
+
+service ClimateApi {
+  /* The slot of an unnamed dependency is named after its type. Requiring
+   * one type twice needs a name per slot. */
+  option (zephlet.requires) = { type: "temperature" };
+  option (zephlet.requires) = { type: "fan" name: "intake" };
+  option (zephlet.requires) = { type: "fan" name: "exhaust" };
+
+  rpc get_status(Empty) returns (Lifecycle.Status);
+
+  /* Read the temperature, then drive both fans: 10 % per degree above the
+   * setpoint, clamped to [0, 100]. */
+  rpc regulate(Empty) returns (Climate.Decision);
+}

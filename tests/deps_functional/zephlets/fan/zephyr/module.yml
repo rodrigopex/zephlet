@@ -1,0 +1,4 @@
+name: zlet_fan
+build:
+  cmake: .
+  kconfig: Kconfig

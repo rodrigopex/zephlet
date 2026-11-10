@@ -6,7 +6,7 @@ overrides — and has not changed since the v0.3.0 tag. Releases within it are
 `v0.3.x`; current is **`v0.3.4`** (the `zlet` shell frontend; `v0.3.3` was CoAP
 frontend maturation). Consumers pin a tag — see README's Releases section.
 
-Ports+Adapters on Zephyr/zbus. Zephlets=domain logic (no direct deps). Adapters=plain user C composed from a framework-level observer primitive. Instances are non-singleton; multiple per type.
+Ports+Adapters on Zephyr/zbus. Zephlets=domain logic; a zephlet depends only on provider types its proto declares (`(zephlet.requires)`), bound per instance by the app (see Composition). Adapters=plain user C composed from a framework-level observer primitive. Instances are non-singleton; multiple per type.
 
 ## Model
 
@@ -31,20 +31,33 @@ struct zephlet_call { uint16_t method_id; int32_t return_code;
 struct zephlet_method { const pb_msgdesc_t *req_desc, *resp_desc;
                         int (*handler)(const struct zephlet *, struct zephlet_call *); };
 
-struct zephlet_api { const struct zephlet_method *methods; size_t num_methods; };
+struct zephlet_dep_slot { const char *name, *type; const struct zephlet_api *api; size_t offset; };
+
+struct zephlet_api { const struct zephlet_method *methods; size_t num_methods;
+                     const struct zephlet_dep_slot *deps; size_t num_deps; };
 
 struct zephlet { const char *name; const struct zephlet_api *api;
                  struct { const struct zbus_channel *command, *events; } channel;
-                 void *config; void *data;
+                 void *config; void *data; const void *dependencies;
                  int (*init_fn)(const struct zephlet *); int init_priority; };
 
 int zephlet_dispatch(const struct zephlet *z, struct zephlet_call *call);
 const struct zephlet *zephlet_get_by_name(const char *name);
+int zephlet_init_result(const struct zephlet *z); /* 0, init rc, -ENODEV, -ELOOP, -EAGAIN, -ENOENT */
 ```
 
 **`ZEPHLET_NEW(type, name, cfg, data, init)`** instantiates one zephlet: creates `chan_<name>_command` (pointer, observer = `lis_<type>`), `chan_<name>_events` (value-typed `struct <type>_events`), and a section-iterable `struct zephlet` record. `cfg` is a writable pointer (the `config` command mutates it in place).
 
-**SYS_INIT walker** (APPLICATION / prio 0) sorts the section by `init_priority` and calls each instance's `init_fn`.
+**SYS_INIT walker** (APPLICATION / prio 0) sorts the section by `init_priority` (stable), checks dependency bindings, rejects instance cycles (`-ELOOP`, logged, `__ASSERT`), then repeatedly runs the first instance whose providers are all initialized. Bad binding / failed or skipped provider → consumer skipped (`-ENODEV`), its `init_fn` never runs. No heap, no recursion, arrays bound by `CONFIG_ZEPHLET_MAX_INSTANCES`.
+
+## Composition
+
+- **Declare:** `option (zephlet.requires) = { type: "fan" name: "intake" };` (repeatable, `ZephletRequires` in `zephlet_options.proto`, ext 50005) or `<Svc> requires:[<name>=]<type>` in `.zephlet.options`; both add up. `type` = provider type_snake (not prefix); `name` defaults to `type`.
+- **Codegen checks:** C identifier, name not a keyword, unique names, no self type. `--list-requires` prints required types; `--check-graph t=d,...` checks the whole build (missing type, cycles any length, prints path). CMake: `zephyr_zephlet_generate` runs `--list-requires` at configure (`CMAKE_CONFIGURE_DEPENDS` on proto/options) into GLOBAL `ZEPHLET_DEPENDENCY_GRAPH`; a DEFERred `_zephlet_check_dependency_graph` runs `--check-graph` → FATAL_ERROR.
+- **Generated:** `struct <t>_dependencies { const struct zephlet *<name>; ... }` (handlers read `z->dependencies`, like `config`/`data`), `_ZLET_HAS_DEPS_<t>` (0/1), `<t>_dep_slots[]` wired into `<t>_api.deps`.
+- **Bind:** `ZEPHLET_NEW_WITH_DEPS(type, name, cfg, data, &deps, init)` / `ZEPHLET_NEW_PRIO_WITH_DEPS(..., prio)`; `_Generic` rejects a record of another type; `ZEPHLET_NEW*` BUILD_ASSERTs the type has no requires (and vice versa). Providers sharable; no ownership transfer.
+- **Call:** provider's public wrappers only, sync, caller's thread. Every wrapper `__ASSERT`s `z->api == &<t>_api`.
+- **Tests:** `tests/codegen` (requires/graph), `tests/deps_config` (pytest configure-only + consumer object alone), `tests/deps_functional` (climate fixture), `tests/shared/deps_walker` (hand-built records, cycles, `CONFIG_ASSERT=n`).
 
 ## Per-zephlet files
 
@@ -231,4 +244,4 @@ Single script `codegen/generate_zephlet.py` parses the `.proto` service block, c
 
 ## Principles
 
-zbus-only coupling. Pointer-in-channel only where sync listener semantics guarantee lifetime. Value-in-channel everywhere else. No pool, no refcount, no correlation IDs. Auto-discover instances via `STRUCT_SECTION_ITERABLE`. Framework takes no position on where zephlets or adapters live in the app tree — layout is entirely user choice.
+zbus-only coupling; peer calls only through declared, externally bound dependencies. Pointer-in-channel only where sync listener semantics guarantee lifetime. Value-in-channel everywhere else. No pool, no refcount, no correlation IDs. Auto-discover instances via `STRUCT_SECTION_ITERABLE`. Framework takes no position on where zephlets or adapters live in the app tree — layout is entirely user choice.

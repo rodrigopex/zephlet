@@ -25,6 +25,10 @@
 #           ... plus the per-frontend <prefix>_{coap,lua}_interface.{h,c}
 #           and the LuaLS annotations <prefix>_lua_meta.lua
 #
+#       A zephlet that declares `(zephlet.requires)` makes configuration
+#       fail unless every type it requires is in the build and the types
+#       form no dependency cycle.
+#
 # Adapters in v0.3 are NOT generated. They are written by hand using
 # the ZEPHLET_ADAPTER_DEFINE macro (see zephlet.h) under a Kconfig +
 # CMake guard that depends on the participating zephlets.
@@ -37,6 +41,23 @@
 function(_zephlet_order_nanopb_headers)
   if(TARGET nanopb_generated_headers)
     add_dependencies(zephyr_generated_headers nanopb_generated_headers)
+  endif()
+endfunction()
+
+# Check the build's whole dependency graph once every zephlet is registered:
+# each type a zephlet requires is in the build, and the types form no cycle.
+# Deferred like the nanopb hook, since zephlet modules register in no
+# particular order.
+function(_zephlet_check_dependency_graph)
+  get_property(_graph GLOBAL PROPERTY ZEPHLET_DEPENDENCY_GRAPH)
+  get_property(_script GLOBAL PROPERTY _ZEPHLET_CODEGEN_SCRIPT)
+  get_property(_python GLOBAL PROPERTY _ZEPHLET_PYTHON)
+  execute_process(
+    COMMAND ${_python} ${_script} --check-graph ${_graph}
+    RESULT_VARIABLE _rc
+    ERROR_VARIABLE _err)
+  if(NOT _rc EQUAL 0)
+    message(FATAL_ERROR "zephlet dependencies: ${_err}")
   endif()
 endfunction()
 
@@ -68,6 +89,27 @@ function(zephyr_zephlet_generate)
   set(_zg_GEN_LUA_META "${_zg_GEN_DIR}/${_zg_PREFIX}_lua_meta.lua")
   set(_zg_OUTPUTS ${_zg_GEN_H} ${_zg_GEN_C} ${_zg_GEN_COAP_H} ${_zg_GEN_COAP_C}
                   ${_zg_GEN_LUA_H} ${_zg_GEN_LUA_C} ${_zg_GEN_LUA_META})
+
+  # The types this zephlet requires, read now so the graph check at the end
+  # of configuration sees every zephlet. Reconfigure when the proto or the
+  # options file changes, since either may declare (zephlet.requires).
+  execute_process(
+    COMMAND ${PYTHON_EXECUTABLE} ${CODEGEN_SCRIPT} --list-requires
+        --proto ${_zg_PROTO}
+        --type ${_zg_TYPE}
+        --options ${_zg_OPTIONS}
+    RESULT_VARIABLE _zg_RC
+    OUTPUT_VARIABLE _zg_REQUIRES
+    ERROR_VARIABLE _zg_ERR
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(NOT _zg_RC EQUAL 0)
+    message(FATAL_ERROR "zephlet '${_zg_TYPE}': ${_zg_ERR}")
+  endif()
+  string(REPLACE "\n" "," _zg_REQUIRES "${_zg_REQUIRES}")
+  set_property(GLOBAL APPEND PROPERTY ZEPHLET_DEPENDENCY_GRAPH
+               "${_zg_TYPE}=${_zg_REQUIRES}")
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+               ${_zg_PROTO} ${_zg_OPTIONS_DEP})
 
   # Register proto for nanopb (top-level CMakeLists consumes the list).
   set_property(GLOBAL APPEND PROPERTY PROTO_FILES_LIST "${_zg_PROTO}")
@@ -124,6 +166,10 @@ function(zephyr_zephlet_generate)
     set_property(GLOBAL PROPERTY _ZEPHLET_NANOPB_HOOKED TRUE)
     cmake_language(DEFER DIRECTORY ${CMAKE_SOURCE_DIR}
                    CALL _zephlet_order_nanopb_headers)
+    set_property(GLOBAL PROPERTY _ZEPHLET_CODEGEN_SCRIPT "${CODEGEN_SCRIPT}")
+    set_property(GLOBAL PROPERTY _ZEPHLET_PYTHON "${PYTHON_EXECUTABLE}")
+    cmake_language(DEFER DIRECTORY ${CMAKE_SOURCE_DIR}
+                   CALL _zephlet_check_dependency_graph)
   endif()
 
   zephyr_include_directories(

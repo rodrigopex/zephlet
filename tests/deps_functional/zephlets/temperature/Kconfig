@@ -1,0 +1,17 @@
+config ZEPHLET_TEMPERATURE
+    bool "Temperature zephlet (dependency test fixture)"
+    select NANOPB
+    select ZBUS
+    select ZBUS_ASYNC_LISTENER
+    help
+      Enable the simulated `temperature` sensor zephlet, a provider that
+      the `climate` fixture requires. Its reading is whatever the test
+      last set.
+
+if ZEPHLET_TEMPERATURE
+
+module = ZEPHLET_TEMPERATURE
+module-str = zlet_temperature
+source "subsys/logging/Kconfig.template.log_config"
+
+endif

@@ -176,6 +176,16 @@ jobs:
           ZEPHYR_EXTRA_MODULES: ""
         run: pytest -v modules/lib/zephlet/tests/codegen_order/
 
+      - name: Run dependency configuration test
+        # (zephlet.requires) checks that only configuration can see: a
+        # missing provider type and cycles of zephlet types fail CMake, and
+        # a consumer object builds alone against its providers' headers.
+        # The fixture adds the infra module itself, as above.
+        env:
+          ZEPHYR_BASE: ${{ github.workspace }}/zephyr
+          ZEPHYR_EXTRA_MODULES: ""
+        run: pytest -v modules/lib/zephlet/tests/deps_config/
+
       - name: Upload twister artefacts on failure
         if: failure()
         uses: actions/upload-artifact@v4

@@ -1,0 +1,4 @@
+name: zlet_climate
+build:
+  cmake: .
+  kconfig: Kconfig

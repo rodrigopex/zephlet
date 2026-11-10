@@ -1,0 +1,17 @@
+config ZEPHLET_CLIMATE
+    bool "Climate zephlet (dependency test fixture)"
+    select NANOPB
+    select ZBUS
+    select ZBUS_ASYNC_LISTENER
+    help
+      Enable the `climate` controller zephlet, a consumer that declares
+      `(zephlet.requires)` on one temperature sensor and two fans and
+      calls them from its `regulate` rpc.
+
+if ZEPHLET_CLIMATE
+
+module = ZEPHLET_CLIMATE
+module-str = zlet_climate
+source "subsys/logging/Kconfig.template.log_config"
+
+endif

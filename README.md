@@ -85,6 +85,7 @@ my_zephlet_start(&my_instance, &st, K_MSEC(500));
 - **`events` channel** (value-typed): async fan-out. Publishers call `<type>_emit(z, &ev, timeout)`; consumers observe with `ZEPHLET_EVENTS_LISTENER(instance, type, callback)` (wraps `ZBUS_ASYNC_LISTENER_DEFINE`).
 - **Non-singleton**: multiple instances per type coexist; each has its own channel pair and data.
 - **Weak handler overrides**: generator emits `__weak int <type>_<cmd>_impl(...)` returning `-ENOSYS`; user provides strong overrides in `<prefix>.c`.
+- **Composition**: a zephlet may declare, in its proto, the provider types it calls (`(zephlet.requires)`); the app binds concrete provider instances per consumer instance, and the implementation calls them through their public RPC wrappers — see [Composition](#composition). A zephlet still never names another zephlet instance.
 - **Coordinators** (optional, `CONFIG_ZEPHLETS_COORD=y`): multi-step flows with workqueue dispatch + bounded zbus-event awaits. Sits above the per-zephlet command/events surface — see [Coordinators](#coordinators) below.
 - **Frontends** (optional): expose the same command surface over a transport, with no change to domain code — each hooks itself in from `ZEPHLET_NEW` via a per-type macro. Shell (`CONFIG_ZEPHLETS_SHELL=y`, see [Shell frontend](#shell-frontend)) and CoAP (`CONFIG_ZEPHLETS_COAP=y`, per-service opt-in, see [Frontend options](#frontend-options)). Rationale in [ADR-0001](docs/adr/0001-zephlet-frontends.md).
 
@@ -165,6 +166,132 @@ whose rpcs are all hidden (`TickApi.* shell:false`) gets no `zlet` subcommand.
 The proto again overrides the file. A service option on a `<service>.<rpc>`
 line, `shell` on a bare service line, or an rpc pattern that matches no rpc
 stops the build.
+
+## Composition
+
+A zephlet may call another zephlet as part of its own behaviour: a climate
+controller reads a temperature sensor and drives a fan. It declares the
+provider *types* it needs; the application decides which provider
+*instances* each controller uses: a zephlet depends only on what its proto
+declares, bound from outside.
+
+### Declare
+
+One repeatable service option per dependency slot:
+
+```proto
+import "zephlet_options.proto";
+
+service ClimateApi {
+  option (zephlet.requires) = { type: "temperature" };
+  option (zephlet.requires) = { type: "fan" name: "intake" };
+  option (zephlet.requires) = { type: "fan" name: "exhaust" };
+
+  rpc regulate(Empty) returns (Climate.Decision);
+}
+```
+
+or, keeping the proto free of the import, in `zlet_climate.zephlet.options`:
+
+```
+ClimateApi requires:temperature requires:intake=fan requires:exhaust=fan
+```
+
+- `type` is the provider's zephlet type, as passed to `ZEPHLET_NEW` (the
+  snake-cased owning message, `temperature` for `message Temperature`) —
+  never its file prefix.
+- `name` is the slot, and defaults to `type`. Requiring one type twice
+  needs a name per slot.
+- Both places add to one list. An `import` alone declares nothing.
+
+Codegen rejects a type or name that is not a C identifier, a name that is a
+C keyword, two slots of one name, and a zephlet requiring its own type.
+Configuration then fails when a required type is not in the build, or when
+the types form a cycle of any length (`a -> b -> c -> a`), printing it.
+
+### Generated
+
+```c
+struct climate_dependencies {
+	const struct zephlet *temperature;
+	const struct zephlet *intake;
+	const struct zephlet *exhaust;
+};
+```
+
+plus one slot row per dependency (name, provider type, its `<type>_api`,
+field offset) in `climate_api`, which the init walker checks.
+
+### Bind
+
+```c
+static const struct climate_dependencies room_a_deps = {
+	.temperature = &room_a_sensor,
+	.intake = &room_a_fan,
+	.exhaust = &shared_exhaust,
+};
+ZEPHLET_NEW_WITH_DEPS(climate, room_a, &room_a_cfg, &room_a_data, &room_a_deps,
+		      climate_init_fn);
+```
+
+`ZEPHLET_NEW_PRIO_WITH_DEPS` adds a priority. Instances of a type that
+requires nothing keep `ZEPHLET_NEW`; each macro fails to build on the other
+kind of type, and `_WITH_DEPS` rejects a record of another type. Several
+consumers may share a provider.
+
+| `struct zephlet` field | Holds |
+|---|---|
+| `config` | Writable behavioural configuration |
+| `data` | Mutable runtime state |
+| `dependencies` | Immutable references to provider instances (NULL without `requires`) |
+
+Binding transfers no ownership: a provider keeps its own config, data and
+lifecycle, and serves every caller alike.
+
+### Call
+
+```c
+int climate_regulate_impl(const struct zephlet *z, struct climate_decision *resp)
+{
+	const struct climate_dependencies *deps = z->dependencies;
+	struct temperature_reading t;
+	int err = temperature_read(deps->temperature, &t, K_MSEC(100));
+	...
+}
+```
+
+Only through the provider's public wrappers — never its `_impl` functions
+or its `data`. A call is the ordinary synchronous RPC: it runs the provider
+in the caller's thread, inside the consumer's handler. Composition adds no
+thread, queue or asynchrony; offload in the consumer if a provider is slow.
+Every wrapper `__ASSERT`s that its instance is of its own type.
+
+### Initialization
+
+The SYS_INIT walker checks every binding, then initializes each provider
+before its consumers, whatever their `init_priority`; the priority orders
+instances that do not depend on each other. A consumer is never initialized
+— its `init_fn` does not run, and an error is logged — when a slot is
+unbound, a slot holds an instance of another type, a provider's `init_fn`
+failed, or a provider was itself skipped. `zephlet_init_result(z)` reports
+the outcome: `0`, the `init_fn`'s error, `-ENODEV` (skipped), `-ELOOP`
+(dependency cycle) or `-EAGAIN` (walker not run yet).
+
+Cycles cannot get past configuration. The walker still rejects any it is
+handed (hand-written records): every instance on one is skipped with
+`-ELOOP`, the cycle is logged, and `__ASSERT` fires.
+
+### Versus adapters and coordinators
+
+| Mechanism | Use when |
+|---|---|
+| Composition | A zephlet needs a reply from another service to do its own job (request/reply inside one RPC) |
+| [Adapters](#adapters) | An event from one zephlet should trigger a command on another; neither knows of the other |
+| [Coordinators](#coordinators) | An application-level, multi-step flow waits for events and timeouts across zephlets |
+
+Not provided: runtime rebinding or lookup by name, optional dependencies,
+and interchangeable implementations of one service contract — a slot
+accepts instances of exactly its declared type.
 
 ## Adapters
 

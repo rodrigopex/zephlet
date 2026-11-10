@@ -31,6 +31,33 @@ enum {{ type_snake }}_method_id {
 /** Method dispatch table exposed via ZEPHLET_NEW({{ type_snake }}, ...). */
 extern const struct zephlet_api {{ type_snake }}_api;
 
+{% if requires %}
+/* ----- Dependencies ----------------------------------------------------
+ * Declared in {{ prefix }}.proto with `(zephlet.requires)`. The application
+ * binds one provider instance per slot, per `{{ type_snake }}` instance:
+ *
+ *   static const struct {{ type_snake }}_dependencies deps = { ... };
+ *   ZEPHLET_NEW_WITH_DEPS({{ type_snake }}, inst, &cfg, &data, &deps, init);
+ *
+ * Handlers read the record from `z->dependencies`, like `z->config` and
+ * `z->data`, and call a provider through its public RPC wrappers only. The init walker checks every
+ * slot and runs each provider's init_fn before this zephlet's. */
+
+/** Provider instances bound to one `{{ type_snake }}` instance. */
+struct {{ type_snake }}_dependencies {
+	{% for dep in requires %}
+	/** A `{{ dep.type }}` instance. */
+	const struct zephlet *{{ dep.name }};
+	{% endfor %}
+};
+
+/* Instances of this type must be defined with ZEPHLET_NEW_WITH_DEPS. */
+#define _ZLET_HAS_DEPS_{{ type_snake }} 1
+{% else %}
+/* No `(zephlet.requires)`: instances use ZEPHLET_NEW. */
+#define _ZLET_HAS_DEPS_{{ type_snake }} 0
+{% endif %}
+
 /* Shell-frontend method table. One row per RPC whose `shell` option is
  * left at its default true, in declaration order among those:
  * (name, req struct name, req _FIELDLIST macro name, resp struct name,

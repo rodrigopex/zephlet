@@ -68,11 +68,32 @@ struct zephlet_method {
 };
 
 /**
+ * @brief One dependency slot a zephlet type declares with `(zephlet.requires)`.
+ *
+ * Generated per type. The init walker reads the provider bound to this slot
+ * at `offset` in an instance's dependency record (`struct <type>_dependencies`)
+ * and checks that it is an instance of `api`.
+ */
+struct zephlet_dep_slot {
+	/** Slot name: the field of `struct <type>_dependencies`. */
+	const char *name;
+	/** Required provider type, for diagnostics. */
+	const char *type;
+	/** The required provider type's `<type>_api`. */
+	const struct zephlet_api *api;
+	/** Offset of the slot's `const struct zephlet *` in the record. */
+	size_t offset;
+};
+
+/**
  * @brief Per-type method dispatch table.
  */
 struct zephlet_api {
 	const struct zephlet_method *methods;
 	size_t num_methods;
+	/** Dependency slots, or NULL for a type that requires nothing. */
+	const struct zephlet_dep_slot *deps;
+	size_t num_deps;
 };
 
 /**
@@ -93,8 +114,13 @@ struct zephlet {
 	} channel;
 	void *config;
 	void *data;
+	/** Provider instances this instance calls: the type's generated
+	 *  `struct <type>_dependencies`, or NULL for a type that requires
+	 *  nothing. Immutable; the providers keep their own state. */
+	const void *dependencies;
 	int (*init_fn)(const struct zephlet *self);
-	/** SYS_INIT walker runs `init_fn`s in ascending order. Default 0. */
+	/** SYS_INIT walker runs `init_fn`s in ascending order, every provider
+	 *  before its consumers. Default 0. */
 	int init_priority;
 };
 
@@ -163,6 +189,20 @@ int zephlet_dispatch(const struct zephlet *z, struct zephlet_call *call);
 const struct zephlet *zephlet_get_by_name(const char *name);
 
 /**
+ * @brief How the SYS_INIT walker left @p z.
+ *
+ * @retval 0        `init_fn` returned 0, or the instance has none.
+ * @retval -EAGAIN  The walker has not reached the instance yet.
+ * @retval -ENODEV  Not initialized: a dependency slot is unbound or bound to
+ *                  an instance of the wrong type, or a provider did not
+ *                  initialize.
+ * @retval -ELOOP   Not initialized: the instance is on a dependency cycle.
+ * @retval -ENOENT  @p z is NULL or beyond `CONFIG_ZEPHLET_MAX_INSTANCES`.
+ * @return Otherwise the nonzero value `init_fn` returned.
+ */
+int zephlet_init_result(const struct zephlet *z);
+
+/**
  * ZEPHLET_NEW(type, name, cfg, data, init)
  *
  * Declares a zephlet instance with `init_priority == 0`.
@@ -187,8 +227,59 @@ const struct zephlet *zephlet_get_by_name(const char *name);
  *
  * Same as `ZEPHLET_NEW`, with an explicit `init_priority`.
  * SYS_INIT walker runs `init_fn`s in ascending priority.
+ *
+ * A type that declares `(zephlet.requires)` fails to build here: define its
+ * instances with `ZEPHLET_NEW_WITH_DEPS` instead.
  */
 #define ZEPHLET_NEW_PRIO(_type, _name, _cfg, _data, _init, _prio)                                  \
+	BUILD_ASSERT(_ZLET_HAS_DEPS_##_type == 0,                                                  \
+		     "zephlet type '" #_type "' declares (zephlet.requires): define '" #_name    \
+		     "' with ZEPHLET_NEW_WITH_DEPS");                                               \
+	_ZEPHLET_DEFINE(_type, _name, _cfg, _data, NULL, _init, _prio)
+
+/**
+ * ZEPHLET_NEW_WITH_DEPS(type, name, cfg, data, deps, init)
+ *
+ * Same as `ZEPHLET_NEW`, for a type that declares `(zephlet.requires)`.
+ * `_deps` binds this instance's providers:
+ *
+ *   static const struct climate_dependencies room_a_deps = {
+ *           .temperature = &room_a_sensor,
+ *           .fan = &room_a_fan,
+ *   };
+ *   ZEPHLET_NEW_WITH_DEPS(climate, room_a, &room_a_cfg, &room_a_data,
+ *                         &room_a_deps, climate_init_fn);
+ *
+ * Fails to build when `_deps` is not a `struct <type>_dependencies *` or the
+ * type requires nothing. At boot the SYS_INIT walker skips the instance,
+ * with an error, when a slot is NULL or bound to an instance of another
+ * type, and runs every provider's `init_fn` before this one's; see
+ * zephlet_init_result(). Providers may be shared between consumers.
+ *
+ * @param _deps  `const struct <type>_dependencies *`, typically to a
+ *               `static const` record.
+ */
+#define ZEPHLET_NEW_WITH_DEPS(_type, _name, _cfg, _data, _deps, _init)                             \
+	ZEPHLET_NEW_PRIO_WITH_DEPS(_type, _name, _cfg, _data, _deps, _init, 0)
+
+/**
+ * ZEPHLET_NEW_PRIO_WITH_DEPS(type, name, cfg, data, deps, init, prio)
+ *
+ * Same as `ZEPHLET_NEW_WITH_DEPS`, with an explicit `init_priority`. A
+ * provider is initialized before its consumers whatever their priorities;
+ * the priority orders instances that do not depend on each other.
+ */
+#define ZEPHLET_NEW_PRIO_WITH_DEPS(_type, _name, _cfg, _data, _deps, _init, _prio)                 \
+	BUILD_ASSERT(_ZLET_HAS_DEPS_##_type == 1,                                                  \
+		     "zephlet type '" #_type "' declares no (zephlet.requires): define '" #_name \
+		     "' with ZEPHLET_NEW");                                                          \
+	_ZEPHLET_DEFINE(_type, _name, _cfg, _data,                                                 \
+			_Generic((_deps), const struct _type##_dependencies *: (_deps),            \
+				 struct _type##_dependencies *: (_deps)),                           \
+			_init, _prio)
+
+/* Common body of the instance macros. Not public: use ZEPHLET_NEW*. */
+#define _ZEPHLET_DEFINE(_type, _name, _cfg, _data, _deps, _init, _prio)                            \
 	extern const struct zephlet _name;                                                         \
 	ZBUS_CHAN_DEFINE(chan_##_name##_command, struct zephlet_call *, NULL, (void *)&_name,      \
 			 ZBUS_OBSERVERS(lis_##_type), NULL);                                       \
@@ -204,6 +295,7 @@ const struct zephlet *zephlet_get_by_name(const char *name);
 			},                                                                         \
 		.config = (_cfg),                                                                  \
 		.data = (_data),                                                                   \
+		.dependencies = (_deps),                                                           \
 		.init_fn = (_init),                                                                \
 		.init_priority = (_prio),                                                          \
 	};                                                                                         \
