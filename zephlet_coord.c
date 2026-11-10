@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <inttypes.h>
 
 #include <zephyr/init.h>
 #include <zephyr/kernel.h>
@@ -170,7 +171,9 @@ void zephlet_coord_await(struct zephlet_coord *c, const struct zbus_channel *cha
 		return;
 	}
 
-	LOG_DBG("armed %p: chan=%s timeout=%lld", c, get_chan_name(chan), timeout.ticks);
+	/* k_ticks_t is int64_t or uint32_t depending on CONFIG_TIMEOUT_64BIT. */
+	LOG_DBG("armed %p: chan=%s timeout=%" PRId64, c, get_chan_name(chan),
+		(int64_t)timeout.ticks);
 }
 
 void zephlet_coord_cleanup_dispatch(struct k_work *w)
