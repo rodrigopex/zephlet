@@ -134,24 +134,39 @@ void zephlet_coord_await(struct zephlet_coord *c, const struct zbus_channel *cha
 	c->current = next;
 	c->await_flags = ZEPHLET_COORD_AWAIT_FLAG_PENDING;
 
+	/*
+	 * dst and match are in place before the observer is attached. chan
+	 * is set only after: a publish in between fails its claim and is
+	 * ignored, as if it had arrived before the await, and a resolve or
+	 * cancel cannot claim an await whose observer is not attached yet.
+	 */
+	async->dst = dst;
+	async->match = match;
+
 	err = zbus_chan_add_obs(chan, async->obs, K_MSEC(CONFIG_ZEPHLETS_COORD_ASYNC_ZBUS_TIMEOUT));
 	if (err < 0) {
 		LOG_ERR("zbus_chan_add_obs failed on %s: %d", get_chan_name(chan), err);
-		c->current = NULL;
+		/* Nothing is armed, so no other path can claim: run next with the failure. */
+		c->await_flags = ZEPHLET_COORD_AWAIT_FLAG_ZBUS_FAILED;
+		k_work_submit_to_queue(&zephlet_coord_workq, &c->work);
 		return;
 	}
 
-	async->dst = dst;
-	async->match = match;
-	async->chan = chan;
+	K_SPINLOCK(&async->lock) {
+		async->chan = chan;
+	}
 
 	err = k_work_schedule_for_queue(&zephlet_coord_workq, &async->timer, timeout);
 	if (err < 0) {
 		LOG_ERR("k_work_schedule_for_queue failed: %d", err);
-		async->chan = NULL;
+		if (zephlet_coord_async_claim(async, ZEPHLET_COORD_AWAIT_FLAG_TIMER_FAILED) ==
+		    NULL) {
+			/* An event, resolve, or cancel won first and already queued next. */
+			return;
+		}
 		(void)zbus_chan_rm_obs(chan, async->obs,
 				       K_MSEC(CONFIG_ZEPHLETS_COORD_ASYNC_ZBUS_TIMEOUT));
-		c->current = NULL;
+		k_work_submit_to_queue(&zephlet_coord_workq, &c->work);
 		return;
 	}
 

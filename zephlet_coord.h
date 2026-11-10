@@ -38,19 +38,28 @@ struct zephlet_coord;
  *
  * The outcome bits are mutually exclusive: at most one is set. @c 0
  * means no await led to the current step (kick or
- * @ref zephlet_coord_next). Bits 5..7 are reserved.
+ * @ref zephlet_coord_next). @ref ZEPHLET_COORD_AWAIT_FLAG_ARM_FAILED is
+ * a convenience mask over the two arm-failure outcomes, not an outcome
+ * bit of its own. Bit 7 is reserved.
  * @{
  */
 /** An await is armed and has not ended yet. */
-#define ZEPHLET_COORD_AWAIT_FLAG_PENDING   BIT(0)
+#define ZEPHLET_COORD_AWAIT_FLAG_PENDING      BIT(0)
 /** The generated listener matched a publish and copied it into @c dst. */
-#define ZEPHLET_COORD_AWAIT_FLAG_MATCHED   BIT(1)
+#define ZEPHLET_COORD_AWAIT_FLAG_MATCHED      BIT(1)
 /** The await's timeout expired. */
-#define ZEPHLET_COORD_AWAIT_FLAG_TIMED_OUT BIT(2)
+#define ZEPHLET_COORD_AWAIT_FLAG_TIMED_OUT    BIT(2)
 /** Ended by @ref zephlet_coord_resolve; no match ran, nothing copied. */
-#define ZEPHLET_COORD_AWAIT_FLAG_RESOLVED  BIT(3)
+#define ZEPHLET_COORD_AWAIT_FLAG_RESOLVED     BIT(3)
 /** Ended by @ref zephlet_coord_cancel; nothing copied. */
-#define ZEPHLET_COORD_AWAIT_FLAG_CANCELLED BIT(4)
+#define ZEPHLET_COORD_AWAIT_FLAG_CANCELLED    BIT(4)
+/** Arming failed: @c zbus_chan_add_obs() returned an error. */
+#define ZEPHLET_COORD_AWAIT_FLAG_ZBUS_FAILED  BIT(5)
+/** Arming failed: scheduling the timeout returned an error. */
+#define ZEPHLET_COORD_AWAIT_FLAG_TIMER_FAILED BIT(6)
+/** Convenience mask matching either arm-failure outcome; not an outcome bit. */
+#define ZEPHLET_COORD_AWAIT_FLAG_ARM_FAILED                                                        \
+	(ZEPHLET_COORD_AWAIT_FLAG_ZBUS_FAILED | ZEPHLET_COORD_AWAIT_FLAG_TIMER_FAILED)
 /** @} */
 
 /**
@@ -209,8 +218,14 @@ void zephlet_coord_done(struct zephlet_coord *c);
  * @brief Suspend the flow until a publish matches or the timeout expires.
  *
  * Adds the framework-generated observer to @p chan and arms a
- * delayable work item for @p timeout. Returns immediately; the step
- * exits.
+ * delayable work item for @p timeout.
+ *
+ * Usage rule: call await, return from the current step, and handle the
+ * outcome in the continuation @p next. Every outcome, including a
+ * failure to arm, reaches @p next exactly once.
+ *
+ * Attaching the observer may block for up to
+ * @c CONFIG_ZEPHLETS_COORD_ASYNC_ZBUS_TIMEOUT while the channel is busy.
  *
  * On each publish to @p chan while the await is armed, the framework
  * runs @p match against the message. If it returns @c true (or if
@@ -226,6 +241,17 @@ void zephlet_coord_done(struct zephlet_coord *c);
  * winning event is copied; on timeout, resolve, or cancel @p dst is
  * left untouched.
  *
+ * The await counts as armed once the observer is attached: a publish
+ * that lands while it is being attached is ignored, like one sent
+ * before the call.
+ *
+ * If arming fails, nothing stays attached or scheduled and @p next
+ * still runs, reading @ref ZEPHLET_COORD_AWAIT_FLAG_ZBUS_FAILED or
+ * @ref ZEPHLET_COORD_AWAIT_FLAG_TIMER_FAILED from
+ * @ref zephlet_coord_await_result. The flow is never left idle
+ * behind the author's back, and a kick deferred meanwhile still runs.
+ * The underlying zbus or scheduler error is logged.
+ *
  * @warning Requires the coordinator to have been defined with
  * @ref ZEPHLET_COORD_ASYNC_DEFINE. Calling on a sync-only coordinator
  * is a programmer error.
@@ -235,7 +261,7 @@ void zephlet_coord_done(struct zephlet_coord *c);
  * @param[out] dst    Destination for the matched message memcpy; NULL
  *                    to skip the copy.
  * @param[in] match   Match predicate; NULL accepts any publish.
- * @param[in] next    Step to run on resolve or timeout.
+ * @param[in] next    Step to run when the await ends, or when arming fails.
  * @param[in] timeout Bounded wait, or @c K_FOREVER.
  */
 void zephlet_coord_await(struct zephlet_coord *c, const struct zbus_channel *chan, void *dst,
@@ -287,15 +313,19 @@ void zephlet_coord_cancel(struct zephlet_coord *c);
  * await replaces the previous outcome with
  * @ref ZEPHLET_COORD_AWAIT_FLAG_PENDING.
  *
- * The outcome bits are mutually exclusive. Domain-specific reasons
- * belong in @c c->ctx; this reports only what the framework did.
+ * The outcome bits are mutually exclusive;
+ * @ref ZEPHLET_COORD_AWAIT_FLAG_ARM_FAILED is a convenience mask over
+ * the two arm-failure outcomes. Domain-specific reasons belong in
+ * @c c->ctx; this reports only what the framework did.
  *
  * @code
  * static void s_after_wait(struct zephlet_coord *c)
  * {
  *     uint8_t result = zephlet_coord_await_result(c);
  *
- *     if ((result & ZEPHLET_COORD_AWAIT_FLAG_TIMED_OUT) != 0U) {
+ *     if ((result & ZEPHLET_COORD_AWAIT_FLAG_ARM_FAILED) != 0U) {
+ *         (could not arm the await)
+ *     } else if ((result & ZEPHLET_COORD_AWAIT_FLAG_TIMED_OUT) != 0U) {
  *         (timed out waiting for a matching event)
  *     } else if ((result & ZEPHLET_COORD_AWAIT_FLAG_MATCHED) != 0U) {
  *         (process the matching event)
