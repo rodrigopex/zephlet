@@ -136,6 +136,17 @@ jobs:
       - name: Run codegen unit tests
         run: pytest -v modules/lib/zephlet/tests/codegen/
 
+      - name: Run coordinator unit tests (FFF, unit_testing)
+        # Isolated: the real zephlet_coord.c against FFF fakes of the work
+        # queue, zbus runtime observers, and logging; native_sim runs above
+        # cover the real kernel. M64_MODE=1 builds with -m64, so the runner
+        # needs no 32-bit (multilib) toolchain.
+        run: |
+          west twister \
+            -T modules/lib/zephlet/tests/shared/coord_unit \
+            -p unit_testing -x M64_MODE=1 --inline-logs \
+            -O /tmp/twister-out-unit
+
       - name: Run CoAPS/DTLS test on native_sim/native/64
         # NON-GATING. The DTLS-PSK frontend is verified locally (handshake,
         # RPC round-trip, wrong-PSK rejection over the offloaded-sockets
@@ -174,6 +185,7 @@ jobs:
             /tmp/twister-out
             /tmp/twister-out-infra
             /tmp/twister-out-dtls
+            /tmp/twister-out-unit
           if-no-files-found: ignore
 
   buildhash:
