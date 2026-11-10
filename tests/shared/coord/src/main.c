@@ -546,3 +546,43 @@ ZTEST(zephlet_coord, test_event_losing_to_timeout_leaves_dst_untouched)
 	zassert_equal(ctx.result, ZEPHLET_COORD_AWAIT_FLAG_TIMED_OUT, "flags=0x%02x", ctx.result);
 	zassert_equal(ctx.resume_count, 1, "resumed more than once");
 }
+
+ZTEST(zephlet_coord, test_arm_failure_runs_next_with_zbus_failed)
+{
+	ctx.await_dst = &ctx.received;
+	ctx.await_timeout = K_MSEC(500);
+
+	/*
+	 * Hold the channel past CONFIG_ZEPHLETS_COORD_ASYNC_ZBUS_TIMEOUT so
+	 * zbus_chan_add_obs() times out inside the await.
+	 */
+	zassert_equal(zbus_chan_claim(&chan_test_events, K_NO_WAIT), 0, "could not hold channel");
+
+	zassert_equal(zephlet_coord_kick(coord_async), 0);
+	/* A kick while the flow is running is deferred, not lost by the failure. */
+	zassert_equal(zephlet_coord_kick(coord_async), -EBUSY);
+
+	zassert_equal(k_sem_take(&await_armed_sem, K_MSEC(500)), 0, "await step never ran");
+
+	zassert_equal(ctx.result_at_arm, ZEPHLET_COORD_AWAIT_FLAG_ZBUS_FAILED,
+		      "status after failed arm=0x%02x", ctx.result_at_arm);
+
+	zassert_equal(k_sem_take(&done_sem, K_MSEC(500)), 0, "next did not run after failed arm");
+	zassert_equal(ctx.result, ZEPHLET_COORD_AWAIT_FLAG_ZBUS_FAILED, "flags=0x%02x", ctx.result);
+
+	/* done() honoured the deferred kick: the flow ran again and failed again. */
+	zassert_equal(k_sem_take(&done_sem, K_MSEC(500)), 0, "deferred kick did not re-run");
+	zassert_equal(ctx.resume_count, 2, "resume_count=%d", ctx.resume_count);
+
+	zassert_equal(zbus_chan_finish(&chan_test_events), 0);
+
+	zassert_equal(ctx.received.value, 0, "dst touched by a failed arm");
+	zassert_is_null(coord_async->current, "coord not idle after the flow ended");
+
+	/* The observer was never attached: a publish now resumes nothing. */
+	struct payload msg = {.value = 42};
+
+	zbus_chan_pub(&chan_test_events, &msg, K_NO_WAIT);
+	k_msleep(50);
+	zassert_equal(ctx.resume_count, 2, "publish after failed arm resumed the flow");
+}
