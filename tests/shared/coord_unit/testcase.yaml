@@ -1,0 +1,4 @@
+tests:
+  zephlet.shared.coord_unit:
+    type: unit
+    tags: zephlet shared coord
