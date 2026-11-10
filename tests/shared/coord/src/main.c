@@ -586,3 +586,106 @@ ZTEST(zephlet_coord, test_arm_failure_runs_next_with_zbus_failed)
 	k_msleep(50);
 	zassert_equal(ctx.resume_count, 2, "publish after failed arm resumed the flow");
 }
+
+/*
+ * Removes the framework observer left on the test channel after a failed
+ * zbus_chan_rm_obs(), so later tests can arm again. Recovering from that
+ * stale observer inside the framework is tracked separately.
+ */
+static void drop_stale_observer(void)
+{
+	(void)zbus_chan_rm_obs(&chan_test_events, &coord_async_zlet_obs, K_MSEC(100));
+}
+
+ZTEST(zephlet_coord, test_timeout_survives_failed_observer_removal)
+{
+	ctx.await_dst = &ctx.received;
+	ctx.await_timeout = K_MSEC(50);
+
+	zassert_equal(zephlet_coord_kick(coord_async), 0);
+	zassert_equal(k_sem_take(&await_armed_sem, K_MSEC(500)), 0);
+
+	/*
+	 * Hold the channel across the timeout so the handler's
+	 * zbus_chan_rm_obs() times out after
+	 * CONFIG_ZEPHLETS_COORD_ASYNC_ZBUS_TIMEOUT.
+	 */
+	zassert_equal(zbus_chan_claim(&chan_test_events, K_NO_WAIT), 0, "could not hold channel");
+	zassert_equal(k_sem_take(&done_sem, K_MSEC(500)), 0, "timeout did not resume");
+	zassert_equal(zbus_chan_finish(&chan_test_events), 0);
+
+	zassert_equal(ctx.result, ZEPHLET_COORD_AWAIT_FLAG_TIMED_OUT, "result=0x%02x", ctx.result);
+	zassert_equal(ctx.resume_count, 1);
+	zassert_equal(ctx.received.value, 0, "dst touched by a timeout");
+
+	drop_stale_observer();
+}
+
+ZTEST(zephlet_coord, test_event_survives_failed_deferred_observer_removal)
+{
+	int prio = k_thread_priority_get(k_current_get());
+	struct payload msg = {.value = 42};
+
+	ctx.await_dst = &ctx.received;
+	ctx.await_timeout = K_MSEC(500);
+
+	zassert_equal(zephlet_coord_kick(coord_async), 0);
+	zassert_equal(k_sem_take(&await_armed_sem, K_MSEC(500)), 0);
+
+	/*
+	 * Cooperative priority: nothing preempts this thread between the
+	 * publish (whose listener queues the deferred removal) and the
+	 * claim, so the removal in cleanup_dispatch() finds the channel held
+	 * and times out.
+	 */
+	k_thread_priority_set(k_current_get(), K_PRIO_COOP(0));
+	zbus_chan_pub(&chan_test_events, &msg, K_NO_WAIT);
+	zassert_equal(zbus_chan_claim(&chan_test_events, K_NO_WAIT), 0, "could not hold channel");
+	k_thread_priority_set(k_current_get(), prio);
+
+	zassert_equal(k_sem_take(&done_sem, K_MSEC(500)), 0, "event did not resume");
+	zassert_equal(zbus_chan_finish(&chan_test_events), 0);
+
+	zassert_equal(ctx.result, ZEPHLET_COORD_AWAIT_FLAG_MATCHED, "result=0x%02x", ctx.result);
+	zassert_equal(ctx.resume_count, 1);
+	zassert_equal(ctx.received.value, 42, "matched event not copied");
+
+	drop_stale_observer();
+}
+
+ZTEST(zephlet_coord, test_late_timeout_handler_is_noop)
+{
+	struct payload msg = {.value = 42};
+
+	ctx.await_dst = &ctx.received;
+	ctx.await_timeout = K_MSEC(500);
+
+	zassert_equal(zephlet_coord_kick(coord_async), 0);
+	zassert_equal(k_sem_take(&await_armed_sem, K_MSEC(500)), 0);
+	zbus_chan_pub(&chan_test_events, &msg, K_NO_WAIT);
+	zassert_equal(k_sem_take(&done_sem, K_MSEC(500)), 0);
+
+	/*
+	 * A timeout handler that started before the event won reaches its
+	 * claim after the await ended: emulate that by running it now.
+	 */
+	zephlet_coord_await_timeout(&coord_async_storage.timer.work);
+	k_msleep(50);
+
+	zassert_equal(ctx.resume_count, 1, "late timeout resumed the flow");
+	zassert_equal(zephlet_coord_await_result(coord_async), ZEPHLET_COORD_AWAIT_FLAG_MATCHED,
+		      "late timeout overwrote the outcome");
+	zassert_equal(ctx.received.value, 42);
+}
+
+ZTEST(zephlet_coord, test_stray_dispatch_while_idle_is_noop)
+{
+	zassert_is_null(coord_async->current, "coord not idle");
+
+	/* A cleanup with nothing to remove still dispatches; idle runs no step. */
+	k_work_submit_to_queue(&zephlet_coord_workq, &coord_async_storage.cleanup_work);
+	k_msleep(50);
+
+	zassert_equal(ctx.resume_count, 0, "a step ran while idle");
+	zassert_is_null(coord_async->current, "coord left idle state");
+}
