@@ -207,11 +207,23 @@ static void s_handshake(struct zephlet_coord *c)
                         s_complete, K_SECONDS(5));
 }
 
-/* trigger source — typically a zbus listener on a flow-local channel */
-if(!zephlet_coord_is_running(provisioning)) {
-    int err = zephlet_coord_kick(provisioning);
-    /* err == -EBUSY: author's policy (drop / queue / reject) */
+static void s_complete(struct zephlet_coord *c)
+{
+    struct provisioning_ctx *st = c->ctx;
+    uint8_t result = zephlet_coord_await_result(c);
+
+    if (result & ZEPHLET_COORD_AWAIT_FLAG_TIMED_OUT) {
+        /* radio never reported connected; st->reply is untouched */
+    } else if (result & ZEPHLET_COORD_AWAIT_FLAG_MATCHED) {
+        /* st->reply holds the matching event */
+    }
+    zephlet_coord_done(c);
 }
+
+/* trigger source — typically a zbus listener on a flow-local channel */
+int err = zephlet_coord_kick(provisioning);
+/* err == -EBUSY: already running; the kick re-runs the flow once it
+ * completes. Author's policy decides whether that is wanted. */
 ```
 
 Public surface (see [`zephlet_coord.h`](zephlet_coord.h)):
@@ -221,8 +233,10 @@ Public surface (see [`zephlet_coord.h`](zephlet_coord.h)):
 | `ZEPHLET_COORD_DEFINE` / `_ASYNC_DEFINE` | Allocate a sync or async coordinator at file scope. |
 | `zephlet_coord_kick(c)` | Start the flow; returns `-EBUSY` if already running. |
 | `zephlet_coord_next(c, fn)` | Queue the next step within an in-flight flow. |
-| `zephlet_coord_await(c, chan, dst, match, next, timeout)` | Suspend until a matching publish arrives or the timeout fires. The framework-generated listener handles the memcpy. |
-| `zephlet_coord_resolve(c)` | Finalise an await; idempotent against the timeout path. |
+| `zephlet_coord_await(c, chan, dst, match, next, timeout)` | Suspend until a matching publish arrives or the timeout fires. The framework-generated listener handles the memcpy; only the winning event is copied. Rule: call await, return from the step, and handle the outcome in `next`. |
+| `zephlet_coord_resolve(c)` | End an armed await as a success, without a match or copy; no-op if it already ended. |
+| `zephlet_coord_cancel(c)` | End an armed await as cancelled; `next` still runs. No-op if it already ended. |
+| `zephlet_coord_await_result(c)` | From a continuation: how the await ended, as one `ZEPHLET_COORD_AWAIT_FLAG_*` bit (`_MATCHED`, `_TIMED_OUT`, `_RESOLVED`, `_CANCELLED`; `_PENDING` while armed). The bits are mutually exclusive. Read it at the start of the continuation, before another transition: kick and plain `next` report `0`, and a new await replaces it with `_PENDING`. Domain reasons belong in `c->ctx`. |
 | `zephlet_coord_done(c)` | Mark the flow idle. |
 
 ## Shell frontend
