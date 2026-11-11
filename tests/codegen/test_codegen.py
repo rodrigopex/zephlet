@@ -22,6 +22,7 @@ Coverage:
 from __future__ import annotations
 
 import importlib.util
+import os
 import re
 import shutil
 import subprocess
@@ -1278,12 +1279,21 @@ def test_requires_in_options_file(codegen_module, tmp_path):
 	assert ctx["requires_types"] == ["temperature", "fan", "led"]
 
 
-def test_wrapper_asserts_instance_type(tmp_path):
-	"""Every wrapper goes through the sync-pub helper, which asserts the
-	instance is of this type."""
+def test_wrapper_rejects_instance_of_another_type(tmp_path):
+	"""Every wrapper goes through the sync-pub helper, which refuses an
+	instance of another type at run time, asserts or not."""
 	_, source = _requires_codegen(tmp_path)
-	assert ('__ASSERT(z != NULL && z->api == &tick_api,\n'
-		'\t\t "%s is not a tick instance"') in source
+	helper = source.split("static int tick_sync_pub(", 1)[1].split("\n}\n", 1)[0]
+	assert ("if (z == NULL || z->api != &tick_api) {\n\t\treturn -EINVAL;\n\t}"
+		in helper), helper
+	assert "__ASSERT" not in helper
+
+
+def test_requires_ignores_comments_in_the_literal(codegen_module, tmp_path):
+	proto = _proto_with_options(
+		tmp_path, 'requires = {\n    // the intake\n    type: "fan" /* slot */ name: "intake"\n  }')
+	ctx = codegen_module.parse_proto(str(proto))
+	assert ctx["requires"] == [{"type": "fan", "name": "intake"}]
 
 
 @pytest.mark.parametrize("options, needle", [
@@ -1294,6 +1304,9 @@ def test_wrapper_asserts_instance_type(tmp_path):
 	 "dependency name 'x' is already used"),
 	(['requires = { type: "fan" name: "int" }'], "'int' cannot name a dependency"),
 	(['requires = { type: "fan" name: "2fast" }'], "'2fast' cannot name a dependency"),
+	(['requires = { type: "fan" name: "typeof" }'], "'typeof' cannot name a dependency"),
+	(['requires = { type: "fan" name: "static_assert" }'],
+	 "'static_assert' cannot name a dependency"),
 	(['requires = { type: "my-fan" }'], "type 'my-fan' is not a zephlet type"),
 	(['requires = { name: "fan" }'], "has no type"),
 	(['requires = { type: "fan" proto: "fan.proto" }'], "has unknown field 'proto'"),
@@ -1338,21 +1351,35 @@ def _cli(*args):
 			      check=False, capture_output=True, text=True)
 
 
-def test_list_requires_prints_types_and_writes_nothing(tmp_path):
-	proto = _proto_with_options(tmp_path, 'requires = { type: "fan" name: "a" }',
-				    'requires = { type: "fan" name: "b" }',
-				    'requires = { type: "temperature" }')
-	result = _cli("--list-requires", "--proto", str(proto), "--type", "tick")
+def test_check_build_reads_every_zephlet(tmp_path):
+	"""--check-build reads each zephlet's requires from its proto and options
+	file, checks the graph, and writes the stamp only on success."""
+	a_dir, b_dir = tmp_path / "a", tmp_path / "b"
+	a_dir.mkdir()
+	b_dir.mkdir()
+	tick = _proto_with_options(a_dir, 'requires = { type: "fan" name: "x" }',
+				   file_text="TickApi requires:y=fan\n")
+	fan = _proto_with_options(b_dir)
+	stamp = tmp_path / "graph.txt"
+	result = _cli("--check-build", "tick", str(tick), str(a_dir / "zlet_tick.zephlet.options"),
+		      "--check-build", "fan", str(fan), str(b_dir / "none.zephlet.options"),
+		      "--stamp", str(stamp))
 	assert result.returncode == 0, result.stderr
-	assert result.stdout.split() == ["fan", "temperature"]
-	assert not list(tmp_path.glob("*_interface.*"))
+	assert stamp.read_text() == "fan=\ntick=fan\n"
+
+	stamp.unlink()
+	result = _cli("--check-build", "tick", str(tick), str(a_dir / "zlet_tick.zephlet.options"),
+		      "--stamp", str(stamp))
+	assert result.returncode != 0
+	assert "requires 'fan', but no zephlet of type 'fan'" in result.stderr, result.stderr
+	assert not stamp.exists()
 
 
-def test_list_requires_checks_self_against_type_arg(tmp_path):
+def test_check_build_checks_self_against_type_arg(tmp_path):
 	"""--type names the symbols, so a slot of that type is a self-cycle even
 	when the owning message derives another name."""
 	proto = _proto_with_options(tmp_path, 'requires = { type: "clock" }')
-	result = _cli("--list-requires", "--proto", str(proto), "--type", "clock")
+	result = _cli("--check-build", "clock", str(proto), str(tmp_path / "x.zephlet.options"))
 	assert result.returncode != 0
 	assert "cannot require its own type" in result.stderr, result.stderr
 
@@ -1390,3 +1417,35 @@ def test_check_graph_errors(graph, needle):
 	result = _cli("--check-graph", *graph)
 	assert result.returncode != 0, result.stdout
 	assert needle in result.stderr, result.stderr
+
+
+def test_generation_writes_requires_for_the_graph_step(tmp_path):
+	"""--requires-out lists the provider types once, rewritten only when they
+	change; --check-requires builds the graph from those files alone."""
+	tick = _proto_with_options(tmp_path, 'requires = { type: "fan" name: "x" }',
+				   file_text="TickApi requires:y=fan requires:clock\n")
+	out = tmp_path / "gen"
+	out.mkdir()
+	req = tmp_path / "zlet_tick.requires"
+	args = ("--proto", str(tick), "--options", str(tmp_path / "zlet_tick.zephlet.options"),
+		"--type", "tick", "--prefix", "zlet_tick", "--output-dir", str(out),
+		"--requires-out", str(req))
+	result = _cli(*args)
+	assert result.returncode == 0, result.stderr
+	assert req.read_text() == "clock\nfan\n"
+	os.utime(req, (1, 1))
+	assert _cli(*args).returncode == 0
+	assert req.stat().st_mtime == 1, "same requires: not rewritten"
+
+	fan_req, clock_req = tmp_path / "fan.requires", tmp_path / "clock.requires"
+	fan_req.write_text("")
+	clock_req.write_text("")
+	stamp = tmp_path / "graph.txt"
+	result = _cli("--check-requires", "tick", str(req), "--check-requires", "fan", str(fan_req),
+		      "--check-requires", "clock", str(clock_req), "--stamp", str(stamp))
+	assert result.returncode == 0, result.stderr
+	assert stamp.read_text() == "clock=\nfan=\ntick=clock,fan\n"
+
+	result = _cli("--check-requires", "tick", str(req), "--check-requires", "fan", str(fan_req))
+	assert result.returncode != 0
+	assert "requires 'clock', but no zephlet of type 'clock'" in result.stderr, result.stderr

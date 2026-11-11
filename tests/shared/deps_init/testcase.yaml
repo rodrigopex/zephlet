@@ -1,5 +1,5 @@
 tests:
-  zephlet.shared.deps_walker:
+  zephlet.shared.deps_init:
     tags: zephlet shared deps
     harness: ztest
     platform_allow:

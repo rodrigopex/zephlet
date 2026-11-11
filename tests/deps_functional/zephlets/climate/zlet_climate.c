@@ -12,7 +12,7 @@ int climate_init_fn(const struct zephlet *z)
 {
 	struct climate_data *d = z->data;
 
-	/* The walker initialized every provider first: they are usable here. */
+	/* Every provider initialized first (its type ranks lower): usable here. */
 	d->is_ready = true;
 	return 0;
 }

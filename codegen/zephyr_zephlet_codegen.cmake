@@ -25,9 +25,9 @@
 #           ... plus the per-frontend <prefix>_{coap,lua}_interface.{h,c}
 #           and the LuaLS annotations <prefix>_lua_meta.lua
 #
-#       A zephlet that declares `(zephlet.requires)` makes configuration
-#       fail unless every type it requires is in the build and the types
-#       form no dependency cycle.
+#       A zephlet that declares `(zephlet.requires)` makes the build fail,
+#       before anything compiles, unless every type it requires is in the
+#       build and the types form no dependency cycle.
 #
 # Adapters in v0.3 are NOT generated. They are written by hand using
 # the ZEPHLET_ADAPTER_DEFINE macro (see zephlet.h) under a Kconfig +
@@ -44,21 +44,32 @@ function(_zephlet_order_nanopb_headers)
   endif()
 endfunction()
 
-# Check the build's whole dependency graph once every zephlet is registered:
-# each type a zephlet requires is in the build, and the types form no cycle.
-# Deferred like the nanopb hook, since zephlet modules register in no
-# particular order.
+# Check the build's whole dependency graph, as one build step ordered ahead
+# of every compile: each type a zephlet requires is in the build, and the
+# types form no cycle. Deferred, like the nanopb hook, until every zephlet
+# module has registered, in whatever order. A build step rather than a
+# configure-time check, so that editing a proto re-runs only this, not the
+# whole configuration.
 function(_zephlet_check_dependency_graph)
-  get_property(_graph GLOBAL PROPERTY ZEPHLET_DEPENDENCY_GRAPH)
+  get_property(_args GLOBAL PROPERTY _ZEPHLET_GRAPH_ARGS)
+  get_property(_deps GLOBAL PROPERTY _ZEPHLET_GRAPH_DEPENDS)
   get_property(_script GLOBAL PROPERTY _ZEPHLET_CODEGEN_SCRIPT)
   get_property(_python GLOBAL PROPERTY _ZEPHLET_PYTHON)
-  execute_process(
-    COMMAND ${_python} ${_script} --check-graph ${_graph}
-    RESULT_VARIABLE _rc
-    ERROR_VARIABLE _err)
-  if(NOT _rc EQUAL 0)
-    message(FATAL_ERROR "zephlet dependencies: ${_err}")
-  endif()
+  get_property(_base GLOBAL PROPERTY _ZEPHLET_INIT_BASE)
+  set(_stamp "${CMAKE_BINARY_DIR}/zephlet_dependency_graph.txt")
+  # Per-type SYS_INIT priorities, rewritten only when a rank changes; a
+  # byproduct, so ninja restats it and an unchanged header rebuilds nothing.
+  set(_prio_h "${CMAKE_BINARY_DIR}/zephlet_init_prio.h")
+  add_custom_command(
+    OUTPUT ${_stamp}
+    BYPRODUCTS ${_prio_h}
+    COMMAND ${_python} ${_script} ${_args} --stamp ${_stamp}
+            --init-prio-header ${_prio_h} --init-base ${_base}
+    DEPENDS ${_deps} ${_script}
+    COMMENT "zephlet: checking the dependency graph"
+    VERBATIM)
+  add_custom_target(zephlet_dependency_graph DEPENDS ${_stamp})
+  add_dependencies(zephyr_generated_headers zephlet_dependency_graph)
 endfunction()
 
 function(zephyr_zephlet_generate)
@@ -90,27 +101,6 @@ function(zephyr_zephlet_generate)
   set(_zg_OUTPUTS ${_zg_GEN_H} ${_zg_GEN_C} ${_zg_GEN_COAP_H} ${_zg_GEN_COAP_C}
                   ${_zg_GEN_LUA_H} ${_zg_GEN_LUA_C} ${_zg_GEN_LUA_META})
 
-  # The types this zephlet requires, read now so the graph check at the end
-  # of configuration sees every zephlet. Reconfigure when the proto or the
-  # options file changes, since either may declare (zephlet.requires).
-  execute_process(
-    COMMAND ${PYTHON_EXECUTABLE} ${CODEGEN_SCRIPT} --list-requires
-        --proto ${_zg_PROTO}
-        --type ${_zg_TYPE}
-        --options ${_zg_OPTIONS}
-    RESULT_VARIABLE _zg_RC
-    OUTPUT_VARIABLE _zg_REQUIRES
-    ERROR_VARIABLE _zg_ERR
-    OUTPUT_STRIP_TRAILING_WHITESPACE)
-  if(NOT _zg_RC EQUAL 0)
-    message(FATAL_ERROR "zephlet '${_zg_TYPE}': ${_zg_ERR}")
-  endif()
-  string(REPLACE "\n" "," _zg_REQUIRES "${_zg_REQUIRES}")
-  set_property(GLOBAL APPEND PROPERTY ZEPHLET_DEPENDENCY_GRAPH
-               "${_zg_TYPE}=${_zg_REQUIRES}")
-  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-               ${_zg_PROTO} ${_zg_OPTIONS_DEP})
-
   # Register proto for nanopb (top-level CMakeLists consumes the list).
   set_property(GLOBAL APPEND PROPERTY PROTO_FILES_LIST "${_zg_PROTO}")
 
@@ -124,22 +114,33 @@ function(zephyr_zephlet_generate)
     set(_zg_OPTIONS_STATE "absent")
   endif()
   set(_zg_OPTIONS_STAMP "${_zg_GEN_DIR}/${_zg_PREFIX}.zephlet.options.state")
+  # The provider types this zephlet requires, for the graph step: written by
+  # its own generation, only when they change (a byproduct, so ninja
+  # restats it), so the graph step re-parses no proto.
+  set(_zg_REQUIRES "${_zg_GEN_DIR}/${_zg_PREFIX}.requires")
   file(CONFIGURE OUTPUT "${_zg_OPTIONS_STAMP}"
        CONTENT "${_zg_PREFIX}.zephlet.options: ${_zg_OPTIONS_STATE}\n")
   add_custom_command(
     OUTPUT ${_zg_OUTPUTS}
+    BYPRODUCTS ${_zg_REQUIRES}
     COMMAND ${PYTHON_EXECUTABLE} ${CODEGEN_SCRIPT}
         --proto ${_zg_PROTO}
         --output-dir ${_zg_GEN_DIR}
         --type ${_zg_TYPE}
         --prefix ${_zg_PREFIX}
         --options ${_zg_OPTIONS}
+        --requires-out ${_zg_REQUIRES}
     DEPENDS ${_zg_PROTO} ${_zg_OPTIONS_DEP} ${_zg_OPTIONS_STAMP} ${CODEGEN_SCRIPT}
             ${_zg_TEMPLATES}
     COMMENT "zephlet v0.3: generating ${_zg_PREFIX}_interface"
     VERBATIM)
 
   add_custom_target(${_zg_PREFIX}_codegen DEPENDS ${_zg_OUTPUTS})
+
+  # This zephlet's node of the dependency graph check.
+  set_property(GLOBAL APPEND PROPERTY _ZEPHLET_GRAPH_ARGS
+               --check-requires ${_zg_TYPE} ${_zg_REQUIRES})
+  set_property(GLOBAL APPEND PROPERTY _ZEPHLET_GRAPH_DEPENDS ${_zg_REQUIRES})
 
   # Any Zephyr library may #include the generated <prefix>_interface.h,
   # directly or transitively: the zephlet's own library, the user's
@@ -168,6 +169,7 @@ function(zephyr_zephlet_generate)
                    CALL _zephlet_order_nanopb_headers)
     set_property(GLOBAL PROPERTY _ZEPHLET_CODEGEN_SCRIPT "${CODEGEN_SCRIPT}")
     set_property(GLOBAL PROPERTY _ZEPHLET_PYTHON "${PYTHON_EXECUTABLE}")
+    set_property(GLOBAL PROPERTY _ZEPHLET_INIT_BASE "${CONFIG_ZEPHLET_INIT_PRIORITY}")
     cmake_language(DEFER DIRECTORY ${CMAKE_SOURCE_DIR}
                    CALL _zephlet_check_dependency_graph)
   endif()
