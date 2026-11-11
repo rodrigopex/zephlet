@@ -11,8 +11,8 @@
  *   5. zephyr.async loop with the dispatcher and pump tasks, plus the function
  *      the chunk returned, if any. Its tasks may await instances' events.
  *
- * Zephlet instances are initialised before any of this, by the zephlet
- * SYS_INIT walker, and their events are staged from boot.
+ * Zephlet instances are initialised before any of this, by their own
+ * SYS_INIT entries, and their events are staged from boot.
  */
 
 #include <errno.h>

@@ -104,7 +104,7 @@ static const struct zephlet_method {{ type_snake }}_methods[{{ type_upper }}_M__
 
 {% if requires %}
 /* ----- Dependency slots -------------------------------------------------
- * One row per `(zephlet.requires)`: the init walker reads each bound
+ * One row per `(zephlet.requires)`: zephlet_init_one() reads each bound
  * provider at `offset` in the instance's dependency record and checks it is
  * an instance of `api`. */
 
@@ -149,8 +149,11 @@ ZBUS_LISTENER_DEFINE(lis_{{ type_snake }}, lis_{{ type_snake }}_fn);
 static int {{ type_snake }}_sync_pub(const struct zephlet *z, struct zephlet_call *call,
 				     k_timeout_t timeout)
 {
-	__ASSERT(z != NULL && z->api == &{{ type_snake }}_api,
-		 "%s is not a {{ type_snake }} instance", z != NULL ? z->name : "NULL");
+	/* An instance of another type would be dispatched with this type's
+	 * method ids and message layouts. */
+	if (z == NULL || z->api != &{{ type_snake }}_api) {
+		return -EINVAL;
+	}
 
 	struct zephlet_call *p = call;
 	int err = zbus_chan_pub(z->channel.command, &p, timeout);

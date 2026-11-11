@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <zephyr/init.h>
 #include <zephyr/kernel.h>
 #include <zephyr/zbus/zbus.h>
 
@@ -26,8 +27,7 @@
  *
  * `ZEPHLET_NEW` is the only supported creator of the channel
  * pair. Do not add observers to `chan_<name>_command` by any other
- * means; the SYS_INIT walker asserts exactly one listener on the
- * command channel under `CONFIG_ASSERT`.
+ * means: dispatch expects exactly one listener on the command channel.
  */
 
 /* Forward decl so the handler function-pointer can reference it. */
@@ -70,9 +70,9 @@ struct zephlet_method {
 /**
  * @brief One dependency slot a zephlet type declares with `(zephlet.requires)`.
  *
- * Generated per type. The init walker reads the provider bound to this slot
- * at `offset` in an instance's dependency record (`struct <type>_dependencies`)
- * and checks that it is an instance of `api`.
+ * Generated per type. zephlet_init_one() reads the provider bound to this
+ * slot at `offset` in an instance's dependency record
+ * (`struct <type>_dependencies`) and checks that it is an instance of `api`.
  */
 struct zephlet_dep_slot {
 	/** Slot name: the field of `struct <type>_dependencies`. */
@@ -119,9 +119,25 @@ struct zephlet {
 	 *  nothing. Immutable; the providers keep their own state. */
 	const void *dependencies;
 	int (*init_fn)(const struct zephlet *self);
-	/** SYS_INIT walker runs `init_fn`s in ascending order, every provider
-	 *  before its consumers. Default 0. */
+	/** How initialization left this instance (ZEPHLET_RUNTIME()), or NULL
+	 *  for a record that is never initialized. */
+	struct zephlet_runtime *runtime;
+	/** Sub-priority, 0-9, of the instance's SYS_INIT entry within its
+	 *  type's init priority. Default 0. */
 	int init_priority;
+};
+
+/**
+ * @brief How initialization left one instance. Not public.
+ *
+ * ZEPHLET_RUNTIME_DEFINE() defines one per instance, zeroed in `.bss`; the
+ * instance points at it.
+ */
+struct zephlet_runtime {
+	/** zephlet_init_result(). */
+	int result;
+	/** `ZLET_RT_*` flags; zero until the instance's init entry runs. */
+	uint8_t flags;
 };
 
 /**
@@ -189,18 +205,105 @@ int zephlet_dispatch(const struct zephlet *z, struct zephlet_call *call);
 const struct zephlet *zephlet_get_by_name(const char *name);
 
 /**
- * @brief How the SYS_INIT walker left @p z.
+ * @brief How initialization left @p z.
+ *
+ * An instance serves calls (zephlet_dispatch()) only while its `init_fn`
+ * runs and after it returned 0: before that every call answers -EAGAIN,
+ * and after any other result -ENODEV.
  *
  * @retval 0        `init_fn` returned 0, or the instance has none.
- * @retval -EAGAIN  The walker has not reached the instance yet.
+ * @retval -EAGAIN  Its init entry has not run yet.
  * @retval -ENODEV  Not initialized: a dependency slot is unbound or bound to
  *                  an instance of the wrong type, or a provider did not
- *                  initialize.
- * @retval -ELOOP   Not initialized: the instance is on a dependency cycle.
- * @retval -ENOENT  @p z is NULL or beyond `CONFIG_ZEPHLET_MAX_INSTANCES`.
+ *                  initialize or was not initialized yet (a hand-written
+ *                  record ranked before its provider, or on a cycle; the
+ *                  build rejects cycles between generated types, and
+ *                  instances can only form one through hand-written
+ *                  apis).
+ * @retval -ENOENT  @p z is NULL or has no runtime record.
  * @return Otherwise the nonzero value `init_fn` returned.
  */
 int zephlet_init_result(const struct zephlet *z);
+
+/**
+ * @brief Initialize @p z once: what its init entry runs.
+ *
+ * Skips it with -ENODEV, logging why, when a dependency slot is invalid or
+ * a provider is not initialized successfully; otherwise runs its `init_fn`.
+ * A second call returns the first result.
+ *
+ * @return The result zephlet_init_result() reports, or -ENOENT when @p z
+ *         is NULL or has no runtime record.
+ */
+int zephlet_init_one(const struct zephlet *z);
+
+/**
+ * ZEPHLET_RUNTIME(name)
+ *
+ * The runtime record ZEPHLET_RUNTIME_DEFINE() defined for @p _name: what a
+ * hand-written record sets `.runtime` to.
+ */
+#define ZEPHLET_RUNTIME(_name) (&_zlet_rt_##_name)
+
+/**
+ * ZEPHLET_RUNTIME_DEFINE(name)
+ *
+ * Defines the runtime record of instance @p _name, zeroed in `.bss`.
+ */
+#define ZEPHLET_RUNTIME_DEFINE(_name) static struct zephlet_runtime _zlet_rt_##_name
+
+/**
+ * ZEPHLET_INIT_ENTRY(name, prio, sub)
+ *
+ * Registers a SYS_INIT entry at `APPLICATION` priority @p _prio and
+ * sub-priority @p _sub that runs zephlet_init_one(&name). @p _name must be
+ * declared already. ZEPHLET_INIT_DEFINE() is the usual way in.
+ *
+ * Relies on Zephyr's internal `Z_INIT_ENTRY_SECTION` (as `SYS_INIT_NAMED`
+ * does) for the sub-priority; revisit on a Zephyr upgrade.
+ *
+ * @param _name  The instance.
+ * @param _prio  Decimal literal (or a macro of one), above
+ *               `CONFIG_ZBUS_CHANNELS_SYS_INIT_PRIORITY`.
+ * @param _sub   Bare decimal literal 0-9 (or a macro of one): the linker
+ *               sorts it as text, so `(2)` or `1+1` fail to build.
+ */
+#define ZEPHLET_INIT_ENTRY(_name, _prio, _sub)                                                     \
+	BUILD_ASSERT((_prio) > CONFIG_ZBUS_CHANNELS_SYS_INIT_PRIORITY,                             \
+		     "zephlet '" #_name "': init priority must come after zbus");                  \
+	BUILD_ASSERT(sizeof(STRINGIFY(_sub)) == 2 && IN_RANGE(UTIL_INC(_sub), 1, 10),              \
+			    "zephlet '" #_name                                                     \
+			    "': init sub-priority must be a decimal literal 0-9");                 \
+	static int _zlet_init_##_name(void)                                                        \
+	{                                                                                          \
+		return zephlet_init_one(&(_name));                                                 \
+	}                                                                                          \
+	static const Z_DECL_ALIGN(struct init_entry)                                               \
+		Z_INIT_ENTRY_SECTION(APPLICATION, _prio, _sub) __used __noasan                     \
+		Z_INIT_ENTRY_NAME(_zlet_##_name) = {.init_fn = _zlet_init_##_name, .dev = NULL}
+
+/**
+ * ZEPHLET_INIT_DEFINE(name, prio, sub)
+ *
+ * Declares instance @p _name, defines its runtime record and registers its
+ * SYS_INIT entry (ZEPHLET_INIT_ENTRY()). `ZEPHLET_NEW*` does this for every
+ * instance, with @p _prio its type's generated init priority
+ * (`CONFIG_ZEPHLET_INIT_PRIORITY` + init rank). Use it directly only for a
+ * hand-written `const struct zephlet` record, before its definition, and
+ * set the record's `.runtime = ZEPHLET_RUNTIME(name)`:
+ *
+ *   ZEPHLET_INIT_DEFINE(my_rec, 20, 0);
+ *   const STRUCT_SECTION_ITERABLE(zephlet, my_rec) = {
+ *           .name = "my_rec", .api = &my_api, .runtime = ZEPHLET_RUNTIME(my_rec),
+ *   };
+ *
+ * A record without a runtime record is never initialized: every call to it
+ * answers -EAGAIN, and it cannot be a provider.
+ */
+#define ZEPHLET_INIT_DEFINE(_name, _prio, _sub)                                                    \
+	extern const struct zephlet _name;                                                         \
+	ZEPHLET_RUNTIME_DEFINE(_name);                                                             \
+	ZEPHLET_INIT_ENTRY(_name, _prio, _sub)
 
 /**
  * ZEPHLET_NEW(type, name, cfg, data, init)
@@ -209,7 +312,11 @@ int zephlet_init_result(const struct zephlet *z);
  *
  *  - Creates `chan_<name>_command` : pointer channel, observer = `lis_<type>`.
  *  - Creates `chan_<name>_events`  : value channel of `struct <type>_events`.
- *  - Registers `STRUCT_SECTION_ITERABLE(zephlet, <name>)`.
+ *  - Registers `STRUCT_SECTION_ITERABLE(zephlet, <name>)`, pointing at its
+ *    runtime record.
+ *  - Registers its SYS_INIT entry (ZEPHLET_INIT_DEFINE) at its type's init
+ *    priority: every provider type ranks below its consumer types, so
+ *    providers initialize first.
  *
  * @param _type  Zephlet type symbol (e.g. `tick`). Used to resolve
  *               `<type>_api` and `struct <type>_events`.
@@ -225,16 +332,17 @@ int zephlet_init_result(const struct zephlet *z);
 /**
  * ZEPHLET_NEW_PRIO(type, name, cfg, data, init, prio)
  *
- * Same as `ZEPHLET_NEW`, with an explicit `init_priority`.
- * SYS_INIT walker runs `init_fn`s in ascending priority.
+ * Same as `ZEPHLET_NEW`, with an explicit `init_priority`: a decimal literal
+ * 0-9, the sub-priority of the instance's SYS_INIT entry among instances of
+ * the same init rank. Equal ones keep link order.
  *
  * A type that declares `(zephlet.requires)` fails to build here: define its
  * instances with `ZEPHLET_NEW_WITH_DEPS` instead.
  */
 #define ZEPHLET_NEW_PRIO(_type, _name, _cfg, _data, _init, _prio)                                  \
 	BUILD_ASSERT(_ZLET_HAS_DEPS_##_type == 0,                                                  \
-		     "zephlet type '" #_type "' declares (zephlet.requires): define '" #_name    \
-		     "' with ZEPHLET_NEW_WITH_DEPS");                                               \
+		     "zephlet type '" #_type "' declares (zephlet.requires): define '" #_name      \
+		     "' with ZEPHLET_NEW_WITH_DEPS");                                              \
 	_ZEPHLET_DEFINE(_type, _name, _cfg, _data, NULL, _init, _prio)
 
 /**
@@ -244,17 +352,20 @@ int zephlet_init_result(const struct zephlet *z);
  * `_deps` binds this instance's providers:
  *
  *   static const struct climate_dependencies room_a_deps = {
- *           .temperature = &room_a_sensor,
- *           .fan = &room_a_fan,
+ *           .temperature = ZEPHLET_DEP(temperature, room_a_sensor),
+ *           .fan = ZEPHLET_DEP(fan, room_a_fan),
  *   };
  *   ZEPHLET_NEW_WITH_DEPS(climate, room_a, &room_a_cfg, &room_a_data,
  *                         &room_a_deps, climate_init_fn);
  *
  * Fails to build when `_deps` is not a `struct <type>_dependencies *` or the
- * type requires nothing. At boot the SYS_INIT walker skips the instance,
- * with an error, when a slot is NULL or bound to an instance of another
- * type, and runs every provider's `init_fn` before this one's; see
- * zephlet_init_result(). Providers may be shared between consumers.
+ * type requires nothing; ZEPHLET_DEP() fails to build on a provider of
+ * another type. With `CONFIG_ZEPHLET_DEPS_LINK_CHECK` the link fails on an
+ * unbound slot or a provider of another type. At boot zephlet_init_one()
+ * checks the same and skips the instance, with an error; every provider's
+ * `init_fn` runs before this one's; see zephlet_init_result(). A skipped
+ * instance, or one whose `init_fn` failed, answers every call with -ENODEV.
+ * Providers may be shared between consumers.
  *
  * @param _deps  `const struct <type>_dependencies *`, typically to a
  *               `static const` record.
@@ -265,22 +376,50 @@ int zephlet_init_result(const struct zephlet *z);
 /**
  * ZEPHLET_NEW_PRIO_WITH_DEPS(type, name, cfg, data, deps, init, prio)
  *
- * Same as `ZEPHLET_NEW_WITH_DEPS`, with an explicit `init_priority`. A
- * provider is initialized before its consumers whatever their priorities;
- * the priority orders instances that do not depend on each other.
+ * Same as `ZEPHLET_NEW_WITH_DEPS`, with an explicit `init_priority` (0-9,
+ * see `ZEPHLET_NEW_PRIO`). A provider is initialized before its consumers
+ * whatever their priorities: its type ranks below theirs.
  */
 #define ZEPHLET_NEW_PRIO_WITH_DEPS(_type, _name, _cfg, _data, _deps, _init, _prio)                 \
 	BUILD_ASSERT(_ZLET_HAS_DEPS_##_type == 1,                                                  \
-		     "zephlet type '" #_type "' declares no (zephlet.requires): define '" #_name \
-		     "' with ZEPHLET_NEW");                                                          \
+		     "zephlet type '" #_type "' declares no (zephlet.requires): define '" #_name   \
+		     "' with ZEPHLET_NEW");                                                        \
 	_ZEPHLET_DEFINE(_type, _name, _cfg, _data,                                                 \
-			_Generic((_deps), const struct _type##_dependencies *: (_deps),            \
-				 struct _type##_dependencies *: (_deps)),                           \
+			_Generic((_deps),                                                          \
+			const struct _type##_dependencies *: (_deps),                              \
+			struct _type##_dependencies *: (_deps)),                                   \
 			_init, _prio)
 
-/* Common body of the instance macros. Not public: use ZEPHLET_NEW*. */
-#define _ZEPHLET_DEFINE(_type, _name, _cfg, _data, _deps, _init, _prio)                            \
+/**
+ * ZEPHLET_DECLARE(type, name)
+ *
+ * Declares an instance of @p _type defined in another translation unit, so
+ * this one can call it or bind it with ZEPHLET_DEP().
+ */
+#define ZEPHLET_DECLARE(_type, _name)                                                              \
 	extern const struct zephlet _name;                                                         \
+	extern const struct _type##_zlet_tag *const _zlet_tag_##_name
+
+/**
+ * ZEPHLET_DEP(type, inst)
+ *
+ * The provider @p _inst for a dependency slot of type @p _type, checked at
+ * compile time: an instance of another type fails to build. Bind slots
+ * with it rather than with `&inst`, which compiles whatever the type.
+ *
+ *   .intake = ZEPHLET_DEP(fan, fan_a),
+ *
+ * @p _inst must be defined with ZEPHLET_NEW* or declared with
+ * ZEPHLET_DECLARE in this translation unit.
+ */
+#define ZEPHLET_DEP(_type, _inst)                                                                  \
+	_Generic(_zlet_tag_##_inst, const struct _type##_zlet_tag *: &(_inst))
+
+/* Common body of the instance macros. Not public: use ZEPHLET_NEW*. The tag
+ * is never defined: ZEPHLET_DEP only reads its type. */
+#define _ZEPHLET_DEFINE(_type, _name, _cfg, _data, _deps, _init, _prio)                            \
+	ZEPHLET_DECLARE(_type, _name);                                                             \
+	ZEPHLET_INIT_DEFINE(_name, _ZLET_INIT_PRIO_##_type, _prio);                                \
 	ZBUS_CHAN_DEFINE(chan_##_name##_command, struct zephlet_call *, NULL, (void *)&_name,      \
 			 ZBUS_OBSERVERS(lis_##_type), NULL);                                       \
 	ZBUS_CHAN_DEFINE(chan_##_name##_events, struct _type##_events, NULL, (void *)&_name,       \
@@ -297,6 +436,7 @@ int zephlet_init_result(const struct zephlet *z);
 		.data = (_data),                                                                   \
 		.dependencies = (_deps),                                                           \
 		.init_fn = (_init),                                                                \
+		.runtime = ZEPHLET_RUNTIME(_name),                                                 \
 		.init_priority = (_prio),                                                          \
 	};                                                                                         \
 	_ZLET_FRONTEND_HOOKS_##_type(_name)
@@ -312,7 +452,7 @@ int zephlet_init_result(const struct zephlet *z);
  * @param _instance_id   Instance id token used at the definition site.
  */
 #define ZEPHLET_INST_DECLARE(_zephlet_name, _instance_id)                                          \
-	extern const struct zephlet _zephlet_name##_instance_id
+	ZEPHLET_DECLARE(_zephlet_name, _zephlet_name##_instance_id)
 
 /**
  * ZEPHLET_PRIO_INST_DEFINE(type, id, init, prio)
@@ -336,8 +476,7 @@ int zephlet_init_result(const struct zephlet *z);
  * @param _instance_id   Token appended to the type to form the instance
  *                       and storage symbols; unique per type per TU.
  * @param _init_fn       `int (*)(const struct zephlet *)` or NULL.
- * @param _prio          `init_priority`; the SYS_INIT walker runs
- *                       `init_fn`s in ascending priority.
+ * @param _prio          `init_priority` (0-9); see `ZEPHLET_NEW_PRIO`.
  */
 #define ZEPHLET_PRIO_INST_DEFINE(_zephlet_name, _instance_id, _init_fn, _prio)                     \
 	static struct _zephlet_name##_config _zephlet_name##_instance_id##_cfg;                    \
@@ -354,5 +493,30 @@ int zephlet_init_result(const struct zephlet *z);
  */
 #define ZEPHLET_INST_DEFINE(_zephlet_name, _instance_id, _init_fn)                                 \
 	ZEPHLET_PRIO_INST_DEFINE(_zephlet_name, _instance_id, _init_fn, 0)
+
+/**
+ * ZEPHLET_PRIO_INST_DEFINE_WITH_DEPS(type, id, deps, init, prio)
+ *
+ * Same as `ZEPHLET_PRIO_INST_DEFINE`, for a type that declares
+ * `(zephlet.requires)`: expands `ZEPHLET_NEW_PRIO_WITH_DEPS` with the
+ * auto-allocated config and data and the binding @p _deps.
+ *
+ * @param _deps  `const struct <type>_dependencies *`.
+ */
+#define ZEPHLET_PRIO_INST_DEFINE_WITH_DEPS(_zephlet_name, _instance_id, _deps, _init_fn, _prio)    \
+	static struct _zephlet_name##_config _zephlet_name##_instance_id##_cfg;                    \
+	static struct _zephlet_name##_data _zephlet_name##_instance_id##_data;                     \
+                                                                                                   \
+	ZEPHLET_NEW_PRIO_WITH_DEPS(_zephlet_name, _zephlet_name##_instance_id,                     \
+				   &_zephlet_name##_instance_id##_cfg,                             \
+				   &_zephlet_name##_instance_id##_data, _deps, _init_fn, _prio)
+
+/**
+ * ZEPHLET_INST_DEFINE_WITH_DEPS(type, id, deps, init)
+ *
+ * Same as `ZEPHLET_PRIO_INST_DEFINE_WITH_DEPS`, with `init_priority == 0`.
+ */
+#define ZEPHLET_INST_DEFINE_WITH_DEPS(_zephlet_name, _instance_id, _deps, _init_fn)                \
+	ZEPHLET_PRIO_INST_DEFINE_WITH_DEPS(_zephlet_name, _instance_id, _deps, _init_fn, 0)
 
 #endif /* MODULES_ZEPHLETS_SHARED_ZEPHLET_H */

@@ -206,8 +206,10 @@ ClimateApi requires:temperature requires:intake=fan requires:exhaust=fan
 
 Codegen rejects a type or name that is not a C identifier, a name that is a
 C keyword, two slots of one name, and a zephlet requiring its own type.
-Configuration then fails when a required type is not in the build, or when
-the types form a cycle of any length (`a -> b -> c -> a`), printing it.
+The build then stops, before anything compiles, when a required type is not
+in the build or the types form a cycle of any length (`a -> b -> c -> a`),
+printing it. The check is a build step that depends on every zephlet's proto
+and options file, so editing a proto re-runs it without reconfiguring.
 
 ### Generated
 
@@ -220,23 +222,30 @@ struct climate_dependencies {
 ```
 
 plus one slot row per dependency (name, provider type, its `<type>_api`,
-field offset) in `climate_api`, which the init walker checks.
+field offset) in `climate_api`, which `zephlet_init_one()` checks.
 
 ### Bind
 
 ```c
 static const struct climate_dependencies room_a_deps = {
-	.temperature = &room_a_sensor,
-	.intake = &room_a_fan,
-	.exhaust = &shared_exhaust,
+	.temperature = ZEPHLET_DEP(temperature, room_a_sensor),
+	.intake = ZEPHLET_DEP(fan, room_a_fan),
+	.exhaust = ZEPHLET_DEP(fan, shared_exhaust),
 };
 ZEPHLET_NEW_WITH_DEPS(climate, room_a, &room_a_cfg, &room_a_data, &room_a_deps,
 		      climate_init_fn);
 ```
 
+`ZEPHLET_DEP(type, inst)` is `&inst`, checked at compile time: an instance
+of another type fails to build. It needs `inst` defined with `ZEPHLET_NEW*`
+or declared with `ZEPHLET_DECLARE(type, inst)` in the same file. A plain
+`&inst` also compiles, whatever its type; the checks below still catch it.
+
 `ZEPHLET_NEW_PRIO_WITH_DEPS` adds a priority. Instances of a type that
 requires nothing keep `ZEPHLET_NEW`; each macro fails to build on the other
-kind of type, and `_WITH_DEPS` rejects a record of another type. Several
+kind of type, and `_WITH_DEPS` rejects a record of another type.
+`ZEPHLET_INST_DEFINE_WITH_DEPS(type, id, &deps, init)` and its `_PRIO_`
+form allocate the config and data, like `ZEPHLET_INST_DEFINE`. Several
 consumers may share a provider.
 
 | `struct zephlet` field | Holds |
@@ -261,25 +270,147 @@ int climate_regulate_impl(const struct zephlet *z, struct climate_decision *resp
 ```
 
 Only through the provider's public wrappers — never its `_impl` functions
-or its `data`. A call is the ordinary synchronous RPC: it runs the provider
-in the caller's thread, inside the consumer's handler. Composition adds no
-thread, queue or asynchrony; offload in the consumer if a provider is slow.
-Every wrapper `__ASSERT`s that its instance is of its own type.
+or its `data`. Every wrapper returns `-EINVAL` for an instance of another
+type (or NULL), so a mistaken pointer never reaches another type's method
+table.
+
+**Execution context.** A call is the ordinary synchronous RPC: it runs the
+provider in the caller's thread, inside the consumer's handler. Composition
+adds no thread, queue or asynchrony.
+
+- **Locking:** zbus runs a command's listener while it holds the command
+  channel's lock, so the consumer's channel stays locked for the whole
+  provider call. Locks are always taken consumer before provider, and the
+  graph is acyclic, so this cannot deadlock. But a slow provider blocks every
+  caller of the consumer, and the caller's and the provider's timeouts add
+  up: offload in the consumer if a provider is slow.
+- **No ISR:** a consumer with dependencies cannot be called from an ISR. Its
+  handler calls providers with a real timeout, and zbus asserts on anything
+  but `K_NO_WAIT` from an ISR.
+
+**Testing with a fake provider.** Handlers belong to the type, so a test
+builds the provider type from its proto alone (its generated interface,
+without its real `.c`), defines the handlers it needs, and binds the
+consumer under test to an instance of it:
+
+```c
+/* test/main.c: a fan instance whose set_speed the test inspects. */
+ZEPHLET_NEW(fan, fake_fan, &fake_fan_cfg, &fake_fan_data, NULL);
+int fan_set_speed_impl(const struct zephlet *z, const struct fan_speed *req)
+{
+	last_speed = req->percent; /* strong override of the weak default */
+	return 0;
+}
+static const struct climate_dependencies room_deps = {
+	.temperature = ZEPHLET_DEP(temperature, fake_sensor),
+	.intake = ZEPHLET_DEP(fan, fake_fan),
+	.exhaust = ZEPHLET_DEP(fan, fake_fan),
+};
+ZEPHLET_NEW_WITH_DEPS(climate, room, &room_cfg, &room_data, &room_deps, climate_init_fn);
+```
+
+Handlers the test does not define keep their weak defaults. The fake is
+an ordinary instance of the provider type, so the consumer cannot tell it
+apart, and the link check still checks its binding.
 
 ### Initialization
 
-The SYS_INIT walker checks every binding, then initializes each provider
-before its consumers, whatever their `init_priority`; the priority orders
-instances that do not depend on each other. A consumer is never initialized
-— its `init_fn` does not run, and an error is logged — when a slot is
-unbound, a slot holds an instance of another type, a provider's `init_fn`
-failed, or a provider was itself skipped. `zephlet_init_result(z)` reports
-the outcome: `0`, the `init_fn`'s error, `-ENODEV` (skipped), `-ELOOP`
-(dependency cycle) or `-EAGAIN` (walker not run yet).
+With `CONFIG_ZEPHLET_DEPS_LINK_CHECK` (default `y`) the build fails after
+the link on an unbound slot or a slot holding an instance of another type:
 
-Cycles cannot get past configuration. The walker still rejects any it is
-handed (hand-written records): every instance on one is skipped with
-`-ELOOP`, the cycle is logged, and `__ASSERT` fires.
+```
+error: zephlet: 'room_a': dependency 'intake' (a fan) is not bound
+```
+
+It reads the instances and their records from the ELF (pyelftools) and adds
+nothing to the image. A zeroed record in `.bss` reads as all slots unbound.
+
+Every `ZEPHLET_NEW` instance gets its own Zephyr `SYS_INIT` entry at `APPLICATION` level, and the kernel's ordinary init
+sequence runs them:
+
+- **Priority:** `CONFIG_ZEPHLET_INIT_PRIORITY` (default 10) + the type's
+  *init rank*. A type that requires nothing has rank 0; otherwise its rank is
+  one above the highest rank among its providers. The dependency-graph build
+  step computes the ranks and writes them to `zephlet_init_prio.h`, rewriting
+  it only when a rank changes. A provider type therefore always runs before
+  its consumer types.
+- **Sub-priority:** `init_priority`, given with `ZEPHLET_NEW_PRIO*`, orders the
+  instances of one rank. It is a decimal literal 0–9, because the linker sorts
+  it as text; the build rejects anything else. Instances with equal priority
+  and sub-priority run in an unspecified order.
+
+| Types | Rank | Priority | Instances (sub-priority) |
+|---|---|---|---|
+| `temperature`, `fan` | 0 | 10 | `sensor_a`, `fan_a` (0), then `fan_b` (9) |
+| `climate` (requires both) | 1 | 11 | `room_a`, `room_b` (0) |
+
+So `fan_b` runs before `room_a` even though its sub-priority is higher. Every
+instance of a rank runs before any instance of the next. Zephlets interleave
+with the app's own `SYS_INIT`s by priority, and `west build -t initlevels`
+lists them.
+
+Each entry calls `zephlet_init_one()`. It skips the instance, so its
+`init_fn` never runs and an error is logged, when:
+
+- a slot is unbound, or holds something other than an instance of its type;
+- a provider's `init_fn` failed, or the provider was itself skipped;
+- a provider has not run yet (see below).
+
+Every instance, with or without dependencies, is behind the same gate in
+`zephlet_dispatch()`, for calls from C or any frontend:
+
+| State | Calls answer | `zephlet_init_result(z)` |
+|---|---|---|
+| Its entry has not run yet | `-EAGAIN` | `-EAGAIN` |
+| Its `init_fn` is running | served, so it may call its own RPCs | `-EAGAIN` |
+| `init_fn` returned 0 (or there is none) | served | `0` |
+| `init_fn` failed | `-ENODEV` | the `init_fn`'s error |
+| Skipped (bad binding, provider down) | `-ENODEV` | `-ENODEV` |
+
+The base priority sits above zbus's channel initialization
+(`CONFIG_ZBUS_CHANNELS_SYS_INIT_PRIORITY`; the build checks it), so a
+consumer's `init_fn` may call its providers' RPCs.
+
+**Cycles are a build error.** Ranks need an acyclic type graph, and a slot
+only accepts an instance of its own type, so instances of generated types
+cannot form a cycle. A hand-written record (below) that still forms one, or
+that ranks a consumer before its provider, finds that provider not
+initialized yet: it is skipped with `-ENODEV`, and so is anything that needs
+it. No cyclic `init_fn` runs.
+
+A hand-written `const struct zephlet` record uses
+`ZEPHLET_INIT_DEFINE(name, prio, sub)` before its definition, and sets
+`.runtime = ZEPHLET_RUNTIME(name)`:
+
+```c
+ZEPHLET_INIT_DEFINE(my_rec, 20, 0);
+const STRUCT_SECTION_ITERABLE(zephlet, my_rec) = {
+	.name = "my_rec", .api = &my_api, .runtime = ZEPHLET_RUNTIME(my_rec),
+};
+```
+
+- `prio` is an absolute `APPLICATION` priority literal, which must be above
+  zbus's;
+- `sub` is a bare decimal literal 0–9;
+- the macro relies on Zephyr's internal `Z_INIT_ENTRY_SECTION` for the
+  sub-priority, so revisit it on a Zephyr upgrade.
+
+A record without a runtime record is never initialized: every call answers
+`-EAGAIN`, and it cannot be a provider.
+
+Each instance points at an 8-byte runtime record in `.bss`, which costs no
+flash; there is no instance limit, and the gate is O(1), with no division.
+
+**Migrating from v0.3:**
+
+- Zephlets initialize at `APPLICATION` priority `CONFIG_ZEPHLET_INIT_PRIORITY`
+  (10) + rank instead of 0, so an app `SYS_INIT` at `APPLICATION` priority 1–9 now
+  runs **before** them.
+- `init_priority` used to accept any `int`; it is now a bare literal 0–9.
+- Instances with equal priority used to initialize in name order; they now
+  run in an unspecified order.
+- Calls before an instance's init answer `-EAGAIN`, and an instance whose
+  `init_fn` failed refuses calls with `-ENODEV`. v0.3 served every call.
 
 ### Versus adapters and coordinators
 

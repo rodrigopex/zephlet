@@ -366,7 +366,7 @@ flowchart TD
 
 ```mermaid
 sequenceDiagram
-    participant init as SYS_INIT walker
+    participant init as SYS_INIT (instance entries)
     participant main as main()
     participant fe as zephlet_lua_coordinate()
     participant lua as main chunk

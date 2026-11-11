@@ -10,9 +10,32 @@ config ZEPHLET_MAX_INSTANCES
     int "Maximum number of zephlet instances"
     default 16
     help
-      Upper bound on the number of zephlet instances resolved by
-      `STRUCT_SECTION_FOREACH(zephlet, ...)` at runtime. Used to size
-      the SYS_INIT init-priority ordering buffer.
+      Expected number of zephlet instances. Only frontends use it, as the
+      default size of their per-instance pools (CoAP Observe subscribers);
+      initialization keeps its state per instance and has no limit.
+
+config ZEPHLET_DEPS_LINK_CHECK
+    bool "Check dependency bindings after linking"
+    default y
+    help
+      After the link, read every instance and its dependency record from
+      the ELF and fail the build on an unbound slot or a slot bound to an
+      instance of another type; at boot such an instance is skipped with
+      -ENODEV. Instance cycles need no check here: a slot only accepts its
+      own type, so they need a cycle of types, which the dependency-graph
+      build step rejects. Needs pyelftools.
+
+config ZEPHLET_INIT_PRIORITY
+    int "Base init priority of zephlet instances"
+    default 10
+    help
+      SYS_INIT priority, at the APPLICATION level, of the instances of a
+      zephlet type that requires nothing (init rank 0); a type of rank r
+      runs at this + r, after all of its providers. It must be greater
+      than ZBUS_CHANNELS_SYS_INIT_PRIORITY: an init_fn may call a
+      provider's RPC wrappers, and a command published before zbus
+      initializes reaches no listener. This + the highest rank must not
+      exceed 999.
 
 config ZEPHLETS_COORD
     bool "Coordinator framework"

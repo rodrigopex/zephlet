@@ -8,6 +8,8 @@
 #include <zephyr/kernel.h>
 
 #include "zephlet.h"
+/* _ZLET_INIT_PRIO_<type>: written by the dependency-graph build step. */
+#include "zephlet_init_prio.h"
 #include "{{ type_snake }}/{{ prefix }}.pb.h"
 
 /**
@@ -40,8 +42,9 @@ extern const struct zephlet_api {{ type_snake }}_api;
  *   ZEPHLET_NEW_WITH_DEPS({{ type_snake }}, inst, &cfg, &data, &deps, init);
  *
  * Handlers read the record from `z->dependencies`, like `z->config` and
- * `z->data`, and call a provider through its public RPC wrappers only. The init walker checks every
- * slot and runs each provider's init_fn before this zephlet's. */
+ * `z->data`, and call a provider through its public RPC wrappers only. Initialization checks every
+ * slot, and each provider's init_fn runs before this zephlet's: its type
+ * ranks lower. */
 
 /** Provider instances bound to one `{{ type_snake }}` instance. */
 struct {{ type_snake }}_dependencies {

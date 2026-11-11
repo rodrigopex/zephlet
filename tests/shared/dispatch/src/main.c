@@ -41,9 +41,13 @@ static const struct zephlet_api sut_api = {
 	.num_methods = ARRAY_SIZE(sut_methods),
 };
 
-static const struct zephlet sut = {
+/* A hand-written record: it needs a runtime record and an init entry to be
+ * served, like any instance. */
+ZEPHLET_INIT_DEFINE(sut, 20, 0);
+const struct zephlet sut = {
 	.name = "sut",
 	.api = &sut_api,
+	.runtime = ZEPHLET_RUNTIME(sut),
 };
 
 ZTEST(zephlet_dispatch, test_success)

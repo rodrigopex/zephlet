@@ -35,6 +35,12 @@ set_property(
     "${SHARED_ZEPHLET_DIR}/zephlet_options.proto"
 )
 
+# Deferred into ${ZEPHYR_BASE}, where the native runner target is defined.
+function(_zephlet_hook_link_check)
+    get_property(_cmd GLOBAL PROPERTY _ZEPHLET_LINK_CHECK)
+    add_custom_command(TARGET native_runner_executable POST_BUILD COMMAND ${_cmd})
+endfunction()
+
 if(CONFIG_ZEPHLETS)
     zephyr_library()
     zephyr_library_sources("${SHARED_ZEPHLET_DIR}/zephlet.c")
@@ -47,6 +53,22 @@ if(CONFIG_ZEPHLETS)
         "${SHARED_ZEPHLET_DIR}/zephlet_textformat.c")
     zephyr_include_directories(.)
     zephyr_linker_sources(DATA_SECTIONS zephlet_iterables.ld)
+
+    # Reject bad dependency bindings and instance cycles once linked, on the
+    # final image: zephyr.elf, or on native targets zephyr.exe, which the
+    # native runner links later (as Zephyr's check_init_priorities.py does).
+    if(CONFIG_ZEPHLET_DEPS_LINK_CHECK)
+        set(_zlet_link_check ${PYTHON_EXECUTABLE}
+            "${SHARED_ZEPHLET_DIR}/codegen/check_deps_elf.py")
+        if(CONFIG_BUILD_OUTPUT_EXE)
+            set_property(GLOBAL PROPERTY _ZEPHLET_LINK_CHECK ${_zlet_link_check}
+                "${ZEPHYR_BINARY_DIR}/${CONFIG_KERNEL_BIN_NAME}.exe")
+            cmake_language(DEFER DIRECTORY ${ZEPHYR_BASE} CALL _zephlet_hook_link_check)
+        else()
+            set_property(GLOBAL APPEND PROPERTY extra_post_build_commands
+                COMMAND ${_zlet_link_check} "${ZEPHYR_BINARY_DIR}/${CONFIG_KERNEL_BIN_NAME}.elf")
+        endif()
+    endif()
 
     # Expose nanopb parent directory globally (all .pb.h files)
     zephyr_include_directories("${CMAKE_BINARY_DIR}/zephlets")

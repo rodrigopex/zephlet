@@ -6,6 +6,6 @@ list(APPEND EXTRA_ZEPHYR_MODULES "${ZEPHLET_INFRA_ROOT}")
 
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 
-project(zephlet_deps_walker_test)
+project(zephlet_deps_init_test)
 
 target_sources(app PRIVATE src/main.c)

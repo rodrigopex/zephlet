@@ -1,11 +1,12 @@
-"""Configuration-time checks of `(zephlet.requires)`.
+"""Build-graph checks of `(zephlet.requires)`.
 
 Each scenario writes a few minimal zephlet modules, with their dependencies
 declared in the proto or in the options file, and configures the fixture
-app over them. Configuration must fail when a required type is not in the
-build, when the types form a cycle of any length, or when a declaration is
-invalid -- and must succeed otherwise, with a consumer's object compiling
-on its own against its provider's generated header.
+app over them. The dependency graph check is a build step ordered ahead of
+every compile: building any one object must fail when a required type is
+not in the build, when the types form a cycle of any length, or when a
+declaration is invalid -- and must succeed otherwise, with a consumer's
+object compiling on its own against its provider's generated header.
 """
 
 import os
@@ -123,6 +124,9 @@ def test_acyclic_graph_configures_and_consumer_builds_alone(tmp_path):
 
 	res = _build_object(build, "zlet_alpha.c")
 	assert res.returncode == 0, f"{res.stdout}\n{res.stderr}"
+	# The graph check ran as part of that one-object build.
+	assert (build / "zephlet_dependency_graph.txt").read_text() == \
+		"alpha=beta,gamma\nbeta=gamma\ngamma=\n"
 	header = (build / "modules" / "zlet_alpha" / "zlet_alpha_interface.h").read_text()
 	assert "const struct zephlet *intake;" in header
 	assert "const struct zephlet *gamma;" in header
@@ -141,11 +145,40 @@ def test_acyclic_graph_configures_and_consumer_builds_alone(tmp_path):
 	 "type 'beta' is required twice"),
 	({"alpha": (("alpha",), True)}, "cannot require its own type"),
 ], ids=["missing", "cycle2", "cycle3", "duplicate", "self"])
-def test_configuration_rejects(tmp_path, zephlets, needle):
-	_, res = _configure(tmp_path, zephlets)
+def test_build_rejects(tmp_path, zephlets, needle):
+	"""Configuration succeeds; the first object built stops on the check."""
+	build, res = _configure(tmp_path, zephlets)
+	assert res.returncode == 0, f"{res.stdout}\n{res.stderr}"
+	res = _build_object(build, "zlet_alpha.c")
 	assert res.returncode != 0, res.stdout
-	# CMake wraps long messages; compare with whitespace collapsed.
-	assert " ".join(needle.split()) in " ".join(res.stderr.split()), res.stderr
+	assert needle in res.stdout + res.stderr, res.stdout
+	assert not (build / "zephlet_dependency_graph.txt").exists()
+
+
+def test_proto_edit_reruns_check_not_configure(tmp_path):
+	"""Adding a requires to a proto re-runs the graph check at build time,
+	without reconfiguring."""
+	build, res = _configure(tmp_path, {"alpha": ((), False), "beta": ((), False)})
+	assert res.returncode == 0, f"{res.stdout}\n{res.stderr}"
+	assert _build_object(build, "zlet_alpha.c").returncode == 0
+
+	opts = tmp_path / "zephlets" / "alpha" / "zlet_alpha.zephlet.options"
+	opts.write_text("AlphaApi requires:gamma\n")
+	# A new options file is picked up by the CONFIGURE_DEPENDS glob, which
+	# reconfigures; editing one that exists must not.
+	res = _build_object(build, "zlet_alpha.c")
+	assert res.returncode != 0
+	assert "requires 'gamma', but no zephlet of type 'gamma'" in res.stdout
+
+	proto = tmp_path / "zephlets" / "beta" / "zlet_beta.proto"
+	proto.write_text(proto.read_text().replace(
+		"service BetaApi {", 'service BetaApi {\n  option (zephlet.requires) = { type: "alpha" };')
+		.replace('import "zephlet.proto";', 'import "zephlet.proto";\nimport "zephlet_options.proto";'))
+	opts.write_text("AlphaApi requires:beta\n")
+	res = _build_object(build, "zlet_alpha.c")
+	assert res.returncode != 0
+	assert "Re-running CMake" not in res.stdout, "a proto edit reconfigured"
+	assert "dependency cycle between zephlet types: alpha -> beta -> alpha" in res.stdout
 
 
 @pytest.mark.parametrize("extra_c, needle", [
@@ -164,7 +197,15 @@ def test_configuration_rejects(tmp_path, zephlets, needle):
 	 "static const struct other d = {0};\n"
 	 "ZEPHLET_NEW_WITH_DEPS(alpha, a_inst, NULL, NULL, &d, NULL);\n",
 	 "_Generic"),
-], ids=["new-on-deps-type", "with-deps-on-plain-type", "mistyped-record"])
+	# Init sub-priorities that are not a bare decimal literal 0-9.
+	("ZEPHLET_NEW_PRIO(gamma, g_inst, NULL, NULL, NULL, 10);\n",
+	 "zephlet 'g_inst': init sub-priority must be a decimal literal 0-9"),
+	("enum { x = 3 };\nZEPHLET_NEW_PRIO(gamma, g_inst, NULL, NULL, NULL, x);\n", "Z_UTIL_INC_x"),
+	("ZEPHLET_NEW_PRIO(gamma, g_inst, NULL, NULL, NULL, 1+1);\n",
+	 "zephlet 'g_inst': init sub-priority must be a decimal literal 0-9"),
+	("ZEPHLET_NEW_PRIO(gamma, g_inst, NULL, NULL, NULL, (2));\n", 'pasting "Z_UTIL_INC_"'),
+], ids=["new-on-deps-type", "with-deps-on-plain-type", "mistyped-record", "sub-priority-10",
+	"sub-priority-identifier", "sub-priority-expression", "sub-priority-parenthesized"])
 def test_instance_macro_misuse_fails_to_build(tmp_path, extra_c, needle):
 	build, res = _configure(tmp_path, {
 		"alpha": (("gamma",), False, extra_c),
@@ -175,3 +216,139 @@ def test_instance_macro_misuse_fails_to_build(tmp_path, extra_c, needle):
 	assert res.returncode != 0, res.stdout
 	# GCC escapes the quotes of a static assertion's message.
 	assert needle in (res.stdout + res.stderr).replace("\\'", "'"), res.stdout
+
+
+def test_init_priorities_follow_the_graph_without_reconfiguring(tmp_path):
+	"""zephlet_init_prio.h holds base + rank per type. A proto edit that keeps
+	every rank leaves it untouched; one that changes a rank rewrites it. Neither
+	re-runs CMake."""
+	build, res = _configure(tmp_path, {
+		"alpha": (("beta",), False), "beta": ((), False), "gamma": ((), False),
+	})
+	assert res.returncode == 0, f"{res.stdout}\n{res.stderr}"
+	assert _build_object(build, "zlet_alpha.c").returncode == 0
+	header = build / "zephlet_init_prio.h"
+	text = header.read_text()
+	assert "#define _ZLET_INIT_PRIO_alpha 11\n" in text
+	assert "#define _ZLET_INIT_PRIO_beta 10\n" in text
+	os.utime(header, (1, 1))
+
+	opts = tmp_path / "zephlets" / "alpha" / "zlet_alpha.zephlet.options"
+	opts.write_text("AlphaApi requires:gamma\n")
+	res = _build_object(build, "zlet_alpha.c")
+	assert res.returncode == 0, res.stdout
+	assert header.stat().st_mtime == 1, "same ranks: header not rewritten"
+
+	proto = tmp_path / "zephlets" / "gamma" / "zlet_gamma.proto"
+	proto.write_text(proto.read_text().replace(
+		"service GammaApi {", 'service GammaApi {\n  option (zephlet.requires) = { type: "beta" };')
+		.replace('import "zephlet.proto";', 'import "zephlet.proto";\nimport "zephlet_options.proto";'))
+	res = _build_object(build, "zlet_alpha.c")
+	assert res.returncode == 0, res.stdout
+	assert "Re-running CMake" not in res.stdout, "a proto edit reconfigured"
+	text = header.read_text()
+	assert "#define _ZLET_INIT_PRIO_gamma 11\n" in text
+	assert "#define _ZLET_INIT_PRIO_alpha 12\n" in text
+
+
+def _build_all(build):
+	"""Build and link the whole fixture; return the ninja result."""
+	env = dict(os.environ)
+	env["PATH"] = os.path.dirname(sys.executable) + os.pathsep + env.get("PATH", "")
+	return subprocess.run(["ninja", "-C", str(build)], capture_output=True, text=True, env=env)
+
+
+# Instances for the link check: alpha requires gamma; beta is another type.
+_INSTANCES = (
+	'#include "zlet_beta_interface.h"\n'
+	"ZEPHLET_NEW(gamma, g_inst, NULL, NULL, NULL);\n"
+	"ZEPHLET_NEW(beta, b_inst, NULL, NULL, NULL);\n")
+
+# Hand-written two-slot records: a.next -> b.next -> a, and a.extra unbound.
+# Each defines its runtime record and init entry (ZEPHLET_INIT_DEFINE), as a
+# hand-written record must: the entry is what references the zephlet
+# sections, and a native target's final link drops sections nothing
+# references, so the link check would see no instances.
+_HAND_BAD_SLOT_ON_CYCLE = (
+	"struct duo_dependencies { const struct zephlet *next; const struct zephlet *extra; };\n"
+	"extern const struct zephlet_api duo_api;\n"
+	"static const struct zephlet_dep_slot duo_slots[] = {\n"
+	'\t{.name = "next", .type = "duo", .api = &duo_api,\n'
+	"\t .offset = offsetof(struct duo_dependencies, next)},\n"
+	'\t{.name = "extra", .type = "duo", .api = &duo_api,\n'
+	"\t .offset = offsetof(struct duo_dependencies, extra)},\n"
+	"};\n"
+	"const struct zephlet_api duo_api = {.deps = duo_slots, .num_deps = 2};\n"
+	"#define DUO(_n, _next, _extra) \\\n"
+	"\tstatic const struct duo_dependencies _n##_deps = {.next = (_next), .extra = (_extra)}; \\\n"
+	"\tZEPHLET_INIT_DEFINE(_n, 20, 0); \\\n"
+	"\tconst STRUCT_SECTION_ITERABLE(zephlet, _n) = { \\\n"
+	"\t\t.name = #_n, .api = &duo_api, .dependencies = &_n##_deps, \\\n"
+	"\t\t.runtime = ZEPHLET_RUNTIME(_n)}\n"
+	"extern const struct zephlet cyc_a, cyc_b;\n"
+	"DUO(cyc_a, &cyc_b, NULL);\nDUO(cyc_b, &cyc_a, &cyc_a);\n")
+
+
+def _alpha_bound_to(binding):
+	return (_INSTANCES
+		+ f"static const struct alpha_dependencies a_deps = {{{binding}}};\n"
+		+ "ZEPHLET_NEW_WITH_DEPS(alpha, a_inst, NULL, NULL, &a_deps, NULL);\n")
+
+
+def _configure_link_fixture(tmp_path, extra_c):
+	build, res = _configure(tmp_path, {
+		"alpha": (("gamma",), False, extra_c),
+		"gamma": ((), False),
+		"beta": ((), False),
+	})
+	assert res.returncode == 0, f"{res.stdout}\n{res.stderr}"
+	return build
+
+
+def test_link_check_accepts_valid_bindings(tmp_path):
+	"""A ZEPHLET_DEP binding links, and the check ran on the ELF."""
+	build = _configure_link_fixture(tmp_path, _alpha_bound_to(".gamma = ZEPHLET_DEP(gamma, g_inst)"))
+	res = _build_all(build)
+	assert res.returncode == 0, f"{res.stdout}\n{res.stderr}"
+	assert "check_deps_elf.py" in (build / "build.ninja").read_text()
+
+
+@pytest.mark.parametrize("extra_c, needle", [
+	(_alpha_bound_to("0"),
+	 "error: zephlet: 'a_inst': dependency 'gamma' (a gamma) is not bound"),
+	(_alpha_bound_to(".gamma = &b_inst"),
+	 "error: zephlet: 'a_inst': dependency 'gamma' (a gamma) is bound to 'b_inst', "
+	 "of another type"),
+	# A zeroed, non-const record lands in .bss: read as all NULL.
+	(_INSTANCES
+	 + "static struct alpha_dependencies a_deps;\n"
+	 + "ZEPHLET_NEW_WITH_DEPS(alpha, a_inst, NULL, NULL, &a_deps, NULL);\n",
+	 "error: zephlet: 'a_inst': dependency 'gamma' (a gamma) is not bound"),
+], ids=["unbound", "other-type", "bss-record"])
+def test_link_check_rejects(tmp_path, extra_c, needle):
+	"""Every object compiles; the post-link check fails the build."""
+	build = _configure_link_fixture(tmp_path, extra_c)
+	res = _build_all(build)
+	assert res.returncode != 0, res.stdout
+	assert needle in res.stdout + res.stderr, res.stdout
+
+
+def test_link_check_reports_a_bad_slot_of_a_hand_written_record(tmp_path):
+	"""A hand-written record's unbound slot fails the build. The cycle beside
+	it is not reported: it needs a cycle of types, which only hand-written
+	apis can form, and those instances are skipped at boot."""
+	build = _configure_link_fixture(tmp_path, _HAND_BAD_SLOT_ON_CYCLE)
+	res = _build_all(build)
+	out = res.stdout + res.stderr
+	assert res.returncode != 0, res.stdout
+	assert "error: zephlet: 'cyc_a': dependency 'extra' (a duo) is not bound" in out, out
+	assert "cycle" not in out, out
+
+
+def test_dep_of_another_type_fails_to_compile(tmp_path):
+	"""ZEPHLET_DEP() refuses an instance of another type at compile time."""
+	build = _configure_link_fixture(tmp_path, _alpha_bound_to(".gamma = ZEPHLET_DEP(gamma, b_inst)"))
+	res = _build_object(build, "zlet_alpha.c")
+	assert res.returncode != 0, res.stdout
+	out = res.stdout + res.stderr
+	assert "_Generic" in out and "beta_zlet_tag" in out, out
