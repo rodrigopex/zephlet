@@ -127,4 +127,14 @@ int {{ zephlet_name_lower }}_init_fn(const struct zephlet *z)
  *     };
  *     ZEPHLET_NEW({{ zephlet_name_lower }}, inst_name, &inst_cfg,
  *                         &inst_data, {{ zephlet_name_lower }}_init_fn);
+ *
+ * With `(zephlet.requires)` in the proto, bind the providers per instance
+ * and read them in a handler from `z->dependencies`:
+ *
+ *     static const struct {{ zephlet_name_lower }}_dependencies inst_deps = {
+ *         .intake = ZEPHLET_DEP(fan, fan_a),
+ *     };
+ *     ZEPHLET_NEW_WITH_DEPS({{ zephlet_name_lower }}, inst_name, &inst_cfg,
+ *                           &inst_data, &inst_deps,
+ *                           {{ zephlet_name_lower }}_init_fn);
  */

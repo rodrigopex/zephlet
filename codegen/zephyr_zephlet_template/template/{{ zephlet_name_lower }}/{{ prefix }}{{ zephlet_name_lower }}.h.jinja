@@ -41,7 +41,8 @@ struct {{ zephlet_name_lower }}_data {
  *
  * Marks the instance ready. The configuration lives in `*z->config`
  * (writable; the `config` command mutates it in place).
- * Pass as the `_init` arg of ZEPHLET_NEW.
+ * Pass as the `_init` arg of ZEPHLET_NEW (or ZEPHLET_NEW_WITH_DEPS). It may
+ * call the instance's providers and its own RPCs.
  */
 int {{ zephlet_name_lower }}_init_fn(const struct zephlet *z);
 
