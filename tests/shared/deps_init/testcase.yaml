@@ -9,3 +9,18 @@ tests:
     integration_platforms:
       - native_sim
     timeout: 30
+  zephlet.shared.deps_init.shell:
+    tags: zephlet shared deps shell
+    harness: ztest
+    platform_allow:
+      - native_sim
+      - native_sim/native/64
+      - mps2/an385
+    integration_platforms:
+      - native_sim
+    timeout: 30
+    extra_configs:
+      - CONFIG_ZEPHLETS_SHELL=y
+      - CONFIG_SHELL_BACKEND_SERIAL=n
+      - CONFIG_SHELL_BACKEND_DUMMY=y
+      - CONFIG_SHELL_BACKEND_DUMMY_BUF_SIZE=4096

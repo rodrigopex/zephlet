@@ -509,6 +509,7 @@ An RPC takes its request as a protobuf **text-format** message:
 
 ```
 uart:~$ zlet <TAB>                                    # one entry per instance
+uart:~$ zlet_init                                     # each instance's init result and bindings
 uart:~$ zlet tick_fast config duration_ms: 100, period_ms: 10
 duration_ms: 100
 period_ms: 10
