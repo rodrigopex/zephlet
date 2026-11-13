@@ -36,3 +36,13 @@ def test_get_status_round_trip(dut: DeviceAdapter, shell: Shell):
 	# one. Without it the response runs into the next prompt and this line
 	# comes back with the echoed command glued to it.
 	assert not out.rstrip("\r\n").endswith("$"), out
+
+
+def test_zlet_init_lists_instances(dut: DeviceAdapter, shell: Shell):
+	"""`zlet_init` lists every instance with its init result."""
+	assert shell.wait_for_prompt(), "shell prompt never appeared"
+
+	lines = shell.exec_command("zlet_init")
+	out = "\n".join(shell.get_filtered_output(lines))
+
+	assert any(ln.strip() == "tick_fast: init 0" for ln in out.splitlines()), out
