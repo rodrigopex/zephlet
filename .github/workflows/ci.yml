@@ -136,14 +136,16 @@ jobs:
       - name: Run codegen unit tests
         run: pytest -v modules/lib/zephlet/tests/codegen/
 
-      - name: Run coordinator unit tests (FFF, unit_testing)
+      - name: Run unit tests (FFF, unit_testing)
         # Isolated: the real zephlet_coord.c against FFF fakes of the work
-        # queue, zbus runtime observers, and logging; native_sim runs above
-        # cover the real kernel. M64_MODE=1 builds with -m64, so the runner
-        # needs no 32-bit (multilib) toolchain.
+        # queue, zbus runtime observers, and logging; the real zephlet.c
+        # (initialization, dispatch gate) against a logging fake. native_sim
+        # runs above cover the real kernel. M64_MODE=1 builds with -m64, so
+        # the runner needs no 32-bit (multilib) toolchain.
         run: |
           west twister \
             -T modules/lib/zephlet/tests/shared/coord_unit \
+            -T modules/lib/zephlet/tests/shared/init_unit \
             -p unit_testing -x M64_MODE=1 --inline-logs \
             -O /tmp/twister-out-unit
 
