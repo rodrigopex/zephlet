@@ -2,6 +2,8 @@ syntax = "proto3";
 
 import "nanopb.proto";
 import "zephlet.proto";
+/* For `option (zephlet.requires)` below:
+ * import "zephlet_options.proto"; */
 
 option (nanopb_fileopt).long_names = false;
 
@@ -31,6 +33,11 @@ message {{ zephlet_name_pascal }} {
  * not collide with the message name above.
  */
 service {{ zephlet_name_pascal }}Api {
+  /* To call other zephlets from this one's handlers, declare each provider
+   * type it needs (repeatable; `name` defaults to the type). Instances are
+   * then defined with ZEPHLET_NEW_WITH_DEPS and bound per instance.
+   *   option (zephlet.requires) = { type: "fan" name: "intake" };
+   */
   rpc start      (Empty)                             returns (Lifecycle.Status);
   rpc stop       (Empty)                             returns (Lifecycle.Status);
   rpc get_status (Empty)                             returns (Lifecycle.Status);
